@@ -35,6 +35,33 @@ The installer checks that checkpoint against the official manifest and never ins
 
 The native build helper downloads the complete, checksum-verified native payload and license list from the upstream **v2.1.2** release. Native source is unchanged. This preserves capture, webcam effects, preview and export without requiring Rust/FFmpeg compilation on a new device. Full native source and build commands remain in this repository for developers.
 
+### 中文安装说明
+
+请先安装 [Node.js 22.22.1](https://nodejs.org/en/download)、npm 10.9.4（随该 Node.js 版本提供）以及 [uv](https://docs.astral.sh/uv/getting-started/installation/)。本项目要求使用 npm，因为 Electron 原生模块的构建依赖它。安装至少预留 8 GB 可用空间，并为录制文件和导出文件额外预留空间；16 GB 统一内存是已测试配置，并不代表应用会独占这些内存。
+
+```bash
+git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
+cd openscreen-qwen-asr
+npm ci
+npm run qwen:setup
+npm run qwen:build
+npm run qwen:install
+```
+
+安装完成后，从“应用程序”中打开 **OpenScreen Qwen**。源码安装会使用临时签名在本机生成应用；本 fork 不提供 Developer ID 公证。如果 macOS 弹出安全提示，请仅对你信任的本机构建使用系统的“仍要打开”流程。不要将上游项目的签名说明套用于本 fork。
+
+安装脚本会下载官方 Qwen 模型和 Silero VAD，校验固定哈希，并创建独立的 Python 3.12 环境。无需预先安装模型。模型权重总计约 **3.72 GB**（十进制），另需为 tokenizer 和运行时依赖预留空间。首次安装需要联网；完成后转写在本地离线运行。如果安装失败，不会替换已有的可用模型配置；重新执行命令即可继续校验并下载缺失文件。
+
+如果要只读复用已有的**官方、未修改的 Qwen3-ASR-0.6B** 权重：
+
+```bash
+npm run qwen:setup -- --model-path /path/to/Qwen3-ASR-0.6B
+```
+
+安装器会根据官方清单校验该权重，既不会在该目录安装依赖，也不会写入文件。哈希不同的转换版或量化版权重不会被静默接受。详见[模型说明](models/README.md)。
+
+原生构建辅助脚本会从上游 **v2.1.2** 发布版本下载完整且经过校验的原生组件和许可证清单。原生源码保持不变，因此新设备无需自行编译 Rust/FFmpeg，也能保留录屏、摄像头效果、预览和导出功能。完整的原生源码与开发者构建命令仍保留在本仓库中。
+
 ## Data and operation
 
 Runtime, model downloads and private configuration live under the current user's `~/Library/Application Support/OpenScreen-Qwen/`, outside the application and checkout. The app resolves this directory on each device. You can move or delete the source checkout after installation; keep the user data/runtime directory. No rebuild is required when a model path changes: rerun setup while the app is closed, then relaunch.
