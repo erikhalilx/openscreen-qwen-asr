@@ -12,7 +12,7 @@ Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled w
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
-cd openscreen-qwen
+cd openscreen-qwen-asr
 npm ci
 npm run qwen:setup
 npm run qwen:build

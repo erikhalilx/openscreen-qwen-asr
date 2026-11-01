@@ -12,7 +12,7 @@
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
-cd openscreen-qwen
+cd openscreen-qwen-asr
 npm ci
 npm run qwen:setup
 npm run qwen:build
