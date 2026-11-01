@@ -1,4 +1,4 @@
-# OpenScreen Qwen
+# OpenScreen Qwen3-ASR
 
 An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Based on **v2.1.2**, upstream commit `d8889c626f859e0be8f4f87fdffc7362629550bc`.
 
@@ -11,7 +11,7 @@ An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork wi
 Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled with that Node release), and [uv](https://docs.astral.sh/uv/getting-started/installation/). Use npm, as required by the Electron native module build. Allow at least 8 GB free for installation and additional space for recordings/exports; 16 GB unified memory is the tested configuration, not a reservation against other apps.
 
 ```bash
-git clone https://github.com/erikhalilx/openscreen-qwen.git
+git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
 cd openscreen-qwen
 npm ci
 npm run qwen:setup
@@ -51,4 +51,4 @@ Validation covers the worker, cancellation/recovery, real app CLI/MCP transcript
 
 OpenScreen was created by [Siddharth Vaddem](https://github.com/siddharthvaddem), then continued by [OpenScreen contributors](https://github.com/getopenscreen/openscreen). This fork retains their MIT license and copyright notices. Its additions integrate external Qwen/MLX dependencies; model weights and Python packages retain their own licenses and are not included in Git or the app bundle. See [LICENSE](LICENSE), [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) and [third-party-licenses](third-party-licenses/).
 
-This is an independent community fork, with no endorsement from OpenScreen, Qwen or MLX. Report fork-specific issues [here](https://github.com/erikhalilx/openscreen-qwen/issues). Upstream documentation under `website/` and `README-UPSTREAM.md` is retained as historical reference and may describe different platforms, downloads or update behavior.
+This is an independent community fork, with no endorsement from OpenScreen, Qwen or MLX. Report fork-specific issues [here](https://github.com/erikhalilx/openscreen-qwen-asr/issues). Upstream documentation under `website/` and `README-UPSTREAM.md` is retained as historical reference and may describe different platforms, downloads or update behavior.

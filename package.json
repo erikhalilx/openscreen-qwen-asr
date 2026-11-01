@@ -3,7 +3,7 @@
 	"private": true,
 	"version": "2.1.2",
 	"description": "OpenScreen Qwen: local Qwen3-ASR transcription on Apple Silicon",
-	"homepage": "https://github.com/erikhalilx/openscreen-qwen",
+	"homepage": "https://github.com/erikhalilx/openscreen-qwen-asr",
 	"license": "MIT",
 	"type": "module",
 	"packageManager": "npm@10.9.4",
@@ -13,11 +13,11 @@
 	},
 	"author": {
 		"name": "OpenScreen Qwen contributors",
-		"url": "https://github.com/erikhalilx/openscreen-qwen"
+		"url": "https://github.com/erikhalilx/openscreen-qwen-asr"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/erikhalilx/openscreen-qwen.git"
+		"url": "git+https://github.com/erikhalilx/openscreen-qwen-asr.git"
 	},
 	"contributors": [
 		{
@@ -32,7 +32,7 @@
 	"maintainers": [
 		{
 			"name": "OpenScreen Qwen contributors",
-			"url": "https://github.com/erikhalilx/openscreen-qwen"
+			"url": "https://github.com/erikhalilx/openscreen-qwen-asr"
 		}
 	],
 	"scripts": {

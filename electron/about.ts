@@ -8,7 +8,7 @@
 
 import type { InstallChannel } from "./install-channel";
 
-export const WEBSITE_URL = "https://github.com/erikhalilx/openscreen-qwen";
+export const WEBSITE_URL = "https://github.com/erikhalilx/openscreen-qwen-asr";
 /** The brand spelling, for the surfaces we render ourselves. NOT `app.name`: that resolves to
  *  electron-builder's `productName` ("Openscreen") when packaged and to package.json's `name`
  *  ("openscreen") in dev, so the About box would disagree with its own title bar. */

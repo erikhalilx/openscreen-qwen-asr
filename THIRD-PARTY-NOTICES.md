@@ -309,4 +309,4 @@ Any future bundled Python distribution must include those notices as well.
 Model revisions, exact download URLs, byte sizes and SHA-256 values are in
 `models/manifest.json`. This fork is not endorsed by OpenScreen, Qwen or the
 other dependency authors. Fork-specific reports belong at
-<https://github.com/erikhalilx/openscreen-qwen/issues>.
+<https://github.com/erikhalilx/openscreen-qwen-asr/issues>.
