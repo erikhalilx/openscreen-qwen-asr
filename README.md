@@ -2,6 +2,8 @@
 
 An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Based on **v2.1.2**, upstream commit `d8889c626f859e0be8f4f87fdffc7362629550bc`.
 
+这是一个基于 OpenScreen 的独立社区版本，最大的改进是用本地 **Qwen3-ASR** 替换原版 Whisper 语音识别，旨在大幅提升中文语音识别和字幕生成的准确度。同时保留录屏、编辑、时间线、字幕、项目保存、视频导出以及 CLI/MCP 等主要功能，并提供真实的字级/词级时间戳和更适合中文阅读的字幕排版。
+
 **Supported Qwen runtime: Apple Silicon, macOS 26 or later.** The pinned MLX 0.32.2 wheels require macOS 26. Windows, Linux and Intel Mac Qwen inference are not supported by this release. The recording, editor, timeline, native compositor, captions, project persistence, export and CLI/MCP source remain included. AI chat/translation still require the user's own configured provider.
 
 [中文安装说明](README-QWEN.zh-CN.md) · [Models and verified downloads](models/README.md) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Privacy and publication](PUBLICATION.md) · [Upstream README](README-UPSTREAM.md)
