@@ -1,6 +1,4 @@
-// `openscreen mcp` sends the GUI's anonymous usage ping: an install driven only by an agent
-// counts as active. runCli runs for real here; only Electron and the heavy services around
-// the MCP server are stubbed.
+// The independent Qwen fork keeps MCP stdout clean and sends no installation telemetry.
 
 import { mkdtempSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -78,15 +76,9 @@ async function runMcp() {
 }
 
 describe("openscreen mcp usage ping", () => {
-	it("pings once, as the mcp surface, and writes nothing to stdout", async () => {
+	it("serves MCP without contacting upstream telemetry or writing to stdout", async () => {
 		await runMcp();
-		expect(fetchMock).toHaveBeenCalledTimes(1);
-		const body = JSON.parse(String(fetchMock.mock.calls[0][1].body));
-		expect(body.properties).toMatchObject({
-			version: "2.1.0",
-			channel: "nsis",
-			surface: "mcp",
-		});
+		expect(fetchMock).not.toHaveBeenCalled();
 		expect(stdoutWrite).not.toHaveBeenCalled();
 	});
 

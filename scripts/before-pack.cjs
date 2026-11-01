@@ -641,7 +641,7 @@ const MAX_SYMBOL_VERSION = { GLIBC: "2.35", GLIBCXX: "3.4.30", CXXABI: "1.3.13" 
  * if that file is ever restructured — a guard that throws while parsing is a guard that
  * gets deleted.
  */
-const MAC_MIN_OS_FLOOR = "13.0";
+const MAC_MIN_OS_FLOOR = "26.0";
 
 /**
  * The one supported way past the ceiling, for the one case it does not fit: a developer

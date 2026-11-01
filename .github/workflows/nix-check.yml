@@ -39,6 +39,7 @@ permissions:
 
 jobs:
   npm-deps-hash:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: npmDepsHash matches package-lock.json
     runs-on: ubuntu-latest
     steps:

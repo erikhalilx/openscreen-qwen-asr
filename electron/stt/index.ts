@@ -9,6 +9,7 @@ import {
 	ensureModels,
 	modelPaths,
 } from "./modelManager";
+import { QwenMlxManager } from "./qwenMlx";
 import type {
 	SttPhraseSegment,
 	SttStatusEvent,
@@ -511,13 +512,15 @@ export class SttManager {
 	}
 }
 
-let singleton: SttManager | null = null;
+let singleton: SttManager | QwenMlxManager | null = null;
 let sttShuttingDown = false;
 
 /** Lazy singleton for the IPC layer; processes one transcription at a time. */
-export function getSttManager(): SttManager {
+export function getSttManager(): SttManager | QwenMlxManager {
 	if (sttShuttingDown) throw cancelledError();
-	if (!singleton) singleton = new SttManager();
+	if (!singleton)
+		singleton =
+			process.env.OPENSCREEN_STT_ENGINE === "whisper" ? new SttManager() : new QwenMlxManager();
 	return singleton;
 }
 

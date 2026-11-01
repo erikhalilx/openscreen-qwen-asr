@@ -1,0 +1,3 @@
+mlx-qwen3-asr[aligner]==0.4.4
+mlx==0.32.2
+onnxruntime==1.24.2

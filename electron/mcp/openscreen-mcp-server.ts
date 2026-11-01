@@ -174,7 +174,7 @@ export interface McpToolDeps extends ImportMediaDeps {
 	cameraSegmentation?: () => SegmentationSupport;
 	/** The compositor's check of an agent-written effect's WGSL; absent where nothing can ask. */
 	checkShaderEffect?: ShaderEffectChecker;
-	/** The main process's on-device Whisper (`SttManager.transcribe`). Absent: no transcribe tool. */
+	/** The main process's on-device Qwen ASR (`SttManager.transcribe`). Absent: no transcribe tool. */
 	transcribe?(request: SttTranscribeRequest): Promise<SttTranscribeResponse>;
 	version: string;
 }
@@ -193,15 +193,15 @@ const transcribeArgs = z.object({
 		.regex(/^(auto|[a-z]{2,3})$/, 'an ISO 639-1 code such as "en", or "auto"')
 		.optional()
 		.describe(
-			'Transcribe again in this language (ISO 639-1, such as "en" or "fr"), or "auto" to let Whisper detect it. Omit it to keep a transcript the asset already has.',
+			'Transcribe again in this language (ISO 639-1, such as "en" or "fr"), or "auto" to let Qwen ASR detect it. Omit it to keep a transcript the asset already has.',
 		),
 });
 
 const TRANSCRIBE_DESCRIPTION =
-	"Transcribe one asset's speech with OpenScreen's on-device Whisper, as the editor does when it opens a project, and store the transcript in the project: getTranscript, getTranscriptWords, setWordText, removeWords and the captions all read it. A take from stopRecording has none until this runs. Without `language`, an asset that already has a transcript keeps it, and a transcription the editor is already running is waited for rather than run twice; with `language`, the asset is transcribed again in it (a run of the editor already in that language is waited for instead), and the word corrections that still match are carried over. The project's vocabulary (setVocabulary) primes Whisper. It runs on this computer and can take minutes on a long recording, more the first time, when the speech model downloads. Media with no audio fails with failure.kind `no-audio`, which the asset then remembers (assets[].transcriptionFailure in getCurrentDocument). The result gives the language and the word count; it needs no checkpoint, and restoreCheckpoint keeps a transcript made after its checkpoint.";
+	"Transcribe one asset's speech with OpenScreen's on-device Qwen ASR, as the editor does when it opens a project, and store the transcript in the project: getTranscript, getTranscriptWords, setWordText, removeWords and the captions all read it. A take from stopRecording has none until this runs. Without `language`, an asset that already has a transcript keeps it, and a transcription the editor is already running is waited for rather than run twice; with `language`, the asset is transcribed again in it (a run of the editor already in that language is waited for instead), and the word corrections that still match are carried over. The project's vocabulary (setVocabulary) primes Qwen ASR. It runs on this computer and can take minutes on a long recording, with local ASR and forced-alignment weights prepared before use. Media with no audio fails with failure.kind `no-audio`, which the asset then remembers (assets[].transcriptionFailure in getCurrentDocument). The result gives the language and the word count; it needs no checkpoint, and restoreCheckpoint keeps a transcript made after its checkpoint.";
 
 const TRANSCRIBE_NOTE =
-	"Speech: transcribe makes an asset's transcript with OpenScreen's on-device Whisper. Everything that reads speech needs it (getTranscript, getTranscriptWords, removeWords, the captions); a fresh take has none until you call it.";
+	"Speech: transcribe makes an asset's transcript with OpenScreen's on-device Qwen ASR. Everything that reads speech needs it (getTranscript, getTranscriptWords, removeWords, the captions); a fresh take has none until you call it.";
 
 /** The in-app server's edit switch, as AI settings label it (`mcpServer.editsLabel`). */
 export const MCP_EDITS_SETTING = "'MCP edits' under MCP server in AI settings";

@@ -1,0 +1,30 @@
+name: Qwen fork checks
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.1
+          cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - run: npx tsc -p tsconfig.test.json --noEmit
+      - run: npm run lint
+      - run: npm run i18n:check
+      - run: npm run test
+      - run: npm run test:qwen-python
+      - run: npm run privacy:check -- --ref HEAD

@@ -1,9 +1,9 @@
 // @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "com.etiennelescot.openscreen",
+  "appId": "local.openscreen.qwen",
   "asar": true,
-  "productName": "Openscreen",
+  "productName": "OpenScreen Qwen",
   // There is deliberately no `electronVersion` here. electron-builder needs an EXACT
   // version because it downloads the binaries for one release, and it takes that from
   // package.json's `electron` devDependency, which is pinned without a caret for this
@@ -35,13 +35,7 @@
   // The Store (appx) target deliberately gets NO publish config: `isSuitableWindowsTarget()`
   // only writes `app-update.yml` for nsis, so the MSIX build cannot arm an updater that its
   // read-only container could never run. Do not add `appx.electronUpdaterAware`.
-  "publish": [
-    {
-      "provider": "github",
-      "owner": "getopenscreen",
-      "repo": "openscreen"
-    }
-  ],
+  "publish": null,
   // Fails the build when compositor_view.node is older than the crates/ Rust sources. Plain
   // `npm run build` does not rebuild the addon, and a stale one fails SILENTLY at runtime
   // (unknown scene fields are #[serde(default)]) rather than erroring. See the script header
@@ -126,6 +120,10 @@
   // userData cache on first use by electron/stt/modelManager.ts, so no model
   // files are bundled at build time.
   "extraResources": [
+    { "from": "third-party-licenses", "to": "third-party-licenses" },
+    { "from": "models/manifest.json", "to": "models/manifest.json" },
+
+    { "from": "scripts/qwen-asr", "to": "scripts/qwen-asr", "filter": ["worker.py", "text.py", "vad.py"] },
     // Attribution + LGPL source offer for the bundled ffmpeg DLLs and
     // whisper.cpp binaries. Redistributing LGPL libraries obliges us to ship
     // the notice with them, so it goes in resources/, not just in the repo.
@@ -174,17 +172,11 @@
   ],
 
   "mac": {
-    // Declared, not merely documented. Electron 41's own LSMinimumSystemVersion is 12.0
-    // and the .app inherits it verbatim when this key is absent — so before this line the
-    // bundle advertised macOS 12 while its native payload was built for 13, and a
-    // Monterey user got as far as the record button before anything went wrong (#515).
-    // LaunchServices now refuses to open the app below 13 instead, which is the honest
-    // signal.
-    //
-    // macOS 13 because ScreenCaptureKit capture requires it: ScreenCaptureRecorder is
-    // `@available(macOS 13.0, *)`. Keep in step with README.md, website/docs/
-    // installation.md, and electron/native/screencapturekit/Package.swift.
-    "minimumSystemVersion": "13.0",
+    // MLX 0.32.2 uses macOS 26 arm64 wheels. Match the installer's checked runtime floor.
+    "minimumSystemVersion": "26.0",
+    // This personal build has no Developer ID certificate. Sign the complete
+    // bundle locally instead of leaving Electron's now-invalid vendor seal.
+    "identity": "-",
     "notarize": false,
     "hardenedRuntime": true,
     "entitlements": "macos.entitlements",
@@ -200,7 +192,7 @@
     "target": [
       {
         "target": "dmg",
-        "arch": ["x64", "arm64"]
+        "arch": ["arm64"]
       }
     ],
     "icon": "icons/icons/mac/icon.icns",

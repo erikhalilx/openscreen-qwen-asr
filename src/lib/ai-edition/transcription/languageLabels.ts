@@ -175,7 +175,9 @@ export function sortedLanguageOptions(locale: string, autoLabel: string): Langua
 		compare = (a, b) => a.localeCompare(b);
 	}
 	// TRANSCRIPT_LANGUAGE_CODES always starts with "auto" (see its own comment).
+	const alignable = new Set(["zh", "en", "yue", "fr", "de", "it", "ja", "ko", "pt", "ru", "es"]);
 	const rest = (TRANSCRIPT_LANGUAGE_CODES.slice(1) as WhisperLanguageCode[])
+		.filter((code) => alignable.has(code))
 		.map((code) => ({ code, label: languageLabel(code, locale) }))
 		.sort((a, b) => compare(a.label, b.label));
 	return [{ code: "auto", label: autoLabel }, ...rest];

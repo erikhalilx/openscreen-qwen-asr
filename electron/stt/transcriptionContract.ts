@@ -33,6 +33,7 @@ export interface SttPhraseSegment {
  *  actually bound at runtime). `gpuDetector` only picks the binary; the real
  *  backend is corrected from the helper response. */
 export type SttBackend =
+	| "qwen-mlx"
 	| "whispercpp-metal"
 	| "whispercpp-vulkan"
 	| "whispercpp-cuda"

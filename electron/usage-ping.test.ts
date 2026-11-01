@@ -79,41 +79,18 @@ describe("planUsagePing", () => {
 });
 
 describe("sendUsagePing", () => {
-	it("sends no identifier and keeps the dates only once PostHog accepted the ping", async () => {
+	it("never contacts telemetry, including when saved settings previously enabled it", async () => {
 		const dir = tmp();
-		const bodies: Record<string, unknown>[] = [];
-		const ok = async (_url: string, init: RequestInit) => {
-			bodies.push(JSON.parse(String(init.body)));
+		setUsagePingEnabled(dir, true);
+		let calls = 0;
+		const transport = async () => {
+			calls += 1;
 			return { ok: true };
 		};
-
-		await sendUsagePing(dir, facts, {}, wednesday, async () => ({ ok: false }));
+		for (const surface of ["app", "mcp"] as const) {
+			await sendUsagePing(dir, { ...facts, surface }, {}, wednesday, transport);
+		}
+		expect(calls).toBe(0);
 		expect(loadUsagePingState(dir).day).toBeNull();
-
-		await sendUsagePing(dir, facts, {}, wednesday, ok);
-		await sendUsagePing(dir, facts, {}, wednesday, ok);
-		await sendUsagePing(dir, facts, {}, new Date("2026-10-15T09:00:00Z"), ok);
-		expect(bodies).toHaveLength(2);
-		expect(bodies[0].distinct_id).not.toBe(bodies[1].distinct_id);
-		expect(bodies[0].properties).toEqual({
-			$process_person_profile: false,
-			$geoip_disable: true,
-			version: "2.0.0",
-			os: "win32",
-			arch: "x64",
-			channel: "store",
-			surface: "app",
-			first_this_week: true,
-			first_this_month: true,
-		});
-	});
-
-	it("keeps the checkbox off when it is unticked while a ping is in flight", async () => {
-		const dir = tmp();
-		await sendUsagePing(dir, facts, {}, wednesday, async () => {
-			setUsagePingEnabled(dir, false);
-			return { ok: true };
-		});
-		expect(loadUsagePingState(dir)).toMatchObject({ enabled: false, day: "2026-10-14" });
 	});
 });

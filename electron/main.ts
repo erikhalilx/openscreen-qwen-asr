@@ -91,6 +91,11 @@ import {
 } from "./windows";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const LOCAL_QWEN_FORK = true;
+
+// Personal Qwen fork: isolate projects, settings, recordings and the single-instance lock.
+app.setName("OpenScreen Qwen");
+app.setPath("userData", path.join(app.getPath("appData"), "OpenScreen-Qwen"));
 
 // CLI mode: `openscreen export|record|info|help ...` runs headless without
 // HUD/tray/menu. Parsed before any GUI side effects; see electron/cli/.
@@ -495,7 +500,7 @@ let updateCheckAbort: AbortController | null = null;
  *  the install, i.e. after a 240 MB download has already competed with the encoder. Every
  *  surface is rebuilt when the flag flips (see `setupApplicationMenu`/`updateTrayMenu`). */
 function canOfferUpdateCheck(): boolean {
-	return offersUpdateCheck(getInstallChannel(), { recording: isRecording });
+	return !LOCAL_QWEN_FORK && offersUpdateCheck(getInstallChannel(), { recording: isRecording });
 }
 
 /** What the HUD is told at mount, and only the permanent half of the veto. The recording half
@@ -504,7 +509,7 @@ function canOfferUpdateCheck(): boolean {
  *  mount mid-take — and the HUD is rebuilt for every recording. The renderer applies the
  *  transient half itself; `check-for-updates` still enforces both. */
 function channelAllowsUpdateCheck(): boolean {
-	return !platformOwnsUpdates(getInstallChannel());
+	return !LOCAL_QWEN_FORK && !platformOwnsUpdates(getInstallChannel());
 }
 
 /** Message boxes must be owned by a window. The HUD is `alwaysOnTop` and `skipTaskbar`
@@ -674,7 +679,7 @@ let usagePingEnabled = true;
 
 /** Hidden where the ping never runs anyway: a dev build, or DO_NOT_TRACK set. */
 function showUsagePingToggle(): boolean {
-	return getInstallChannel() !== "dev" && !doNotTrack(process.env);
+	return !LOCAL_QWEN_FORK && getInstallChannel() !== "dev" && !doNotTrack(process.env);
 }
 
 function persistUsagePingEnabled(enabled: boolean) {
@@ -684,6 +689,7 @@ function persistUsagePingEnabled(enabled: boolean) {
 }
 
 function runUsagePing() {
+	if (LOCAL_QWEN_FORK) return;
 	void sendUsagePing(app.getPath("userData"), {
 		version: app.getVersion(),
 		os: process.platform,
@@ -804,6 +810,8 @@ async function runBackgroundUpdateCheck() {
 }
 
 function startBackgroundUpdateTimer() {
+	// Upstream releases would replace this fork's local ASR integration.
+	if (LOCAL_QWEN_FORK) return;
 	if (backgroundUpdateTimer) return;
 	if (
 		!shouldStartBackgroundUpdateTimer({
@@ -1363,15 +1371,17 @@ appReady?.then(async () => {
 	ipcMain.handle("star-prompt:export-finished", () => {
 		const { successfulExports, dismissed } = starPromptSettings.recordSuccessfulExport();
 		return {
-			offer: offersStarPrompt({
-				successfulExports,
-				dismissed,
-				recording: isRecording,
-				// Every handler in this file is registered inside `appReady`, which the CLI boot
-				// path never reaches, so this is the second lock on a shut door — see the note on
-				// `headless` in star-prompt.ts.
-				headless: cliCommand !== null,
-			}),
+			offer:
+				!LOCAL_QWEN_FORK &&
+				offersStarPrompt({
+					successfulExports,
+					dismissed,
+					recording: isRecording,
+					// Every handler in this file is registered inside `appReady`, which the CLI boot
+					// path never reaches, so this is the second lock on a shut door — see the note on
+					// `headless` in star-prompt.ts.
+					headless: cliCommand !== null,
+				}),
 			// Drives which links the prompt shows. A Store copy must not be pointed at Releases
 			// or at an .exe, so it is offered the repo root and the Store's own review page.
 			store: getInstallChannel() === "store",
@@ -1436,7 +1446,7 @@ appReady?.then(async () => {
 	// all (see auto-updater.ts getUpdater) — every real update path applies
 	// its settings lazily on first use.
 	currentUpdateMode = loadUpdateMode(app.getPath("userData"));
-	usagePingEnabled = loadUsagePingState(app.getPath("userData")).enabled;
+	usagePingEnabled = !LOCAL_QWEN_FORK && loadUsagePingState(app.getPath("userData")).enabled;
 	createTray();
 	updateTrayMenu();
 	startBackgroundUpdateTimer();

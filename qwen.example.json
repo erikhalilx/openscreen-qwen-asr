@@ -1,0 +1,6 @@
+{
+	"python": "~/Library/Application Support/OpenScreen-Qwen/runtime/venv/bin/python",
+	"model": "~/Library/Application Support/OpenScreen-Qwen/runtime/models/Qwen3-ASR-0.6B",
+	"aligner": "~/Library/Application Support/OpenScreen-Qwen/runtime/models/Qwen3-ForcedAligner-0.6B",
+	"vad": "~/Library/Application Support/OpenScreen-Qwen/runtime/models/silero-vad/silero_vad.onnx"
+}

@@ -2,8 +2,8 @@
 	"name": "openscreen",
 	"private": true,
 	"version": "2.1.2",
-	"description": "Record your screen and polish the demo",
-	"homepage": "https://getopenscreen.com/",
+	"description": "OpenScreen Qwen: local Qwen3-ASR transcription on Apple Silicon",
+	"homepage": "https://github.com/erikhalilx/openscreen-qwen",
 	"license": "MIT",
 	"type": "module",
 	"packageManager": "npm@10.9.4",
@@ -12,23 +12,27 @@
 		"npm": "10.9.4"
 	},
 	"author": {
-		"name": "Etienne Lescot",
-		"url": "https://github.com/EtienneLescot"
+		"name": "OpenScreen Qwen contributors",
+		"url": "https://github.com/erikhalilx/openscreen-qwen"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/getopenscreen/openscreen.git"
+		"url": "git+https://github.com/erikhalilx/openscreen-qwen.git"
 	},
 	"contributors": [
 		{
 			"name": "Siddharth Vaddem",
 			"url": "https://github.com/siddharthvaddem"
+		},
+		{
+			"name": "Etienne Lescot",
+			"url": "https://github.com/EtienneLescot"
 		}
 	],
 	"maintainers": [
 		{
-			"name": "Etienne Lescot",
-			"url": "https://github.com/EtienneLescot"
+			"name": "OpenScreen Qwen contributors",
+			"url": "https://github.com/erikhalilx/openscreen-qwen"
 		}
 	],
 	"scripts": {
@@ -98,7 +102,12 @@
 		"fetch:ffmpeg": "node scripts/fetch-ffmpeg.mjs",
 		"fetch:ffmpeg:mac": "node scripts/fetch-ffmpeg-macos.mjs",
 		"fetch:ffmpeg:sdk": "node scripts/fetch-ffmpeg.mjs --sdk-only",
-		"fetch:onnxruntime": "node scripts/fetch-onnxruntime.mjs"
+		"fetch:onnxruntime": "node scripts/fetch-onnxruntime.mjs",
+		"qwen:setup": "bash scripts/setup-qwen-local.sh",
+		"qwen:build": "bash scripts/build-qwen-mac.sh",
+		"qwen:install": "bash scripts/install-qwen-local.sh",
+		"privacy:check": "node scripts/audit-publication.mjs",
+		"test:qwen-python": "python3 -m unittest discover -s scripts/qwen-asr -p \"test_*.py\""
 	},
 	"dependencies": {
 		"@fix-webm-duration/fix": "^1.0.1",

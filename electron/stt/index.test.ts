@@ -57,6 +57,7 @@ describe("SttManager", () => {
 	let warnSpy: MockInstance<typeof console.warn>;
 
 	beforeEach(() => {
+		vi.stubEnv("OPENSCREEN_STT_ENGINE", "whisper");
 		fakeWhisperServer.start.mockClear();
 		fakeWhisperServer.transcribe.mockClear();
 		fakeWhisperServer.stop.mockClear();
@@ -77,6 +78,7 @@ describe("SttManager", () => {
 	});
 
 	afterEach(() => {
+		vi.unstubAllEnvs();
 		_resetSttManagerForTests();
 		infoSpy.mockRestore();
 		warnSpy.mockRestore();

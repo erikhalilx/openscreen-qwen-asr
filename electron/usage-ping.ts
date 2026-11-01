@@ -1,22 +1,9 @@
-// One anonymous count of the installations that ran today, and nothing else.
-//
-// No identifier leaves the machine: no install ID, no hardware hash, no cookie. PostHog
-// requires a distinct_id, so each ping gets a fresh random one that matches nothing, and
-// PostHog builds no person from it. Weekly and monthly actives are counted the way Brave
-// counts them, without an ID: the app remembers locally when it last pinged and says
-// whether this is its first ping of the week and of the month, so WAU and MAU are plain
-// counts of those flags. GeoIP is off on every event, and the PostHog project discards IP
-// addresses. The website FAQ ("Does OpenScreen work offline?") lists this payload; keep it
-// in step.
+// This fork retains the upstream settings/planner API for compatibility, but its
+// telemetry transport is disabled for both GUI and CLI/MCP. No usage data is sent.
 
-import { randomUUID } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import type { InstallChannel } from "./install-channel";
-
-// A project token is public by design: it can only send events, not read them.
-const POSTHOG_TOKEN = "phc_zhJDJHBBRDAJBwSb7zf2JuQ59v6RwBN96ZksM2y4oq8C";
-const CAPTURE_URL = "https://eu.i.posthog.com/i/v0/e/";
 
 /** Often enough that an app left running in the tray for days still counts every day. */
 export const USAGE_PING_INTERVAL_MS = 6 * 60 * 60 * 1000;
@@ -115,44 +102,13 @@ export function setUsagePingEnabled(userData: string, enabled: boolean): void {
 
 type Fetch = (url: string, init: RequestInit) => Promise<{ ok: boolean }>;
 
-/** Sends today's ping if none went through yet. Never throws: a failure only means the
- *  next attempt tries again, and the dates are saved only once PostHog accepted it. */
+/** Upstream-compatible API; this fork sends no installation telemetry from GUI or MCP. */
 export async function sendUsagePing(
-	userData: string,
-	facts: UsagePingFacts,
-	env: Readonly<Record<string, string | undefined>> = process.env,
-	now: Date = new Date(),
-	fetchImpl: Fetch = fetch,
+	_userData: string,
+	_facts: UsagePingFacts,
+	_env: Readonly<Record<string, string | undefined>> = process.env,
+	_now: Date = new Date(),
+	_fetchImpl: Fetch = fetch,
 ): Promise<void> {
-	const state = loadUsagePingState(userData);
-	const plan = planUsagePing(state, facts.channel, env, now);
-	if (!plan) return;
-	try {
-		const response = await fetchImpl(CAPTURE_URL, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({
-				api_key: POSTHOG_TOKEN,
-				event: "app_active",
-				distinct_id: randomUUID(),
-				properties: {
-					$process_person_profile: false,
-					$geoip_disable: true,
-					version: facts.version,
-					os: facts.os,
-					arch: facts.arch,
-					channel: facts.channel,
-					surface: facts.surface,
-					first_this_week: plan.firstThisWeek,
-					first_this_month: plan.firstThisMonth,
-				},
-			}),
-			signal: AbortSignal.timeout(15_000),
-		});
-		// Re-read rather than reuse `state`: the tray checkbox may have changed while this ran.
-		if (response.ok)
-			saveUsagePingState(userData, { ...loadUsagePingState(userData), ...plan.keys });
-	} catch {
-		// Offline, blocked or timed out: the next attempt tries again.
-	}
+	// Deliberate no-op for this independent fork.
 }

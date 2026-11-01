@@ -141,3 +141,29 @@ workbench/fixtures/
 /aur_ci.pub
 /aur_known_hosts
 tmp_handoff.md
+
+# Local Qwen runtime and read-only external-model integration artifacts.
+.research/
+.venv-qwen/
+.local-models/
+scripts/qwen-asr/__pycache__/
+qwen.local.json
+
+# Device-only settings, model weights and credentials (examples stay versioned).
+.env.*
+!.env.example
+!**/.env.example
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.p12
+*.pfx
+*.pem
+*.key
+*.dmg
+*.app/
+__pycache__/
+*.pyc
+/runtime/
+/models/downloads/

@@ -1,3 +1,4 @@
+import { joinTranscriptText } from "./joinText";
 import type { CaptionSegment } from "./transcribe";
 
 /** Nudge caption starts earlier (seconds); Whisper onsets run slightly late. Do not offset ends too, that pulls lines off-screen early. */
@@ -133,7 +134,7 @@ export function mergeAdjacentCaptionSegments(
 		}
 
 		const gap = seg.startSec - prev.endSec;
-		const mergedText = `${prev.text} ${text}`.trim();
+		const mergedText = joinTranscriptText([prev.text, text]);
 		const mergedEnd = Math.max(prev.endSec, seg.endSec);
 		const wouldSpan = mergedEnd - prev.startSec;
 		if (gap <= maxGapSec && mergedText.length <= maxChars && wouldSpan <= maxBlockDurationSec) {
@@ -276,7 +277,7 @@ export function groupTimedCaptionWordsIntoLines(
 			out.push({
 				startSec: s,
 				endSec: e,
-				text: slice.map((w) => w.text.trim()).join(" "),
+				text: joinTranscriptText(slice.map((w) => w.text)),
 			});
 		}
 	};
@@ -324,7 +325,7 @@ export function splitMergedCaptionsByWordBounds(
 			out.push({
 				startSec: seg.startSec,
 				endSec: seg.endSec,
-				text: words.join(" "),
+				text: joinTranscriptText(words),
 			});
 			continue;
 		}
@@ -341,7 +342,7 @@ function wrapCaptionTextByWordBounds(text: string, minWords: number, maxWords: n
 	const minW = Math.max(1, Math.min(Math.floor(minWords), Math.floor(maxWords)));
 	const maxW = Math.max(minW, Math.floor(maxWords));
 	const ranges = computeCaptionLineIndexRanges(words.length, minW, maxW);
-	return ranges.map(({ from, to }) => words.slice(from, to).join(" ")).join("\n");
+	return ranges.map(({ from, to }) => joinTranscriptText(words.slice(from, to))).join("\n");
 }
 
 function expandPhraseSegmentToPseudoWords(segment: CaptionSegment): CaptionSegment[] {
@@ -384,7 +385,7 @@ export function groupPhraseCaptionSegmentsIntoLines(
 				out.push({
 					startSec: only.startSec,
 					endSec: only.endSec,
-					text: lineTexts.join(" "),
+					text: joinTranscriptText(lineTexts),
 				});
 				continue;
 			}
@@ -454,7 +455,7 @@ function splitOneSegmentByWordBounds(
 		result.push({
 			startSec: s,
 			endSec: e,
-			text: words.slice(from, to).join(" "),
+			text: joinTranscriptText(words.slice(from, to)),
 		});
 	}
 	if (result.length > 0) {

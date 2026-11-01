@@ -273,3 +273,40 @@ and are covered by [LICENSE](LICENSE).
 
 To report an omission or request source for anything bundled here, open an issue
 at <https://github.com/getopenscreen/openscreen/issues>.
+
+
+## OpenScreen Qwen additions
+
+This independent fork is based on OpenScreen v2.1.2, commit
+`d8889c626f859e0be8f4f87fdffc7362629550bc`. OpenScreen's original MIT
+license, copyright notices and the component notices above are retained.
+The native source and npm/Rust dependency versions are unchanged. The local
+build helper verifies the complete native payload of that release by SHA-256;
+`models/native-payload.json` records its archive and individual file hashes.
+
+| Component | Relationship / version | License / source |
+| --- | --- | --- |
+| mlx-qwen3-asr | External Python dependency, 0.4.4; not vendored or modified | Apache-2.0, Copyright 2025 dmoon; <https://github.com/moona3k/mlx-qwen3-asr/tree/v0.4.4> |
+| Qwen3-ASR-0.6B | External official checkpoint; no weights in Git or the application | Apache-2.0; <https://huggingface.co/Qwen/Qwen3-ASR-0.6B> |
+| Qwen3-ForcedAligner-0.6B | External official alignment checkpoint | Apache-2.0; <https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B> |
+| Silero VAD | External ONNX model, pinned v6.2 revision | MIT, Copyright 2020-present Silero Team; <https://github.com/snakers4/silero-vad> |
+| MLX / MLX Metal | External Python runtime, 0.32.2 | MIT; <https://github.com/ml-explore/mlx> |
+| ONNX Runtime for Python | External CPU VAD runtime, 1.24.2 | MIT and its packaged ThirdPartyNotices; <https://github.com/microsoft/onnxruntime> |
+
+Full Apache-2.0, mlx-qwen3-asr and Silero license texts are under
+`third-party-licenses/` and are included in the app bundle. The pinned
+mlx-qwen3-asr source release has no separate top-level NOTICE file. The Qwen
+model cards declare Apache-2.0; the installer places the license beside managed
+models without writing to externally supplied checkpoints.
+
+All Python dependency versions are fixed in
+`scripts/qwen-asr/requirements.lock.txt`. Setup preserves installed package
+licenses and collects their license/NOTICE texts into
+`runtime/PYTHON-THIRD-PARTY-LICENSES.txt` in the device's data directory. Python
+packages and model weights are not redistributed in this repository or app.
+Any future bundled Python distribution must include those notices as well.
+
+Model revisions, exact download URLs, byte sizes and SHA-256 values are in
+`models/manifest.json`. This fork is not endorsed by OpenScreen, Qwen or the
+other dependency authors. Fork-specific reports belong at
+<https://github.com/erikhalilx/openscreen-qwen/issues>.

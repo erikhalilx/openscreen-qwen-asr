@@ -20,6 +20,7 @@ on:
 
 jobs:
   lint:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Lint
     runs-on: ubuntu-latest
     steps:
@@ -28,6 +29,7 @@ jobs:
       - run: npm run lint
 
   typecheck:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Type Check
     runs-on: ubuntu-latest
     steps:
@@ -36,6 +38,7 @@ jobs:
       - run: npx tsc --noEmit
 
   typecheck-tests:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Typecheck (tests)
     runs-on: ubuntu-latest
     # A GATE now, and the baseline logic is gone — as its own comment instructed
@@ -58,6 +61,7 @@ jobs:
         run: npx tsc -p tsconfig.test.json --noEmit
 
   docs:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Docs
     runs-on: ubuntu-latest
     steps:
@@ -71,6 +75,7 @@ jobs:
       - run: npm run docs:check
 
   appstream:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: AppStream metadata
     runs-on: ubuntu-latest
     steps:
@@ -91,6 +96,7 @@ jobs:
       - run: appstreamcli validate --no-net --explain build/com.getopenscreen.OpenScreen.metainfo.xml
 
   test:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Test
     runs-on: ubuntu-latest
     steps:
@@ -99,6 +105,7 @@ jobs:
       - run: npm run test
 
   build:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Build
     runs-on: ubuntu-latest
     steps:
@@ -152,6 +159,7 @@ jobs:
   # what `macos-latest` has been since macos-14. Re-pin it and this breaks again on
   # Homebrew's schedule rather than on ours.
   rust-macos-compositor-check:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Rust test (macOS compositor)
     runs-on: macos-latest
     steps:
@@ -208,6 +216,7 @@ jobs:
   # `cargo check`, not `build`: the point is "does the Windows engine still compile",
   # and check is roughly half the wall-time of a full build on a windows runner.
   rust-windows-compositor-check:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Rust check (Windows compositor)
     runs-on: windows-latest
     steps:
@@ -249,6 +258,7 @@ jobs:
   # backend CPU, qui est la propriete que cette PR ajoute. Un runner GitHub n'ayant
   # pas de GPU, c'est meme le seul endroit ou ce chemin est teste sans forcage.
   rust-linux-compositor-check:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Rust test (Linux compositor)
     runs-on: ubuntu-latest
     steps:
@@ -356,6 +366,7 @@ jobs:
   # The release build runs too, because the executable targets are not covered by the test
   # target and `-c release` is what `build:native:mac` actually produces.
   swift-macos-helper:
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (true) }}
     name: Swift test (macOS capture helper)
     runs-on: macos-latest
     steps:
@@ -370,7 +381,7 @@ jobs:
   semantic-pr:
     name: Validate PR title (semantic)
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
+    if: ${{ github.repository == 'getopenscreen/openscreen' && (github.event_name == 'pull_request') }}
     steps:
       - uses: amannn/action-semantic-pull-request@v6
         env:
