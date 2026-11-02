@@ -11,6 +11,7 @@ import { removedRawSpans } from "../timeline/programme-time";
 import { transcriptFromSegments } from "../transcription/fromStt";
 import { assetCanCarrySpeech, transcriptRelevantAssetIds } from "../transcription/status";
 import { captionCuesToTextRegions, deriveCaptionCues } from "./cues";
+import { captionDisplayCues } from "./display";
 import {
 	deriveRecordedCaptionRegions,
 	getRecordedCaptionOptions,
@@ -117,6 +118,23 @@ describe("recorded source captions", () => {
 		expect(assetCanCarrySpeech(doc, "m")).toBe(true);
 		expect(transcriptRelevantAssetIds(doc)).toEqual(["s", "m"]);
 	});
+	it("holds each source independently while preserving aligned words and cue onsets", () => {
+		const doc = recording();
+		doc.transcripts[1] = transcriptFromSegments(
+			"m",
+			[{ startSec: 2.5, endSec: 2.8, text: "microphone speech" }],
+			"en",
+		);
+		const before = JSON.stringify(doc);
+		const aligned = deriveCaptionCues(doc, getCaptionSettings(doc), {}, "system");
+		const regions = deriveRecordedCaptionRegions(doc, 16 / 9);
+		expect(regions.map((region) => [region.startMs, region.endMs])).toEqual([
+			[1000, 3000],
+			[2500, 3800],
+		]);
+		expect(aligned.map((cue) => [cue.startMs, cue.endMs])).toEqual([[1000, 2000]]);
+		expect(JSON.stringify(doc)).toBe(before);
+	});
 	it("keeps overlapping speech on the same recording clock, with distinct text and styles", () => {
 		let doc = recording();
 		doc = patchCaptionSettings(
@@ -129,8 +147,8 @@ describe("recorded source captions", () => {
 		const regions = deriveRecordedCaptionRegions(doc, 16 / 9);
 		expect(regions).toHaveLength(2);
 		expect(regions.map((r) => [r.startMs, r.endMs])).toEqual([
-			[1000, 2000],
-			[1000, 2000],
+			[1000, 3000],
+			[1000, 3000],
 		]);
 		expect(regions.map((r) => r.style?.color)).toEqual(["#ffcc44", "#ffffff"]);
 		expect(regions[0].position.y + regions[0].size.height).toBeLessThan(regions[1].position.y);
@@ -143,7 +161,7 @@ describe("recorded source captions", () => {
 		const doc = patchRecordedCaptionOptions(recording(), { system: { enabled: false } });
 		const style = getCaptionSettings(doc, 16 / 9, "microphone");
 		const expected = captionCuesToTextRegions(
-			deriveCaptionCues(doc, style, {}, "microphone"),
+			captionDisplayCues(deriveCaptionCues(doc, style, {}, "microphone"), doc),
 			style,
 			16 / 9,
 		).map((region) => ({ ...region, id: `microphone:${region.id}` }));
@@ -183,9 +201,11 @@ describe("recorded source captions", () => {
 					});
 					const style = getCaptionSettings(doc, 16 / 9, source);
 					expect(deriveRecordedCaptionRegions(doc, 16 / 9)).toEqual(
-						captionCuesToTextRegions(deriveCaptionCues(doc, style, {}, source), style, 16 / 9).map(
-							(region) => ({ ...region, id: `${source}:${region.id}` }),
-						),
+						captionCuesToTextRegions(
+							captionDisplayCues(deriveCaptionCues(doc, style, {}, source), doc),
+							style,
+							16 / 9,
+						).map((region) => ({ ...region, id: `${source}:${region.id}` })),
 					);
 				}
 	});

@@ -88,6 +88,10 @@ Dual-source distance sliders show the rendered inset and its available range. Sh
 
 双轨字幕的边距滑块显示实际边距及可调范围。短字幕会更紧凑地分层，换行字幕则保留所需空间。靠内字幕的最小边距用于避免与外侧字幕重叠；减小外侧字幕边距，也能让靠内字幕进一步接近画面边缘。单轨的位置逻辑保持原样。
 
+Caption display holds each line for up to one extra playback second after its aligned end, stopping when the next line on the same source starts or the video ends. Both sources follow this rule independently. Recognition results, aligned word timestamps and caption onsets are unchanged; preview and export use the same display rule, including through cuts and speed changes.
+
+每条字幕在原始结束时间后，默认额外保留最多 1 秒实际播放时间；如果同一路的下一条字幕提前开始，或视频已结束，就立即切换或结束显示。两轨分别应用此规则。识别结果、原始逐字对齐时间戳和字幕出现时间均不改变，预览与导出使用相同的展示规则，并适配剪切及变速。
+
 Both transcripts, styles and switches are saved with the project. CLI captions and MCP transcription also recognize the separate sources; MCP `setCaptionSettings` accepts `source`, `systemEnabled`, `microphoneEnabled` and `swapSources`. Existing mixed recordings retain their original single caption flow.
 
 两路转录、样式和开关均随项目保存。CLI 字幕和 MCP 转写同样支持独立来源；MCP 的 `setCaptionSettings` 可传入 `source`、`systemEnabled`、`microphoneEnabled` 和 `swapSources`。旧版已混音的录制继续使用原有单路字幕流程。

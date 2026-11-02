@@ -1,5 +1,6 @@
 import type { AxcutDocument } from "../schema";
 import { type CaptionTextRegion, captionCuesToTextRegions, deriveCaptionCues } from "./cues";
+import { captionDisplayCues } from "./display";
 import {
 	CAPTION_INSET_Y_MAX,
 	type CaptionBoxRect,
@@ -199,16 +200,22 @@ export function deriveRecordedCaptionRegions(
 	const available = availableRecordedCaptionSources(document);
 	const translations = getCaptionTranslations(document);
 	if (!available.length || resolveCaptionLane(document, base) === "voiceover")
-		return captionCuesToTextRegions(deriveCaptionCues(document, base, translations), base, aspect);
+		return captionCuesToTextRegions(
+			captionDisplayCues(deriveCaptionCues(document, base, translations), document),
+			base,
+			aspect,
+		);
 	const regions = recordedCaptionLayers(document, aspect).flatMap(
 		({ source, cues, settings, rect }) => {
-			return captionCuesToTextRegions(cues, settings, aspect).map((region) => ({
-				...region,
-				id: `${source}:${region.id}`,
-				verticalAlign: rect.verticalAlign,
-				position: { x: rect.x, y: rect.y },
-				size: { width: rect.width, height: rect.height },
-			}));
+			return captionCuesToTextRegions(captionDisplayCues(cues, document), settings, aspect).map(
+				(region) => ({
+					...region,
+					id: `${source}:${region.id}`,
+					verticalAlign: rect.verticalAlign,
+					position: { x: rect.x, y: rect.y },
+					size: { width: rect.width, height: rect.height },
+				}),
+			);
 		},
 	);
 	// A mixed legacy clip has no independently recoverable sources and keeps its original captions.
@@ -218,11 +225,14 @@ export function deriveRecordedCaptionRegions(
 	if (legacyClips.length)
 		regions.push(
 			...captionCuesToTextRegions(
-				deriveCaptionCues(
-					{ ...document, timeline: { ...document.timeline, clips: legacyClips } },
-					base,
-					translations,
-					"recording",
+				captionDisplayCues(
+					deriveCaptionCues(
+						{ ...document, timeline: { ...document.timeline, clips: legacyClips } },
+						base,
+						translations,
+						"recording",
+					),
+					document,
 				),
 				base,
 				aspect,

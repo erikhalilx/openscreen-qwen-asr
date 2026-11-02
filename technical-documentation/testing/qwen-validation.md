@@ -1,5 +1,15 @@
 # Qwen fork validation
 
+## Caption display hold — 2026-11-03
+
+The display layer copies aligned cues and extends their ends by up to one playback second, bounded by the next visible cue on that source and the programme end. Raw transcript/cue timing generation is untouched. Unit tests cover short/zero/exact-one-second gaps, programme boundaries, deleted cues, cuts, 2x/0.5x playback and a speed boundary; dual-source tests confirm that the other source does not truncate the hold.
+
+The preceding packaged build and this build exported the same saved synthetic speech project at 1x and 2x. Both source transcripts remain byte-for-byte equivalent as JSON (36 aligned units each). Decoded audio hashes match between old and new exports at both speeds. At 5.7 seconds the formerly blank microphone row contains held text; the next caption matches the original at frame 180 (6.000 seconds, white-ink mask IoU 0.991). The system caption remains visible half a playback second after its original 9.36-second end, and is absent after 1.2 seconds; the same checks pass at 2x. Exports retain 420 frames at 1x and 210 at 2x. Full suite: 4,968 passed, one existing skip; both TypeScript checks, i18n, lint and source privacy audit pass. This is a local caption-only build, not release promotion; capture, webcam and ASR quality were not re-tested for this change.
+
+字幕展示层复制对齐结果，并把结束时间延长最多 1 秒实际播放时间；同轨下一句开始或视频结束时停止延长，不改动识别及对齐生成逻辑。单元测试覆盖短间隔、无间隔、一秒间隔、视频结尾、已删除字幕、剪切、快慢速及变速边界，并验证两路字幕互不截断。
+
+新旧安装包对同一合成语音项目分别导出原速及 2 倍速视频：两路转录各 36 个对齐单元，JSON 完全一致；两种速度下的导出音频解码哈希也完全一致。原本 5.7 秒已消失的麦克风字幕现在继续显示；第 180 帧（6.000 秒）的下一句与原版一致。末句多保留半秒时仍可见，超过一秒后消失，2 倍速同样按实际播放时间验证通过。总帧数保持原速 420 帧、2 倍速 210 帧。完整测试 4,968 项通过、1 项原有跳过项，类型、翻译键、lint 与源码脱敏检查通过。本次不涉及候选版本晋级，没有重做录制、摄像头或 ASR 识别质量测试。
+
 ## Caption inset correction — 2026-11-03
 
 Dual-source stacking now reserves a conservative wrapped-text height instead of the single-source box's three-line headroom. The inset slider and renderer share the same collision limits and effective positions, so values in the exposed range move the selected caption. Single-source placement is unchanged. Computer-use on the packaged build verified the actual minimum, a 0.5% keyboard increment, the preview, and returning to the minimum.
