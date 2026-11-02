@@ -1,5 +1,13 @@
 # Qwen fork validation
 
+## Caption inset correction — 2026-11-03
+
+Dual-source stacking now reserves a conservative wrapped-text height instead of the single-source box's three-line headroom. The inset slider and renderer share the same collision limits and effective positions, so values in the exposed range move the selected caption. Single-source placement is unchanged. Computer-use on the packaged build verified the actual minimum, a 0.5% keyboard increment, the preview, and returning to the minimum.
+
+Six native exports covered bottom-edge placement, the first 0.5% step, a larger inset, swapped sources, top-edge placement and wrapped Chinese text. Each export has 420 frames at 30 FPS. At 540p, inner yellow ink occupies rows 460–481 at the minimum and 458–479 after the first step; outer white ink stays at 512–531. The wrapped case occupies yellow rows 338–414 and white rows 451–527. Pixel checks confirm movement and separation. Full suite: 4,956 passed, one existing skip; focused follow-up, both TypeScript configurations, i18n and lint passed. The DMG and packaged signature were verified. Capture, permissions, ASR regeneration, other platforms and the full release checklist were not rerun for this caption-only change.
+
+双轨分层改为按字幕的保守换行高度预留空间，消除了把三行空白余量当成字幕间距的问题。滑块和渲染使用同一套防重叠限制及实际位置，已验证最低可调值、首次 0.5% 调节和回到最小值；单轨位置保持原样。六份导出覆盖底边、半个百分点变化、更大边距、交换位置、顶边及中文换行，逐像素检查确认移动有效且不重叠。完整测试 4,956 项通过、1 项原有跳过项，两份类型检查、翻译键检查、lint 和安装包校验通过。本次只验证字幕位置，没有重做录制、权限、ASR 或其他平台测试。
+
 Supported deployment target: Apple Silicon, macOS 26+, Node 22.22.1/npm 10.9.4 and the pinned Python 3.12/MLX runtime. The underlying capture/editor source remains complete; other Qwen inference platforms are not claimed.
 
 The original integration was exercised through the actual Electron CLI/MCP: create a project, transcribe synthetic Chinese, align characters, enable captions, save/reopen, export H.264/AAC, delete an aligned character, export the shorter result and restore a checkpoint. Exported captions were visually checked. Computer-use checked the packaged HUD, Studio, transcript seeking, caption preview and regeneration. A 74.48-second fixture retained source positions across chunk boundaries and a 25-second pause; pure silence returned no words. Cancellation, worker errors and recovery have automated tests.

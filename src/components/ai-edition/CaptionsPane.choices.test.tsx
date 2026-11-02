@@ -46,6 +46,23 @@ afterEach(() => {
 });
 
 describe("caption choices", () => {
+	it("shows the actual inner-caption inset and excludes the collision dead zone", () => {
+		show({}, true);
+		const inset = screen.getByRole("slider", { name: "Distance from bottom" });
+		const minimum = Number(inset.getAttribute("min"));
+		expect(minimum).toBeGreaterThan(0);
+		expect(minimum).toBeLessThan(12);
+		expect(inset).toHaveValue(String(minimum));
+		fireEvent.change(inset, { target: { value: String(minimum + 0.5) } });
+		expect(getCaptionSettings(useProjectStore.getState().document, 16 / 9, "system").insetY).toBe(
+			minimum + 0.5,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Microphone", pressed: true }));
+		expect(screen.getByRole("slider", { name: "Distance from bottom" })).toHaveAttribute(
+			"min",
+			"0",
+		);
+	});
 	it("offers separate caption visibility, height swap and per-source style controls", () => {
 		show({}, true);
 		const styleSources = screen.getByRole("group", { name: "Style settings for" });

@@ -136,6 +136,7 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 			: undefined;
 	const {
 		settings,
+		placement,
 		translations,
 		cues,
 		hasDocument,
@@ -682,14 +683,20 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 				<div className={styles.sliderGrid}>
 					<SliderCell
 						label={
-							settings.anchorV === "bottom"
+							(placement?.rect.verticalAlign ?? settings.anchorV) === "bottom"
 								? t("captions.distanceFromBottom")
 								: t("captions.distanceFromTop")
 						}
-						value={settings.insetY}
-						min={0}
-						max={CAPTION_INSET_Y_MAX}
-						defaultValue={DEFAULT_CAPTION_SETTINGS.insetY}
+						value={placement?.insetY ?? settings.insetY}
+						min={placement?.minInsetY ?? 0}
+						max={placement?.maxInsetY ?? CAPTION_INSET_Y_MAX}
+						defaultValue={Math.max(
+							placement?.minInsetY ?? 0,
+							Math.min(
+								placement?.maxInsetY ?? CAPTION_INSET_Y_MAX,
+								DEFAULT_CAPTION_SETTINGS.insetY,
+							),
+						)}
 						step={0.5}
 						decimals={1}
 						suffix="%"

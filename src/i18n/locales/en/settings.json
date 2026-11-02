@@ -208,7 +208,7 @@
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",
 		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
-		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
+		"sourceLayoutHint": "Both sources use separate heights, with system audio nearer the center by default. Insets show the actual position and available range, reserving only enough space to avoid overlap. Large captions fit automatically. A single source keeps its original position.",
 		"showBackground": "Show background",
 		"deleteTranslation": "Delete this translation",
 		"legacyAnnotations": "This project still contains caption annotations from the old captions feature ({{count}}). They render on top of the caption layer.",

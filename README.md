@@ -84,6 +84,10 @@ In **Captions**, keep the master switch and independently enable either source. 
 
 在**字幕**面板中，保留总开关，并可分别开启或关闭两类字幕。**样式设置对象**用于选择要调整的来源，两轨分别保留字体、颜色、底板、六种位置、边距、行长及翻译设置。只显示一轨时，其配置和显示行为保持原样；同时显示两轨时，预览与导出使用同一套分层布局，默认系统音频字幕更靠近画面垂直中心。**调换两轨字幕位置**只交换高度，保留各自样式；字号过大时会自动适配两块独立区域。
 
+Dual-source distance sliders show the rendered inset and its available range. Short captions stack more closely; wrapped captions reserve additional room. The inner caption's minimum inset prevents overlap with the outer caption. Reducing the outer inset also lets the inner caption move closer to the edge. Single-source positioning remains unchanged.
+
+双轨字幕的边距滑块显示实际边距及可调范围。短字幕会更紧凑地分层，换行字幕则保留所需空间。靠内字幕的最小边距用于避免与外侧字幕重叠；减小外侧字幕边距，也能让靠内字幕进一步接近画面边缘。单轨的位置逻辑保持原样。
+
 Both transcripts, styles and switches are saved with the project. CLI captions and MCP transcription also recognize the separate sources; MCP `setCaptionSettings` accepts `source`, `systemEnabled`, `microphoneEnabled` and `swapSources`. Existing mixed recordings retain their original single caption flow.
 
 两路转录、样式和开关均随项目保存。CLI 字幕和 MCP 转写同样支持独立来源；MCP 的 `setCaptionSettings` 可传入 `source`、`systemEnabled`、`microphoneEnabled` 和 `swapSources`。旧版已混音的录制继续使用原有单路字幕流程。

@@ -22,6 +22,7 @@ import {
 	patchRecordedCaptionOptions,
 	type RecordedCaptionOptions,
 	type RecordedCaptionSource,
+	recordedCaptionLayers,
 } from "../captions/recordedSources";
 import { resolveCaptionLane } from "../captions/settings";
 import { resolveAspectRatioValue } from "../document/outputFormat";
@@ -32,6 +33,7 @@ import { useEditorSettings } from "./useEditorSettings";
 
 export interface UseCaptionsResult {
 	settings: CaptionSettings;
+	placement?: ReturnType<typeof recordedCaptionLayers>[number];
 	translations: CaptionTranslations;
 	/** Every cue for the current document, in timeline ms. `[]` when hidden. */
 	cues: CaptionCue[];
@@ -77,6 +79,13 @@ export function useCaptions(source?: RecordedCaptionSource): UseCaptionsResult {
 		[document, aspectValue, source],
 	);
 	const translations = useMemo(() => getCaptionTranslations(document), [document]);
+	const placement = useMemo(
+		() =>
+			document && source && resolveCaptionLane(document, settings) !== "voiceover"
+				? recordedCaptionLayers(document, aspectValue).find((layer) => layer.source === source)
+				: undefined,
+		[document, source, settings, aspectValue],
+	);
 	const cues = useMemo(
 		() => deriveCaptionCues(document, settings, translations, source),
 		[document, settings, translations, source],
@@ -200,6 +209,7 @@ export function useCaptions(source?: RecordedCaptionSource): UseCaptionsResult {
 
 	return {
 		settings,
+		placement,
 		setSources,
 		translations,
 		cues,

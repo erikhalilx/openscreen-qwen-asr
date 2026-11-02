@@ -1,5 +1,8 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { TEXT_FONT_FAMILIES, textFontFile } from "@/lib/textFonts";
 import { buildSceneDescription } from "@/native/sceneDescription";
+import { readFontMetrics } from "../annotations/fontTables";
 import { syncRecordingAudio } from "../document/recordingAudio";
 import { setDocumentWordText } from "../document/transcript";
 import { createEmptyDocument } from "../schema";
@@ -12,6 +15,7 @@ import {
 	deriveRecordedCaptionRegions,
 	getRecordedCaptionOptions,
 	patchRecordedCaptionOptions,
+	recordedCaptionLayers,
 	recordedCaptionLayout,
 } from "./recordedSources";
 import { DEFAULT_CAPTION_SETTINGS, getCaptionSettings, patchCaptionSettings } from "./settings";
@@ -68,6 +72,44 @@ function recording() {
 }
 
 describe("recorded source captions", () => {
+	it("bounds ASCII advances in every shipped face used to estimate caption wrapping", () => {
+		for (const family of TEXT_FONT_FAMILIES)
+			for (const weight of ["normal", "bold"] as const) {
+				const font = readFontMetrics(readFileSync(`public/${textFontFile(family, weight)}`));
+				expect(font).not.toBeNull();
+				expect((font?.advanceOf(32) ?? 0) / (font?.unitsPerEm ?? 1)).toBeLessThanOrEqual(0.75);
+				for (let code = 32; code <= 126; code++)
+					expect((font?.advanceOf(code) ?? 0) / (font?.unitsPerEm ?? 1)).toBeLessThanOrEqual(1.25);
+			}
+	});
+	it("moves the inner row at every valid half-percent step without reserving three empty lines", () => {
+		for (const anchorV of ["bottom", "top"] as const)
+			for (const swap of [false, true]) {
+				const settings = [0, 1].map(() => ({
+					...DEFAULT_CAPTION_SETTINGS,
+					anchorV,
+					insetY: 0,
+				})) as [typeof DEFAULT_CAPTION_SETTINGS, typeof DEFAULT_CAPTION_SETTINGS];
+				const outer = swap ? 0 : 1;
+				const inner = 1 - outer;
+				const before = recordedCaptionLayout(settings, 16 / 9, swap);
+				expect(before[inner].insetY).toBeLessThanOrEqual(10);
+				expect(before[inner].minInsetY).toBe(before[inner].insetY);
+				settings[inner].insetY = before[inner].minInsetY + 0.5;
+				const after = recordedCaptionLayout(settings, 16 / 9, swap);
+				expect(Math.abs(after[inner].rect.y - before[inner].rect.y)).toBeCloseTo(0.5);
+				expect(after[outer].rect.y).toBe(before[outer].rect.y);
+			}
+	});
+	it("reserves wrapped text without using that headroom for short captions", () => {
+		const doc = recording();
+		const short = recordedCaptionLayers(doc, 16 / 9);
+		doc.transcripts[0].words[0].text = "中文字幕".repeat(20);
+		const wrapped = recordedCaptionLayers(doc, 16 / 9);
+		expect(short[0].rect.height).toBeLessThan(10);
+		expect(wrapped[0].rect.height).toBeGreaterThan(short[0].rect.height);
+		expect(wrapped[0].rect.y + wrapped[0].rect.height).toBeLessThan(wrapped[1].rect.y);
+	});
 	it("queues both source files without transcribing the embedded combined audio", () => {
 		const doc = recording();
 		expect(assetCanCarrySpeech(doc, "v")).toBe(false);
