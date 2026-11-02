@@ -13,6 +13,7 @@ import {
 	ZOOM_DEPTH_SCALES,
 } from "@/components/video-editor/types";
 import { prepareClickSound } from "@/lib/ai-edition/clickSound";
+import { syncRecordingAudio } from "@/lib/ai-edition/document/recordingAudio";
 import type {
 	AxcutAsset,
 	AxcutClip,
@@ -109,6 +110,127 @@ function makeDoc(
 }
 
 // --- background ------------------------------------------------------------
+
+describe("separate recorded sources", () => {
+	it("suppresses the embedded mix and exports both sources with independent levels and cuts", () => {
+		let doc = syncRecordingAudio(
+			makeDoc({
+				assets: [
+					makeAsset({
+						id: "v",
+						originalPath: "/media/take.mp4",
+						durationSec: 10,
+						separateRecordingAudio: true,
+						recordingAudio: [
+							{ kind: "system", assetId: "s" },
+							{ kind: "microphone", assetId: "m" },
+						],
+					}),
+					makeAsset({
+						id: "s",
+						kind: "audio",
+						originalPath: "/media/take-system.m4a",
+						durationSec: 10,
+					}),
+					makeAsset({
+						id: "m",
+						kind: "audio",
+						originalPath: "/media/take-microphone.m4a",
+						durationSec: 10,
+					}),
+				],
+				clips: [
+					makeClip({
+						id: "c",
+						assetId: "v",
+						sourceStartSec: 2,
+						sourceEndSec: 10,
+						timelineStartSec: 0,
+						timelineEndSec: 8,
+					}),
+				],
+				timeline: {
+					trimRanges: [
+						{
+							id: "cut",
+							clipId: "c",
+							assetId: "v",
+							startSec: 4,
+							endSec: 6,
+							origin: "user",
+							reason: "",
+						},
+					],
+				},
+			}),
+		);
+		doc = {
+			...doc,
+			audioTracks: doc.audioTracks.map((t) => ({
+				...t,
+				gainDb: t.recordingSource === "system" ? -8 : 3,
+			})),
+		};
+		const scene = buildSceneDescription(doc);
+		expect(scene.clips.every((clip) => !clip.hasAudio)).toBe(true);
+		expect(
+			scene.audioTracks
+				.filter((t) => t.kind === "recording")
+				.map((t) => [t.gainDb, t.startSec, t.trimStartSec, t.trimEndSec]),
+		).toEqual([
+			[-8, 0, 2, 4],
+			[-8, 2, 6, 10],
+			[3, 0, 2, 4],
+			[3, 2, 6, 10],
+		]);
+		doc.audioTracks[1].muted = true;
+		expect(buildSceneDescription(doc).audioTracks).toHaveLength(2);
+	});
+	it("splits source audio at speed boundaries and preserves the correct source clock", () => {
+		const doc = syncRecordingAudio(
+			makeDoc({
+				assets: [
+					makeAsset({
+						id: "v",
+						originalPath: "/media/take.mp4",
+						durationSec: 10,
+						separateRecordingAudio: true,
+						recordingAudio: [{ kind: "system", assetId: "s" }],
+					}),
+					makeAsset({
+						id: "s",
+						kind: "audio",
+						originalPath: "/media/take-system.m4a",
+						durationSec: 10,
+					}),
+				],
+				clips: [
+					makeClip({
+						id: "c",
+						assetId: "v",
+						sourceStartSec: 0,
+						sourceEndSec: 10,
+						timelineStartSec: 0,
+						timelineEndSec: 10,
+					}),
+				],
+				legacyEditor: { speedRegions: [{ id: "speed", startMs: 2000, endMs: 6000, speed: 2 }] },
+			}),
+		);
+		expect(
+			buildSceneDescription(doc).audioTracks.map((t) => [
+				t.startSec,
+				t.trimStartSec,
+				t.trimEndSec,
+				t.playbackRate,
+			]),
+		).toEqual([
+			[0, 0, 2, 1],
+			[2, 2, 6, 2],
+			[4, 6, 10, 1],
+		]);
+	});
+});
 
 describe("buildSceneDescription.background", () => {
 	it('"#123456" → color', () => {

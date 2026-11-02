@@ -46,7 +46,24 @@ export interface TranscriptPlacement {
 }
 
 /** Which lane's speech the transcript tab is reading. */
-export type TranscriptLane = "recording" | "voiceover";
+export type TranscriptLane = "recording" | "voiceover" | "system" | "microphone";
+
+/** Captured sources use the same media clock as their parent picture, including silence. */
+export function recordingSourcePlacements(
+	source: "system" | "microphone",
+	audioTracks: AxcutAudioTrack[],
+): TranscriptPlacement[] {
+	return audioTracks
+		.filter((track) => track.recordingSource === source)
+		.map((track) => ({
+			id: track.id,
+			assetId: track.assetId,
+			sourceStartSec: track.offsetMs / 1000,
+			sourceEndSec: track.sourceEndSec ?? (track.offsetMs + track.endMs - track.startMs) / 1000,
+			timelineStartSec: track.startMs / 1000,
+		}))
+		.sort((a, b) => a.timelineStartSec - b.timelineStartSec);
+}
 
 /**
  * A source second of this placement's asset, as a moment on the RAW ruler.
@@ -349,6 +366,8 @@ export function lanePlacements(
 	audioTracks: AxcutAudioTrack[],
 	removed: readonly RemovedRawSpan[] = [],
 ): TranscriptPlacement[] {
+	if (lane === "system" || lane === "microphone")
+		return recordingSourcePlacements(lane, audioTracks);
 	return lane === "voiceover" ? voiceoverPlacements(audioTracks, removed) : clips;
 }
 

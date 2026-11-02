@@ -119,10 +119,20 @@ export function putCaptionTranslation(
 }
 
 /** Drop a whole language layer. The transcript is unaffected, by construction. */
-export function removeCaptionTranslation(doc: AxcutDocument, language: string): AxcutDocument {
+export function removeCaptionTranslation(
+	doc: AxcutDocument,
+	language: string,
+	assetIds?: string[],
+): AxcutDocument {
 	const existing = getCaptionTranslations(doc);
 	if (!(language in existing)) return doc;
-	const { [language]: _dropped, ...rest } = existing;
+	const { [language]: dropped, ...rest } = existing;
+	if (assetIds) {
+		const byAsset = Object.fromEntries(
+			Object.entries(dropped.byAsset).filter(([id]) => !assetIds.includes(id)),
+		);
+		if (Object.keys(byAsset).length) rest[language] = { ...dropped, byAsset };
+	}
 	return {
 		...doc,
 		legacyEditor: {

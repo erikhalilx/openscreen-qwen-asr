@@ -195,12 +195,13 @@ export function deriveCaptionCues(
 	document: AxcutDocument | null | undefined,
 	settings: CaptionSettings,
 	translations: CaptionTranslations,
+	lane?: import("../timeline/aggregated-transcript").TranscriptLane,
 ): CaptionCue[] {
 	if (!document || !settings.enabled) return [];
 	// The lane the captions are read FROM — resolved, so a stored "voiceover" whose last
 	// pill has been deleted falls back here rather than exporting nothing (issue #560).
 	const placements = lanePlacements(
-		resolveCaptionLane(document, settings),
+		lane ?? resolveCaptionLane(document, settings),
 		document.timeline.clips,
 		// `?? []` because the key is additive: a document written before it — or hand-built,
 		// never through the schema — simply has none.

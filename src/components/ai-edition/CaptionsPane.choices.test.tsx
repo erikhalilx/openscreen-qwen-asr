@@ -7,7 +7,8 @@ import { cleanup, fireEvent, render, screen, within } from "@testing-library/rea
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@/contexts/I18nContext";
 import { getCaptionSettings } from "@/lib/ai-edition/captions";
-import { type AxcutDocument, createEmptyDocument } from "@/lib/ai-edition/schema";
+import { getRecordedCaptionOptions } from "@/lib/ai-edition/captions/recordedSources";
+import { type AxcutDocument, createAudioTrack, createEmptyDocument } from "@/lib/ai-edition/schema";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { useTranscriptionStore } from "@/lib/ai-edition/store/transcriptionStore";
 import { CaptionsPane } from "./CaptionsPane";
@@ -16,8 +17,13 @@ vi.mock("@/native", () => ({ nativeBridgeClient: { aiEdition: {} } }));
 vi.mock("@/native/client", () => ({ nativeBridgeClient: { aiEdition: {} } }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-function show(legacyEditor: Record<string, unknown> = {}) {
+function show(legacyEditor: Record<string, unknown> = {}, withSources = false) {
 	const base = createEmptyDocument({ title: "T", projectId: "p1" });
+	if (withSources)
+		base.audioTracks = (["system", "microphone"] as const).map((recordingSource) => ({
+			...createAudioTrack({ assetId: recordingSource, durationSec: 10, spanSec: 10 }),
+			recordingSource,
+		}));
 	useProjectStore.setState({
 		document: { ...base, legacyEditor: { captions: { enabled: true }, ...legacyEditor } },
 	});
@@ -40,6 +46,27 @@ afterEach(() => {
 });
 
 describe("caption choices", () => {
+	it("offers separate caption visibility, height swap and per-source style controls", () => {
+		show({}, true);
+		const styleSources = screen.getByRole("group", { name: "Style settings for" });
+		fireEvent.click(within(styleSources).getByRole("button", { name: "Microphone" }));
+		fireEvent.change(screen.getByRole("slider", { name: "Size" }), {
+			target: { value: "66" },
+		});
+		expect(
+			getCaptionSettings(useProjectStore.getState().document, 16 / 9, "microphone").fontSize,
+		).toBe(66);
+		expect(getCaptionSettings(useProjectStore.getState().document, 16 / 9, "system").fontSize).toBe(
+			48,
+		);
+		fireEvent.click(screen.getByRole("button", { name: "Swap caption heights" }));
+		expect(getRecordedCaptionOptions(useProjectStore.getState().document).swap).toBe(true);
+		fireEvent.click(screen.getByRole("button", { name: "System audio", pressed: true }));
+		expect(getRecordedCaptionOptions(useProjectStore.getState().document).system.enabled).toBe(
+			false,
+		);
+		expect(screen.getByRole("button", { name: "Swap caption heights" })).toBeDisabled();
+	});
 	it("offers the display language only once there is a translation to switch to", () => {
 		show();
 		expect(screen.queryByRole("group", { name: "Display" })).not.toBeInTheDocument();

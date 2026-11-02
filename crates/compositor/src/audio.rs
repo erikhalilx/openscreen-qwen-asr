@@ -1836,7 +1836,7 @@ pub fn mix_external_tracks(mut programme: PlanarPcm, tracks: &[SceneAudioTrack])
     }
     let (voice, music): (Vec<&SceneAudioTrack>, Vec<&SceneAudioTrack>) = tracks
         .iter()
-        .partition(|track| track.kind == SceneAudioTrackKind::Voiceover);
+        .partition(|track| track.kind != SceneAudioTrackKind::Music);
     for track in voice {
         overlay_external_track(&mut programme, track, &[]);
     }
@@ -1870,12 +1870,16 @@ fn overlay_external_track(programme: &mut PlanarPcm, track: &SceneAudioTrack, du
     // decoding it only wastes time and memory — a three-hour track placed at
     // second 9 of a ten-second export must not buffer three hours of PCM.
     let remaining_sec = (programme_len - offset) as f64 / AUDIO_OUTPUT_SAMPLE_RATE as f64;
-    let trim_end = trim_end_full.min(trim_start + remaining_sec);
+    let rate = track
+        .playback_rate
+        .filter(|r| r.is_finite() && *r > 0.0)
+        .unwrap_or(1.0);
+    let trim_end = trim_end_full.min(trim_start + remaining_sec * rate);
     // The track's own length, before that cap. The fades belong to the track, not to
     // whatever the programme had room for — capping first and measuring after is what
     // made a fade-out ramp down at the truncation point instead of at the real end.
     let full_len =
-        ((trim_end_full - trim_start).max(0.0) * AUDIO_OUTPUT_SAMPLE_RATE as f64) as usize;
+        ((trim_end_full - trim_start).max(0.0) / rate * AUDIO_OUTPUT_SAMPLE_RATE as f64) as usize;
     if trim_end <= trim_start {
         return;
     }
@@ -1883,13 +1887,19 @@ fn overlay_external_track(programme: &mut PlanarPcm, track: &SceneAudioTrack, du
         Ok(Some(pcm)) => pcm,
         _ => return,
     };
+    let decoded = if (rate - 1.0).abs() > f64::EPSILON {
+        let output_len = (decoded.first().map_or(0, Vec::len) as f64 / rate).round() as usize;
+        stretch_pcm_to_length(&decoded, output_len)
+    } else {
+        decoded
+    };
     // The app's own range is -60..+12 dB (the inspector slider); clamping at
     // -12 here floored every quiet bed at a tenth of the attenuation asked for.
     // A voiceover is voice, levelled like the recording (see `loudness_gain_db`); its
     // own gain then trims from there, exactly as the preview applies it.
     let normalisation = match track.kind {
         SceneAudioTrackKind::Voiceover => loudness_gain_db(&track.path),
-        SceneAudioTrackKind::Music => 0.0,
+        SceneAudioTrackKind::Music | SceneAudioTrackKind::Recording => 0.0,
     };
     let gain = 10.0f32.powf((track.gain_db.clamp(-60.0, 12.0) + normalisation) / 20.0);
     overlay_track_pcm(
@@ -2556,8 +2566,44 @@ mod tests {
         // Each sample is two frames long: the press covers 0..1 and the hit placed one frame in
         // covers 1..2, so the seam carries both and the programme is untouched past them.
         assert_eq!(
-            out[0].iter().map(|v| (v * 100.0).round() / 100.0).collect::<Vec<_>>(),
+            out[0]
+                .iter()
+                .map(|v| (v * 100.0).round() / 100.0)
+                .collect::<Vec<_>>(),
             vec![0.5, 0.75, 0.25, 0.0]
+        );
+    }
+
+    #[test]
+    fn recording_source_keeps_its_gain_and_follows_video_speed() {
+        let file = std::env::temp_dir().join(format!(
+            "openscreen-recording-source-{}.wav",
+            std::process::id()
+        ));
+        let samples = vec![0.2f32; 96_000];
+        write_wav(&file, &vec![samples.clone(), samples]);
+        let source = SceneAudioTrack {
+            path: file.to_str().unwrap().into(),
+            start_sec: 0.25,
+            gain_db: -6.0206,
+            trim_start_sec: 0.0,
+            trim_end_sec: Some(2.0),
+            playback_rate: Some(2.0),
+            kind: SceneAudioTrackKind::Recording,
+            ..Default::default()
+        };
+        let programme = vec![vec![0.0; 96_000]; 2];
+        let out = mix_external_tracks(programme, &[source]);
+        let _ = std::fs::remove_file(file);
+        assert!(out[0][..12_000].iter().all(|s| *s == 0.0));
+        let mean = out[0][24_000..48_000].iter().sum::<f32>() / 24_000.0;
+        assert!(
+            (mean - 0.1).abs() < 0.005,
+            "source gain must not be replaced by normalization: {mean}"
+        );
+        assert!(
+            out[0][60_000..].iter().all(|s| *s == 0.0),
+            "2x source must end at 1.25 seconds"
         );
     }
 

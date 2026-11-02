@@ -1,5 +1,6 @@
 import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { syncRecordingAudio } from "../../src/lib/ai-edition/document/recordingAudio";
 import {
 	type AxcutAnnotationRegion,
 	type AxcutDocument,
@@ -2696,6 +2697,69 @@ describe("removeWords", () => {
 			],
 		};
 	}
+	function recordedWordDocument(): AxcutDocument {
+		const doc = repeatedWordDocument();
+		const parent = doc.assets[0];
+		doc.assets = [
+			{
+				...parent,
+				separateRecordingAudio: true,
+				recordingAudio: [
+					{ kind: "system", assetId: "system" },
+					{ kind: "microphone", assetId: "microphone" },
+				],
+			},
+			...["system", "microphone"].map((id) => ({
+				...parent,
+				id,
+				kind: "audio" as const,
+				originalPath: `/media/recording-${id}.m4a`,
+			})),
+		];
+		doc.transcripts = ["system", "microphone"].map((assetId) => ({
+			...doc.transcripts[0],
+			assetId,
+			segments: doc.transcripts[0].segments.map((segment) => ({
+				...segment,
+				wordIds: doc.transcripts[0].words
+					.filter((word) => word.segmentId === segment.id)
+					.map((word) => word.id),
+			})),
+		}));
+		return syncRecordingAudio(doc);
+	}
+	it.each([
+		"system",
+		"microphone",
+	])("corrects %s words independently and cuts the shared picture timeline", (assetId) => {
+		const before = recordedWordDocument();
+		const corrected = run(before, "setWordText", { assetId, wordId: "filler", text: "fixed" });
+		expect(corrected.ok).toBe(true);
+		expect(corrected.document?.transcripts.find((t) => t.assetId === assetId)?.words[0].text).toBe(
+			"fixed",
+		);
+		expect(corrected.document?.transcripts.find((t) => t.assetId !== assetId)?.words[0].text).toBe(
+			"like",
+		);
+		const result = run(before, "removeWords", { assetId, wordIds: ["filler"] });
+		expect(result.ok).toBe(true);
+		expect(result.document?.timeline.trimRanges.at(-1)).toMatchObject({
+			assetId: "asset_1",
+			clipId: "clip_1",
+		});
+		expect(JSON.parse(result.resultJson).removed[0].assetId).toBe(assetId);
+		expect(result.document?.transcripts).toEqual(before.transcripts);
+	});
+	it("keeps captured audio synchronized when AI tools adjust its gain or try to move it", () => {
+		const before = recordedWordDocument();
+		const audioId = before.audioTracks[0].id;
+		const moved = run(before, "setAudio", { audioId, offsetSec: 1 });
+		expect(moved.ok).toBe(false);
+		expect(moved.document).toBeUndefined();
+		const gained = run(before, "setAudio", { audioId, gainDb: -9, muted: true });
+		expect(gained.ok).toBe(true);
+		expect(gained.document?.audioTracks[0]).toMatchObject({ gainDb: -9, muted: true, offsetMs: 0 });
+	});
 
 	it("cuts only the selected occurrence and reports the trim actually stored", () => {
 		const before = repeatedWordDocument();

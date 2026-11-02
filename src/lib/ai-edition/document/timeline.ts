@@ -11,6 +11,7 @@ import type {
 	AxcutTranscript,
 	AxcutTrimRange,
 } from "../schema";
+import { syncRecordingAudio } from "./recordingAudio";
 
 /**
  * What `resolvePlaybackSegments` returns: a clip-shaped slice of playable film.
@@ -462,15 +463,17 @@ const REGION_WINDOW_EPSILON_SEC = 0.001;
 export function rederiveRegionMs(document: AxcutDocument, clips: AxcutClip[]): AxcutDocument {
 	if (clips.length === 0) return document;
 	const clipById = new Map(clips.map((c) => [c.id, c]));
-	return mapAllRegionCollections(document, (regions) =>
-		regions.flatMap((region) => {
-			if (!hasCompleteClipAnchor(region)) {
-				return [region];
-			}
-			const clip = clipById.get(region.clipId);
-			if (!clip) return [];
-			return rederiveAnchoredRegion(region, clip, clips);
-		}),
+	return syncRecordingAudio(
+		mapAllRegionCollections(document, (regions) =>
+			regions.flatMap((region) => {
+				if (!hasCompleteClipAnchor(region)) {
+					return [region];
+				}
+				const clip = clipById.get(region.clipId);
+				if (!clip) return [];
+				return rederiveAnchoredRegion(region, clip, clips);
+			}),
+		),
 	);
 }
 
@@ -1063,6 +1066,18 @@ export function duplicateClip(
 	return withClipsChanged(
 		{
 			...withModifiers,
+			// Add these after the generic walk: it reanchors against the old clip list,
+			// where the newly copied clip does not exist yet.
+			audioTracks: [
+				...withModifiers.audioTracks,
+				...document.audioTracks
+					.filter((track) => track.clipId === original.id && track.recordingSource)
+					.map((track) => ({
+						...track,
+						id: `${copy.id}:recorded:${track.recordingSource}`,
+						clipId: copy.id,
+					})),
+			],
 			timeline: {
 				...withModifiers.timeline,
 				trimRanges: [...withModifiers.timeline.trimRanges, ...copiedTrims],
@@ -1304,7 +1319,19 @@ export function clearEditRegions(document: AxcutDocument): AxcutDocument {
  * survive every move that makes it wrong.
  */
 export function withClipsChanged(document: AxcutDocument, clips: AxcutClip[]): AxcutDocument {
-	const { clips: joined, absorbed } = joinContiguous(clips);
+	const compatibleAudio = (left: AxcutClip, right: AxcutClip) => {
+		for (const source of ["system", "microphone"] as const) {
+			const a = document.audioTracks.find(
+				(track) => track.clipId === left.id && track.recordingSource === source,
+			);
+			const b = document.audioTracks.find(
+				(track) => track.clipId === right.id && track.recordingSource === source,
+			);
+			if (a && b && (a.gainDb !== b.gainDb || a.muted !== b.muted)) return false;
+		}
+		return true;
+	};
+	const { clips: joined, absorbed } = joinContiguous(clips, compatibleAudio);
 	const laid = resequenceClips(joined);
 	const reanchored = absorbed.size === 0 ? document : reanchorRows(document, absorbed);
 	const next: AxcutDocument = {
@@ -1313,12 +1340,15 @@ export function withClipsChanged(document: AxcutDocument, clips: AxcutClip[]): A
 	};
 	// `rederiveRegionMs` bails on an empty clip list — a guard against a transient wipe
 	// dropping every region — so there is nothing to refresh against.
-	return laid.length === 0 ? next : rederiveRegionMs(next, laid);
+	return laid.length === 0 ? syncRecordingAudio(next) : rederiveRegionMs(next, laid);
 }
 
 /** Fold every run of same-media, same-crop, media-contiguous clips into one, reporting the
  *  ids that went away and the clip that now carries their content. */
-function joinContiguous(clips: AxcutClip[]): {
+function joinContiguous(
+	clips: AxcutClip[],
+	compatibleAudio: (a: AxcutClip, b: AxcutClip) => boolean,
+): {
 	clips: AxcutClip[];
 	absorbed: Map<string, string>;
 } {
@@ -1329,7 +1359,7 @@ function joinContiguous(clips: AxcutClip[]): {
 	const absorbed = new Map<string, string>();
 	for (const clip of clips) {
 		const previous = out[out.length - 1];
-		if (previous && joinable(previous, clip)) {
+		if (previous && joinable(previous, clip) && compatibleAudio(previous, clip)) {
 			out[out.length - 1] = {
 				...previous,
 				sourceEndSec: clip.sourceEndSec,

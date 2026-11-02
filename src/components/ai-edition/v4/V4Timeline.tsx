@@ -534,6 +534,7 @@ const AudioLanePill = memo(function AudioLanePill({
 					left: `${leftPct}%`,
 					width: `${widthPct}%`,
 					minWidth: 3,
+					cursor: track.recordingSource ? "pointer" : undefined,
 					top: AUDIO_LANE_PAD_PX + row * rowHeight,
 					height: AUDIO_ROW_HEIGHT_PX,
 				}}
@@ -548,11 +549,11 @@ const AudioLanePill = memo(function AudioLanePill({
 					e.nativeEvent.stopPropagation();
 					onSelect(track.id);
 				}}
-				title={`${label}\n${slipHint}`}
+				title={track.recordingSource ? label : `${label}\n${slipHint}`}
 			>
 				<span
 					className={styles.lanePillHandle}
-					style={{ left: 0 }}
+					style={{ left: 0, display: track.recordingSource ? "none" : undefined }}
 					onPointerDown={(e) => onStartDrag(e, track, "l")}
 				/>
 				<ClipWaveform
@@ -586,7 +587,7 @@ const AudioLanePill = memo(function AudioLanePill({
 				</span>
 				<span
 					className={styles.lanePillHandle}
-					style={{ right: 0 }}
+					style={{ right: 0, display: track.recordingSource ? "none" : undefined }}
 					onPointerDown={(e) => onStartDrag(e, track, "r")}
 				/>
 			</div>
@@ -1162,6 +1163,7 @@ export function V4Timeline({
 			e.preventDefault();
 			e.stopPropagation();
 			tl.selectAudioTrack(track.id);
+			if (track.recordingSource) return;
 			// Start clean: a previous drag's commit may still be in flight (its ref is
 			// cleared only when `placeAudioTrack` resolves). Without this, a plain
 			// select-click that never moves would let `up` read that stale value and
@@ -2393,7 +2395,15 @@ export function V4Timeline({
 													selected={tl.selectedAudioTrackId === track.id}
 													onStartDrag={startAudioDrag}
 													onSelect={tl.selectAudioTrack}
-													label={track.label || asset?.label || ts("audioTrack.defaultLabel")}
+													label={
+														track.recordingSource
+															? ts(
+																	track.recordingSource === "system"
+																		? "audio.systemSource"
+																		: "audio.microphoneSource",
+																)
+															: track.label || asset?.label || ts("audioTrack.defaultLabel")
+													}
 													slipHint={ts("audioTrack.slipHint", {
 														modifier: isMac ? "Option" : "Alt",
 													})}

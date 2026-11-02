@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "样式设置对象",
+		"sourceDisplay": "字幕来源",
+		"swapSources": "调换两轨字幕位置",
+		"sourceTimelineHint": "两路字幕共用录屏时间轴。删剪语音会同步剪切画面及两路音频；修改文字只影响当前来源。",
+		"sourceLayoutHint": "双轨显示时自动分层，默认系统音频字幕更靠近画面垂直中心；过大的字幕会自动适配。只开启一轨时，保持该轨原有的位置配置。",
 		"showBackground": "显示背景",
 		"deleteTranslation": "删除此翻译",
 		"legacyAnnotations": "此项目仍包含旧字幕功能生成的字幕批注（{{count}} 条）。它们会绘制在字幕图层之上。",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "系统音频",
+		"microphoneSource": "麦克风",
 		"outputGain": "输出电平",
 		"help": "人声会自动统一到标准响度。在此基础上调整输出电平；它在预览和导出中的效果完全一致。",
 		"reset": "重置音频",

@@ -422,9 +422,10 @@ export function resolveTranscriptGate(views: AssetTranscriptionView[]): Transcri
 export function assetCanCarrySpeech(document: AxcutDocument, assetId: string): boolean {
 	const asset = document.assets.find((a) => a.id === assetId);
 	if (!asset) return false;
-	if (asset.kind !== "audio") return true;
+	if (asset.kind !== "audio") return !asset.recordingAudio?.length;
 	return document.audioTracks.some(
-		(track) => track.assetId === assetId && track.kind === "voiceover",
+		(track) =>
+			track.assetId === assetId && (track.kind === "voiceover" || Boolean(track.recordingSource)),
 	);
 }
 
@@ -436,6 +437,12 @@ export function transcriptRelevantAssetIds(document: AxcutDocument | null): stri
 	// project whose other lane is full of words (issue #560).
 	const onTimeline: string[] = [];
 	for (const clip of document.timeline.clips) {
+		const source = document.assets.find((asset) => asset.id === clip.assetId);
+		if (source?.recordingAudio?.length) {
+			for (const linked of source.recordingAudio)
+				if (!onTimeline.includes(linked.assetId)) onTimeline.push(linked.assetId);
+			continue;
+		}
 		if (!onTimeline.includes(clip.assetId)) onTimeline.push(clip.assetId);
 	}
 	for (const placement of voiceoverPlacements(document.audioTracks ?? [])) {

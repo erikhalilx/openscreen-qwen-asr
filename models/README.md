@@ -16,4 +16,6 @@ For networks unable to reach Hugging Face, manually obtain the official original
 
 Qwen model cards declare **Apache-2.0**. The managed model directories receive its full license; Silero retains its **MIT** notice. Externally supplied model directories are never modified. Upstream model cards are downloaded as optional provenance documents for managed installs.
 
-The native capture/compositor payload is separately pinned in [native-payload.json](native-payload.json), including its official release archive and all component hashes. These binaries are OpenScreen components, not Qwen models. The three small MediaPipe webcam-segmentation models inherited from OpenScreen remain in `public/mediapipe/` under their existing Apache-2.0 notices.
+The upstream native payload baseline is pinned in [native-payload.json](native-payload.json), including its official release archive and all component hashes. The build then recompiles the fork's modified Swift capture/cursor helpers and Rust audio compositor; baseline hashes do not describe those rebuilt outputs. These binaries are OpenScreen components, not Qwen models. The three small MediaPipe webcam-segmentation models inherited from OpenScreen remain in `public/mediapipe/` under their existing Apache-2.0 notices.
+
+[native-payload.json](native-payload.json) 固定的是上游原生组件基线及其校验值。构建随后会重新编译本 fork 修改的 Swift 录屏/光标辅助程序与 Rust 音频合成器，因此基线哈希不代表重新编译后的产物。这些组件属于 OpenScreen，不是 Qwen 权重；原有 MediaPipe 小型摄像头分割模型继续遵循对应 Apache-2.0 声明。

@@ -102,6 +102,7 @@ public final class AudioTrackMixer {
 	private let includesSystemAudio: Bool
 	private let includesMicrophone: Bool
 	private let microphoneGain: Float
+	private let systemGain: Float
 	private let outputFormatDescription: CMAudioFormatDescription?
 
 	private var sources = [SourceTimeline](repeating: SourceTimeline(), count: Source.allCases.count)
@@ -130,6 +131,7 @@ public final class AudioTrackMixer {
 		includesSystemAudio: Bool,
 		includesMicrophone: Bool,
 		microphoneGain: Double,
+		systemGain: Double = 1,
 		clock: @escaping TimelineClock
 	) {
 		self.input = input
@@ -140,6 +142,7 @@ public final class AudioTrackMixer {
 		// does this. A non-finite or negative value would poison every mixed sample.
 		let sanitized = microphoneGain.isFinite ? max(0, microphoneGain) : 1
 		self.microphoneGain = Float(sanitized)
+		self.systemGain = Float(systemGain.isFinite ? max(0, systemGain) : 1)
 		self.outputFormatDescription = Self.makeOutputFormatDescription()
 	}
 
@@ -357,7 +360,7 @@ public final class AudioTrackMixer {
 	private func gain(for source: Source) -> Float {
 		switch source {
 		case .system:
-			return 1
+			return systemGain
 		case .microphone:
 			return microphoneGain
 		}

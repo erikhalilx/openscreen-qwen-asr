@@ -31,8 +31,15 @@ import {
 	captionPlatePatch,
 	captionStyleOf,
 	DEFAULT_CAPTION_SETTINGS,
+	getCaptionSettings,
 	untranslatedUnits,
 } from "@/lib/ai-edition/captions";
+import {
+	availableRecordedCaptionSources,
+	getRecordedCaptionOptions,
+	type RecordedCaptionSource,
+} from "@/lib/ai-edition/captions/recordedSources";
+import { resolveCaptionLane } from "@/lib/ai-edition/captions/settings";
 import {
 	CAPTION_WORDS_PER_LINE_MAX,
 	CAPTION_WORDS_PER_LINE_MIN,
@@ -43,6 +50,7 @@ import {
 	useTimelineTranscriptGate,
 } from "@/lib/ai-edition/store/transcriptionStore";
 import { useCaptions } from "@/lib/ai-edition/store/useCaptions";
+import { lanePlacements } from "@/lib/ai-edition/timeline/aggregated-transcript";
 import { firstTimelineBusyView } from "@/lib/ai-edition/transcription/status";
 import { TEXT_FONT_FAMILIES } from "@/lib/textFonts";
 import { nativeBridgeClient } from "@/native";
@@ -115,6 +123,17 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 	const t = useScopedT("settings");
 	const te = useScopedT("editor");
 	const tc = useScopedT("common");
+	const document = useProjectStore((s) => s.document);
+	const availableSources = availableRecordedCaptionSources(document);
+	const sourceOptions = getRecordedCaptionOptions(document);
+	const [editSource, setEditSource] = useState<RecordedCaptionSource>("system");
+	const source =
+		availableSources.length &&
+		resolveCaptionLane(document, getCaptionSettings(document)) !== "voiceover"
+			? availableSources.includes(editSource)
+				? editSource
+				: availableSources[0]
+			: undefined;
 	const {
 		settings,
 		translations,
@@ -126,8 +145,8 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 		commit,
 		saveTranslation,
 		deleteTranslation,
-	} = useCaptions();
-	const document = useProjectStore((s) => s.document);
+		setSources,
+	} = useCaptions(source);
 	const saveDocument = useProjectStore((s) => s.saveDocument);
 	// Captions are a view of the transcript, and the transcript arrives on its
 	// own (transcriptionStore's background pass). The pane reads that state
@@ -182,7 +201,13 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 			// material instead of the whole video. Units, not segments: a Whisper
 			// transcript is one segment per word, and translating single words gives
 			// nonsense in any language that reorders or agrees differently.
-			const assetIds = new Set(doc.timeline.clips.map((c) => c.assetId));
+			const assetIds = new Set(
+				lanePlacements(
+					source ?? resolveCaptionLane(doc, settings),
+					doc.timeline.clips,
+					doc.audioTracks,
+				).map((placement) => placement.assetId),
+			);
 			let translatedAny = false;
 			for (const transcript of doc.transcripts) {
 				if (!assetIds.has(transcript.assetId)) continue;
@@ -286,6 +311,46 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 						onChange={(next) => void set({ enabled: next })}
 					/>
 				</div>
+				{source ? (
+					<>
+						<div className={styles.paneRow}>
+							<span className={styles.label}>{t("captions.sourceDisplay")}</span>
+						</div>
+						{availableSources.map((kind) => (
+							<div className={styles.paneRow} key={kind}>
+								<span className={styles.label}>
+									{t(kind === "system" ? "audio.systemSource" : "audio.microphoneSource")}
+								</span>
+								<Toggle
+									ariaLabel={t(kind === "system" ? "audio.systemSource" : "audio.microphoneSource")}
+									checked={sourceOptions[kind].enabled}
+									onChange={(enabled) => void setSources({ [kind]: { enabled } })}
+								/>
+							</div>
+						))}
+						{availableSources.length === 2 ? (
+							<div className={styles.paneRow}>
+								<span className={styles.label}>{t("captions.swapSources")}</span>
+								<Toggle
+									ariaLabel={t("captions.swapSources")}
+									checked={sourceOptions.swap}
+									disabled={!sourceOptions.system.enabled || !sourceOptions.microphone.enabled}
+									onChange={(swap) => void setSources({ swap })}
+								/>
+							</div>
+						) : null}
+						<ChoiceRow
+							label={t("captions.sourceStyles")}
+							value={source}
+							options={availableSources.map((kind) => ({
+								value: kind,
+								label: t(kind === "system" ? "audio.systemSource" : "audio.microphoneSource"),
+							}))}
+							onChange={setEditSource}
+						/>
+						<p className={styles.laneSwitchNote}>{t("captions.sourceLayoutHint")}</p>
+					</>
+				) : null}
 
 				{!hasTranscript ? (
 					<div

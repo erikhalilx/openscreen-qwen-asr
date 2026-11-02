@@ -111,6 +111,10 @@ const WRITER_NAMES = {
 // ---------------------------------------------------------------------------
 
 const DECLARED: WritePath[] = [
+	w("src/lib/ai-edition/store/useCaptions.ts", "setSources", "set", "automatic"),
+	w("src/lib/ai-edition/store/useCaptions.ts", "setSources", "save", "gesture"),
+	// Independent source gain/mute, committed on slider release or toggle.
+	w("src/components/ai-edition/RightPanes.tsx", "update", "save", "gesture"),
 	// Dropping the legacy auto-caption annotations is a button in the captions pane.
 	w(
 		"src/components/ai-edition/CaptionsPane.tsx",

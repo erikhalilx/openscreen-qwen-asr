@@ -190,6 +190,16 @@ export const assetSchema = z.object({
 	// no schema-version bump (an older build simply drops the key on save).
 	transcriptionFailure: assetTranscriptionFailureSchema.nullish(),
 	cameraTrack: cameraTrackSchema,
+	/** The recording's audio is represented by its linked source tracks instead. */
+	separateRecordingAudio: z.boolean().optional(),
+	recordingAudio: z
+		.array(
+			z.object({
+				kind: z.enum(["system", "microphone"]),
+				assetId: z.string().min(1),
+			}),
+		)
+		.optional(),
 });
 
 // A crop is a sub-rectangle of the source video, expressed as fractions
@@ -684,6 +694,8 @@ export const audioTrackSchema = endGteStart(
 		...clipAnchorShape,
 		assetId: z.string().min(1),
 		kind: z.enum(["voiceover", "music"]).default("music"),
+		/** Native recording source: follows and duplicates with its screen clip. */
+		recordingSource: z.enum(["system", "microphone"]).optional(),
 		// Full source duration of the underlying file, cached here so the timeline
 		// can lay out the pill before the asset is re-probed on load.
 		durationSec: z.number().nonnegative().default(0),

@@ -1345,7 +1345,7 @@ export function documentSnapshotForModel(
 		timeBaseNote:
 			"clips and trims are in source-time seconds; zooms, speedRegions, annotations, cameraFullscreenRegions, effects and audioTracks are in virtual (edited-timeline) seconds: the editor's ruler, where a trim leaves a hole instead of shortening it and a speed region stretches nothing. The exported video's clock skips those holes and plays sped-up spans faster, so it differs from the ruler once there are any.",
 		audioNote:
-			"audioTracks are imported voiceover / music files laid over the recording. They are clip-anchored like every other region, so they travel with their clip through reorder and trim, and they play at 1x whatever a speed region does to the picture under them. addAudio places an EXISTING asset of kind 'audio': if the project has none, a file has to be imported first (importMedia, where it is offered), so never invent an id.",
+			"audioTracks with recordingSource are captured system / microphone audio on the picture's clock: they follow its cuts, moves and speed, and support gainDb and muted only. Read/edit their transcripts using their assetId; cutting their words cuts the common picture timeline. Other audioTracks are imported voiceover / music, clip-anchored through reorder and trim but playing at 1x through picture speed changes. addAudio requires an EXISTING audio asset; import a file first if needed, never invent an id.",
 		zoomNote:
 			`renderedScale is what the viewer sees (depth is an ordinal, not a factor: ${ZOOM_DEPTH_LEGEND}). ` +
 			"When a zoom carries customScale it wins over depth and depthIsOverridden is true — " +
@@ -1502,6 +1502,7 @@ export function documentSnapshotForModel(
 			assetId: t.assetId,
 			// Which lane it sits on. Also decides whether it is transcribed at all.
 			kind: t.kind,
+			...(t.recordingSource ? { recordingSource: t.recordingSource } : {}),
 			// Where in the FILE the track starts playing, in that file's own seconds.
 			offsetSec: roundSec(t.offsetMs),
 			gainDb: t.gainDb,
@@ -2244,6 +2245,7 @@ export function executeAgentTool(
 				wordId: string;
 				text: string;
 				assetId: string;
+				pictureAssetId: string;
 				clipId: string;
 				index: number;
 				startSec: number;
@@ -2284,8 +2286,10 @@ export function executeAgentTool(
 				}
 				const clips = document.timeline.clips.filter((clip) => {
 					const clipEnd = clip.sourceEndSec ?? asset.durationSec;
+					const parent = document.assets.find((candidate) => candidate.id === clip.assetId);
 					return (
-						clip.assetId === assetId &&
+						(clip.assetId === assetId ||
+							parent?.recordingAudio?.some((source) => source.assetId === assetId)) &&
 						clipEnd !== undefined &&
 						Number.isFinite(clipEnd) &&
 						startSec >= clip.sourceStartSec &&
@@ -2310,6 +2314,7 @@ export function executeAgentTool(
 					wordId,
 					text: word.text,
 					assetId,
+					pictureAssetId: clip.assetId,
 					clipId: clip.id,
 					index,
 					startSec,
@@ -2343,7 +2348,7 @@ export function executeAgentTool(
 					current,
 					"addTrim",
 					JSON.stringify({
-						assetId: first.assetId,
+						assetId: first.pictureAssetId,
 						clipId: first.clipId,
 						startSec: first.startSec,
 						endSec: run[run.length - 1].endSec,
@@ -2359,7 +2364,7 @@ export function executeAgentTool(
 					(range) => range.id === trimRangeId,
 				);
 				const clip = current.timeline.clips.find((candidate) => candidate.id === first.clipId);
-				const asset = current.assets.find((candidate) => candidate.id === first.assetId);
+				const asset = current.assets.find((candidate) => candidate.id === first.pictureAssetId);
 				const clipEnd = clip?.sourceEndSec ?? asset?.durationSec;
 				if (
 					!trim ||
@@ -3698,6 +3703,13 @@ export function executeAgentTool(
 				(t) => trackGroupId(t) === audioId,
 			);
 			if (!pill) return failure(`Unknown audio track: ${audioId}`);
+			if (
+				pill.recordingSource &&
+				["startSec", "endSec", "kind", "offsetSec", "loop", "fadeInMs", "fadeOutMs"].some(
+					(key) => parsed.data[key as keyof typeof parsed.data] !== undefined,
+				)
+			)
+				return failure("Captured audio follows its picture. Only gainDb and muted can be changed.");
 
 			if (parsed.data.offsetSec !== undefined) {
 				const asset = document.assets.find((a) => a.id === pill.assetId);

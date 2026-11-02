@@ -280,9 +280,22 @@ at <https://github.com/getopenscreen/openscreen/issues>.
 This independent fork is based on OpenScreen v2.1.2, commit
 `d8889c626f859e0be8f4f87fdffc7362629550bc`. OpenScreen's original MIT
 license, copyright notices and the component notices above are retained.
-The native source and npm/Rust dependency versions are unchanged. The local
-build helper verifies the complete native payload of that release by SHA-256;
-`models/native-payload.json` records its archive and individual file hashes.
+The npm/Rust dependency versions are retained. This fork modifies the Swift
+capture/cursor helpers and Rust audio compositor for separate recorded sources
+and silent Accessibility checks. The build first verifies the upstream native
+payload by SHA-256 (`models/native-payload.json` records that baseline), then
+rebuilds the changed helpers and compositor from this repository's source.
+The macOS FFmpeg CLI and shared libraries are built from FFmpeg 8.1.2 using
+`scripts/fetch-ffmpeg-macos.mjs` and `scripts/build-macos-compositor-addon.mjs`,
+without GPL or nonfree components, under LGPL-2.1-or-later. Corresponding source:
+<https://ffmpeg.org/releases/ffmpeg-8.1.2.tar.xz>. The libraries remain replaceable
+under `Contents/Resources/electron/native/bin/darwin-arm64/`.
+
+保留原有 npm/Rust 依赖版本。本 fork 修改了 Swift 录屏/光标辅助程序和 Rust
+音频合成器，用于独立录制音轨和静默检查辅助功能权限。构建先校验上游原生组件
+基线，再从本仓库源码重新编译修改的组件。macOS 的 FFmpeg 命令和动态库从
+8.1.2 源码构建，不启用 GPL 或 nonfree 组件，遵循 LGPL-2.1-or-later；源码
+地址和构建脚本见上文，动态库可在上述应用资源目录中替换。
 
 | Component | Relationship / version | License / source |
 | --- | --- | --- |

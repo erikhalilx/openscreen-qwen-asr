@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 import { toast } from "sonner";
+import { RecordingVolumeSlider } from "@/components/recording/RecordingVolumeSlider";
 import { AudioLevelMeter } from "@/components/ui/audio-level-meter";
 import { Tooltip } from "@/components/ui/tooltip";
 import { useScopedT } from "@/contexts/I18nContext";
@@ -37,6 +38,8 @@ interface RecordingPrefsState {
 	camDeviceId: string | null;
 	camDeviceName: string | null;
 	systemAudioEnabled: boolean;
+	systemAudioVolume?: number;
+	microphoneVolume?: number;
 	cursorCaptureMode: "editable-overlay" | "system";
 	hideDesktopIcons: boolean;
 	autoZoomEnabled: boolean;
@@ -88,6 +91,7 @@ export function RecStage({
 	onClose?: () => void;
 }) {
 	const t = useScopedT("editor");
+	const ts = useScopedT("settings");
 	const [prefs, setPrefsState] = useState<RecordingPrefsState>(DEFAULT_PREFS);
 	// Bumped by every local change and every pushed snapshot, so the re-read after a
 	// failed write can tell that something newer has landed since.
@@ -516,6 +520,23 @@ export function RecStage({
 								</button>
 							</div>
 						</div>
+					) : null}
+
+					{getPlatform() === "darwin" ? (
+						<>
+							<RecordingVolumeSlider
+								label={ts("audio.systemSource")}
+								value={prefs.systemAudioVolume ?? 1}
+								disabled={!prefs.systemAudioEnabled}
+								onChange={(value) => updatePrefs({ systemAudioVolume: value })}
+							/>
+							<RecordingVolumeSlider
+								label={ts("audio.microphoneSource")}
+								value={prefs.microphoneVolume ?? 1}
+								disabled={!prefs.micEnabled}
+								onChange={(value) => updatePrefs({ microphoneVolume: value })}
+							/>
+						</>
 					) : null}
 
 					<div className={styles.recRow}>

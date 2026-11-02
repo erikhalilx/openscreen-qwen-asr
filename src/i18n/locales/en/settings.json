@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "Style settings for",
+		"sourceDisplay": "Caption sources",
+		"swapSources": "Swap caption heights",
+		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
+		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
 		"showBackground": "Show background",
 		"deleteTranslation": "Delete this translation",
 		"legacyAnnotations": "This project still contains caption annotations from the old captions feature ({{count}}). They render on top of the caption layer.",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "System audio",
+		"microphoneSource": "Microphone",
 		"outputGain": "Output level",
 		"help": "Voices are levelled to a standard loudness automatically. Adjust the output level from there; it applies identically in the preview and the export.",
 		"reset": "Reset audio",

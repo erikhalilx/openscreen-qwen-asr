@@ -248,6 +248,10 @@ export function collapseTracksToPills(tracks: AxcutAudioTrack[]): AxcutAudioTrac
 export function removeAudioTrack(doc: AxcutDocument, trackId: string): AxcutDocument {
 	const doomed = doc.audioTracks.filter((t) => trackGroupId(t) === trackId);
 	if (doomed.length === 0) return doc;
+	// The source belongs to the picture. Deleting its pill silences it without
+	// orphaning a linked recording asset or recreating an audible pill on save.
+	if (doomed.some((track) => track.recordingSource))
+		return patchAudioTrack(doc, trackId, { muted: true });
 	const audioTracks = doc.audioTracks.filter((t) => trackGroupId(t) !== trackId);
 	const assetId = doomed[0].assetId;
 	const stillReferenced =
@@ -550,7 +554,10 @@ export function separateAudioLanes(tracks: AxcutAudioTrack[]): AxcutAudioTrack[]
 	const shift = new Map<string, number>();
 	for (const kind of ["voiceover", "music"] as const) {
 		let cursor = Number.NEGATIVE_INFINITY;
-		for (const pill of audioLanePills(tracks, kind)) {
+		for (const pill of audioLanePills(
+			tracks.filter((track) => !track.recordingSource),
+			kind,
+		)) {
 			const spanMs = Math.max(0, pill.endMs - pill.startMs);
 			const startMs = Math.max(pill.startMs, cursor);
 			if (startMs !== pill.startMs) shift.set(trackGroupId(pill), startMs - pill.startMs);

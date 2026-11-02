@@ -17,6 +17,12 @@ import {
 	putCaptionTranslation,
 	removeCaptionTranslation,
 } from "../captions";
+import {
+	availableRecordedCaptionSources,
+	patchRecordedCaptionOptions,
+	type RecordedCaptionOptions,
+	type RecordedCaptionSource,
+} from "../captions/recordedSources";
 import { resolveCaptionLane } from "../captions/settings";
 import { resolveAspectRatioValue } from "../document/outputFormat";
 import type { AxcutDocument } from "../schema";
@@ -35,6 +41,7 @@ export interface UseCaptionsResult {
 	hasTranscript: boolean;
 	set: (patch: CaptionSettingsPatch) => Promise<void>;
 	setLive: (patch: CaptionSettingsPatch) => void;
+	setSources: (patch: Partial<RecordedCaptionOptions>) => Promise<void>;
 	commit: () => Promise<void>;
 	saveTranslation: (input: {
 		language: string;
@@ -46,7 +53,7 @@ export interface UseCaptionsResult {
 	deleteTranslation: (language: string) => Promise<void>;
 }
 
-export function useCaptions(): UseCaptionsResult {
+export function useCaptions(source?: RecordedCaptionSource): UseCaptionsResult {
 	const document = useProjectStore((s) => s.document);
 	const projectId = useProjectStore((s) => s.projectId);
 	const setDocument = useProjectStore((s) => s.setDocument);
@@ -66,13 +73,13 @@ export function useCaptions(): UseCaptionsResult {
 	);
 
 	const settings = useMemo(
-		() => getCaptionSettings(document, aspectValue),
-		[document, aspectValue],
+		() => getCaptionSettings(document, aspectValue, source),
+		[document, aspectValue, source],
 	);
 	const translations = useMemo(() => getCaptionTranslations(document), [document]);
 	const cues = useMemo(
-		() => deriveCaptionCues(document, settings, translations),
-		[document, settings, translations],
+		() => deriveCaptionCues(document, settings, translations, source),
+		[document, settings, translations, source],
 	);
 
 	// Asked of the lane the captions actually come from: a voiceover-only project has a
@@ -81,6 +88,13 @@ export function useCaptions(): UseCaptionsResult {
 	const hasTranscript = useMemo(() => {
 		if (!document) return false;
 		const withTranscript = new Set(document.transcripts.map((t) => t.assetId));
+		if (
+			availableRecordedCaptionSources(document).length &&
+			resolveCaptionLane(document, settings) !== "voiceover"
+		)
+			return document.audioTracks.some(
+				(track) => track.recordingSource && withTranscript.has(track.assetId),
+			);
 		return lanePlacements(
 			resolveCaptionLane(document, settings),
 			document.timeline.clips,
@@ -92,14 +106,14 @@ export function useCaptions(): UseCaptionsResult {
 		async (patch: CaptionSettingsPatch) => {
 			const doc = useProjectStore.getState().document;
 			if (!doc) return;
-			const next = patchCaptionSettings(doc, patch, aspectValue);
+			const next = patchCaptionSettings(doc, patch, aspectValue, source);
 			// The optimistic write is not the edit — the save is. Only the one that can
 			// fail records, and it names `doc` as what Ctrl+Z returns to because by then
 			// the store already holds `next`.
 			setDocument(next, { history: false });
 			await saveDocument(next, { history: true, historyBase: doc });
 		},
-		[setDocument, saveDocument, aspectValue],
+		[setDocument, saveDocument, aspectValue, source],
 	);
 
 	// See `useEditorSettings.setLive`: one undo step per slider drag, not one per
@@ -122,12 +136,12 @@ export function useCaptions(): UseCaptionsResult {
 		(patch: CaptionSettingsPatch) => {
 			const doc = useProjectStore.getState().document;
 			if (!doc) return;
-			const next = patchCaptionSettings(doc, patch, aspectValue);
+			const next = patchCaptionSettings(doc, patch, aspectValue, source);
 			if (liveDocRef.current !== doc) liveBaseRef.current = doc;
 			setDocument(next, { history: false });
 			liveDocRef.current = next;
 		},
-		[setDocument, aspectValue],
+		[setDocument, aspectValue, source],
 	);
 
 	const commit = useCallback(async () => {
@@ -151,6 +165,16 @@ export function useCaptions(): UseCaptionsResult {
 		},
 		[setDocument, saveDocument],
 	);
+	const setSources = useCallback(
+		async (patch: Partial<RecordedCaptionOptions>) => {
+			const doc = useProjectStore.getState().document;
+			if (!doc) return;
+			const next = patchRecordedCaptionOptions(doc, patch);
+			setDocument(next, { history: false });
+			await saveDocument(next, { history: true, historyBase: doc });
+		},
+		[setDocument, saveDocument],
+	);
 
 	const deleteTranslation = useCallback(
 		async (language: string) => {
@@ -158,19 +182,25 @@ export function useCaptions(): UseCaptionsResult {
 			if (!doc) return;
 			// Falling back to the original is the only sane landing spot when the
 			// language currently on screen is the one being deleted.
-			const cleared = removeCaptionTranslation(doc, language);
+			const ids = source
+				? lanePlacements(source, doc.timeline.clips, doc.audioTracks).map(
+						(placement) => placement.assetId,
+					)
+				: undefined;
+			const cleared = removeCaptionTranslation(doc, language, ids);
 			const next =
-				getCaptionSettings(cleared, aspectValue).language === language
-					? patchCaptionSettings(cleared, { language: null }, aspectValue)
+				getCaptionSettings(cleared, aspectValue, source).language === language
+					? patchCaptionSettings(cleared, { language: null }, aspectValue, source)
 					: cleared;
 			setDocument(next, { history: false });
 			await saveDocument(next, { history: true, historyBase: doc });
 		},
-		[setDocument, saveDocument, aspectValue],
+		[setDocument, saveDocument, aspectValue, source],
 	);
 
 	return {
 		settings,
+		setSources,
 		translations,
 		cues,
 		hasDocument: document !== null,

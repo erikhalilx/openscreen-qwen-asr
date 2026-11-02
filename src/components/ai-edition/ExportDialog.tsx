@@ -134,7 +134,7 @@ function buildNativeClipList(document: AxcutDocument): CompositorClipInput[] {
 				sourceStartSec: clip.sourceStartSec,
 				sourceEndSec,
 				webcamOffsetSec: camera.offsetSec,
-				hasAudio: true,
+				hasAudio: !asset.separateRecordingAudio,
 			},
 		];
 	});

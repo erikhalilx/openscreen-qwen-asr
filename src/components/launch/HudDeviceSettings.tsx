@@ -5,6 +5,7 @@ import type { CameraDevice } from "../../hooks/useCameraDevices";
 import { useCameraPreviewStream } from "../../hooks/useCameraPreviewStream";
 import type { MicrophoneDevice } from "../../hooks/useMicrophoneDevices";
 import { WEBCAM_QUALITY_IDS, type WebcamQualityId } from "../../hooks/webcamCaptureTarget";
+import { RecordingVolumeSlider } from "../recording/RecordingVolumeSlider";
 import { Tooltip } from "../ui/tooltip";
 import styles from "./LaunchWindow.module.css";
 
@@ -107,6 +108,7 @@ export const HudDeviceSettings = memo(function HudDeviceSettings({
 	onCheckForUpdates,
 	onClose,
 	panelRef,
+	audioVolumes,
 }: {
 	/** False where a take cannot record the microphone (see `canRecordMicrophone`). */
 	showMicrophone: boolean;
@@ -129,6 +131,15 @@ export const HudDeviceSettings = memo(function HudDeviceSettings({
 	onCheckForUpdates: () => void;
 	onClose: () => void;
 	panelRef: (el: HTMLDivElement | null) => void;
+	audioVolumes?: {
+		systemLabel: string;
+		microphoneLabel: string;
+		system: number;
+		microphone: number;
+		systemEnabled: boolean;
+		micEnabled: boolean;
+		onChange: (kind: "systemAudioVolume" | "microphoneVolume", value: number) => void;
+	};
 }) {
 	// Only reach for hardware that is actually there — otherwise opening the panel
 	// on a machine with no webcam fires a getUserMedia that can only fail.
@@ -166,6 +177,27 @@ export const HudDeviceSettings = memo(function HudDeviceSettings({
 					</button>
 				</Tooltip>
 			</div>
+
+			{audioVolumes ? (
+				<>
+					<RecordingVolumeSlider
+						surface="hud"
+						label={audioVolumes.systemLabel}
+						value={audioVolumes.system}
+						disabled={!audioVolumes.systemEnabled}
+						onChange={(value) => audioVolumes.onChange("systemAudioVolume", value)}
+					/>
+					{showMicrophone ? (
+						<RecordingVolumeSlider
+							surface="hud"
+							label={audioVolumes.microphoneLabel}
+							value={audioVolumes.microphone}
+							disabled={!audioVolumes.micEnabled}
+							onChange={(value) => audioVolumes.onChange("microphoneVolume", value)}
+						/>
+					) : null}
+				</>
+			) : null}
 
 			{showMicrophone ? (
 				<>

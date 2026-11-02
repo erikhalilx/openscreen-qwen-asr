@@ -24,12 +24,7 @@ import type {
 } from "@/components/video-editor/types";
 import { DEFAULT_CROP_REGION, getZoomScale } from "@/components/video-editor/types";
 import { annotationFontSizeFraction } from "@/lib/ai-edition/annotationScale";
-import {
-	captionCuesToTextRegions,
-	deriveCaptionCues,
-	getCaptionSettings,
-	getCaptionTranslations,
-} from "@/lib/ai-edition/captions";
+import { deriveRecordedCaptionRegions } from "@/lib/ai-edition/captions/recordedSources";
 import { clickSoundForDocument } from "@/lib/ai-edition/clickSound";
 import { collapseTracksToPills, trackGroupId } from "@/lib/ai-edition/document/audioTracks";
 import { createId } from "@/lib/ai-edition/document/ids";
@@ -564,7 +559,8 @@ export interface SceneDescription {
 		fadeInSec: number;
 		fadeOutSec: number;
 		/** A voiceover is voice: the export levels it like the recording's own audio. */
-		kind: AxcutAudioTrack["kind"];
+		kind: AxcutAudioTrack["kind"] | "recording";
+		playbackRate?: number;
 	}>;
 	/**
 	 * The "mouse clicks" toggle (see `src/lib/ai-edition/clickSound.ts`): the recorded clicks as
@@ -714,7 +710,7 @@ export function buildNativeClipList(document: AxcutDocument): CompositorClipInpu
 				sourceStartSec: clip.sourceStartSec,
 				sourceEndSec,
 				webcamOffsetSec: camera.offsetSec,
-				hasAudio: true,
+				hasAudio: !asset.separateRecordingAudio,
 			},
 		];
 	});
@@ -900,124 +896,166 @@ export function buildSceneDescription(
 		clickSound: settings.cursorShow && settings.cursor.clickSound,
 		clickSoundGainDb: settings.cursor.clickSoundGainDb,
 	});
-	const audioTracks = document.audioTracks.flatMap((track) => {
-		if (track.muted) return [];
-		const asset = assetById.get(track.assetId);
-		if (!asset?.originalPath) return [];
-		const sourceDurationSec = asset.durationSec ?? track.durationSec;
-		const offsetSec = track.offsetMs / 1000;
-		const startSec = projectRawTimelineSecToPlayback(
-			projectedClips,
-			document.timeline.trimRanges,
-			track.startMs / 1000,
-			rawSpeedRegions,
-		);
-		// Length is measured WITHOUT speed, position WITH it — the two do different
-		// things to a track and must not be conflated.
-		//
-		// A trim REMOVES timeline: a track inside removed time has nowhere left to
-		// be (zero length, dropped), and one crossing a cut loses what the cut took.
-		// A speed region only COMPRESSES: the track still holds all its audio and
-		// still plays at 1x, so speeding the video up must not quietly cut the
-		// narration short. It changes where the track STARTS, because the programme
-		// ahead of it got shorter, and nothing else.
-		const trimmedSpanSec =
-			projectRawTimelineSecToPlayback(
-				projectedClips,
-				document.timeline.trimRanges,
-				track.endMs / 1000,
-			) -
-			projectRawTimelineSecToPlayback(
+	const audioTracks = document.audioTracks.flatMap<SceneDescription["audioTracks"][number]>(
+		(track) => {
+			if (track.muted) return [];
+			const asset = assetById.get(track.assetId);
+			if (!asset?.originalPath) return [];
+			const sourceDurationSec = asset.durationSec ?? track.durationSec;
+			const offsetSec = track.offsetMs / 1000;
+			if (track.recordingSource) {
+				return takeProgramme(track, removed)
+					.filter((piece) => piece.kind === "play")
+					.flatMap((piece) => {
+						const start = piece.rawStartSec;
+						const end = start + piece.sourceEndSec - piece.sourceStartSec;
+						const cuts = new Set([start, end]);
+						for (const speed of rawSpeedRegions) {
+							for (const edge of [speed.startMs / 1000, speed.endMs / 1000]) {
+								if (edge > start && edge < end) cuts.add(edge);
+							}
+						}
+						const edges = [...cuts].sort((a, b) => a - b);
+						return edges.slice(0, -1).map((left, index) => {
+							const right = edges[index + 1];
+							const speed = rawSpeedRegions.find(
+								(region) =>
+									(left + right) / 2 >= region.startMs / 1000 &&
+									(left + right) / 2 < region.endMs / 1000,
+							);
+							return {
+								path: asset.originalPath,
+								kind: "recording" as const,
+								gainDb: track.gainDb,
+								startSec: projectRawTimelineSecToPlayback(
+									projectedClips,
+									document.timeline.trimRanges,
+									left,
+									rawSpeedRegions,
+								),
+								trimStartSec: piece.sourceStartSec + left - start,
+								trimEndSec: piece.sourceStartSec + right - start,
+								fadeInSec: 0,
+								fadeOutSec: 0,
+								playbackRate: speed?.speed ?? 1,
+							};
+						});
+					});
+			}
+			const startSec = projectRawTimelineSecToPlayback(
 				projectedClips,
 				document.timeline.trimRanges,
 				track.startMs / 1000,
+				rawSpeedRegions,
 			);
-		const spanSec = trimmedSpanSec;
-		if (spanSec <= 0) return [];
-		const base = {
-			path: asset.originalPath,
-			gainDb: track.gainDb,
-			fadeInSec: track.fadeInMs / 1000,
-			fadeOutSec: track.fadeOutMs / 1000,
-			kind: track.kind,
-		};
-		// The window the file has left after the offset. Without a probed duration
-		// there is nothing to loop over and nothing to cap the tail with, so the
-		// span itself is the window — the mixer stops at the real end of the file.
-		const windowSec = sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : spanSec;
-		if (windowSec <= 0) return [];
+			// Length is measured WITHOUT speed, position WITH it — the two do different
+			// things to a track and must not be conflated.
+			//
+			// A trim REMOVES timeline: a track inside removed time has nowhere left to
+			// be (zero length, dropped), and one crossing a cut loses what the cut took.
+			// A speed region only COMPRESSES: the track still holds all its audio and
+			// still plays at 1x, so speeding the video up must not quietly cut the
+			// narration short. It changes where the track STARTS, because the programme
+			// ahead of it got shorter, and nothing else.
+			const trimmedSpanSec =
+				projectRawTimelineSecToPlayback(
+					projectedClips,
+					document.timeline.trimRanges,
+					track.endMs / 1000,
+				) -
+				projectRawTimelineSecToPlayback(
+					projectedClips,
+					document.timeline.trimRanges,
+					track.startMs / 1000,
+				);
+			const spanSec = trimmedSpanSec;
+			if (spanSec <= 0) return [];
+			const base = {
+				path: asset.originalPath,
+				gainDb: track.gainDb,
+				fadeInSec: track.fadeInMs / 1000,
+				fadeOutSec: track.fadeOutMs / 1000,
+				kind: track.kind,
+			};
+			// The window the file has left after the offset. Without a probed duration
+			// there is nothing to loop over and nothing to cap the tail with, so the
+			// span itself is the window — the mixer stops at the real end of the file.
+			const windowSec =
+				sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : spanSec;
+			if (windowSec <= 0) return [];
 
-		// A cut under a VOICEOVER removes the words that were said there, not the tail of
-		// the take (issue #560). The transcript pane strikes those words through; if the
-		// mix went on playing them, shifted earlier, the red would be a lie.
-		//
-		// Music deliberately keeps the branch below: a bed plays through a cut and ends
-		// early, because slicing it at every edit is a musical regression, and a bed has no
-		// words whose redness has to be true. A LOOPING voiceover keeps it too — step 6 of
-		// #560 refuses that combination outright, and inventing semantics for something
-		// about to be banned would be the worse answer.
-		if (track.kind === "voiceover" && !track.loop) {
-			const groupId = trackGroupId(track);
-			const pill = voiceoverPills.get(groupId);
-			// Emitted from the group's HEAD fragment only — every other fragment of the same
-			// take is already covered by the pill's own walk.
-			if (!pill || pill.id !== track.id) return [];
-			const rawSpanSec = Math.max(0, pill.endMs / 1000 - pill.startMs / 1000);
-			// Unprobed assets have no real duration to cap with; the RAW span is how much
-			// file the take covers, which is the honest fallback once the cuts are taken out.
-			const voWindowSec =
-				sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : rawSpanSec;
-			const kept = takeProgramme(pill, removed)
-				.filter((piece) => piece.kind === "play")
-				.map((piece) => ({
+			// A cut under a VOICEOVER removes the words that were said there, not the tail of
+			// the take (issue #560). The transcript pane strikes those words through; if the
+			// mix went on playing them, shifted earlier, the red would be a lie.
+			//
+			// Music deliberately keeps the branch below: a bed plays through a cut and ends
+			// early, because slicing it at every edit is a musical regression, and a bed has no
+			// words whose redness has to be true. A LOOPING voiceover keeps it too — step 6 of
+			// #560 refuses that combination outright, and inventing semantics for something
+			// about to be banned would be the worse answer.
+			if (track.kind === "voiceover" && !track.loop) {
+				const groupId = trackGroupId(track);
+				const pill = voiceoverPills.get(groupId);
+				// Emitted from the group's HEAD fragment only — every other fragment of the same
+				// take is already covered by the pill's own walk.
+				if (!pill || pill.id !== track.id) return [];
+				const rawSpanSec = Math.max(0, pill.endMs / 1000 - pill.startMs / 1000);
+				// Unprobed assets have no real duration to cap with; the RAW span is how much
+				// file the take covers, which is the honest fallback once the cuts are taken out.
+				const voWindowSec =
+					sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : rawSpanSec;
+				const kept = takeProgramme(pill, removed)
+					.filter((piece) => piece.kind === "play")
+					.map((piece) => ({
+						...base,
+						startSec: projectRawTimelineSecToPlayback(
+							projectedClips,
+							document.timeline.trimRanges,
+							piece.rawStartSec,
+							rawSpeedRegions,
+						),
+						trimStartSec: piece.sourceStartSec,
+						trimEndSec: Math.min(offsetSec + voWindowSec, piece.sourceEndSec),
+					}))
+					.filter((entry) => entry.trimEndSec > entry.trimStartSec);
+				// The fades belong to the TAKE's edges, not to every piece a cut left behind.
+				return kept.map((entry, i) => ({
+					...entry,
+					fadeInSec: i === 0 ? base.fadeInSec : 0,
+					fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
+				}));
+			}
+			if (!track.loop) {
+				return [
+					{
+						...base,
+						startSec,
+						trimStartSec: offsetSec,
+						// Always concrete: the compositor preallocates its decode window
+						// from it. Whichever runs out first — the span or the file.
+						trimEndSec: offsetSec + Math.min(windowSec, spanSec),
+					},
+				];
+			}
+			// A looping track is one mix entry per repeat: the mixer overlays entries
+			// independently, so the repeats are just more of them. The last one is cut
+			// short wherever the span ends.
+			const entries = [];
+			for (let played = 0; played < spanSec && entries.length < 1000; played += windowSec) {
+				const thisSec = Math.min(windowSec, spanSec - played);
+				entries.push({
 					...base,
-					startSec: projectRawTimelineSecToPlayback(
-						projectedClips,
-						document.timeline.trimRanges,
-						piece.rawStartSec,
-						rawSpeedRegions,
-					),
-					trimStartSec: piece.sourceStartSec,
-					trimEndSec: Math.min(offsetSec + voWindowSec, piece.sourceEndSec),
-				}))
-				.filter((entry) => entry.trimEndSec > entry.trimStartSec);
-			// The fades belong to the TAKE's edges, not to every piece a cut left behind.
-			return kept.map((entry, i) => ({
-				...entry,
-				fadeInSec: i === 0 ? base.fadeInSec : 0,
-				fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
-			}));
-		}
-		if (!track.loop) {
-			return [
-				{
-					...base,
-					startSec,
+					startSec: startSec + played,
 					trimStartSec: offsetSec,
-					// Always concrete: the compositor preallocates its decode window
-					// from it. Whichever runs out first — the span or the file.
-					trimEndSec: offsetSec + Math.min(windowSec, spanSec),
-				},
-			];
-		}
-		// A looping track is one mix entry per repeat: the mixer overlays entries
-		// independently, so the repeats are just more of them. The last one is cut
-		// short wherever the span ends.
-		const entries = [];
-		for (let played = 0; played < spanSec && entries.length < 1000; played += windowSec) {
-			const thisSec = Math.min(windowSec, spanSec - played);
-			entries.push({
-				...base,
-				startSec: startSec + played,
-				trimStartSec: offsetSec,
-				trimEndSec: offsetSec + thisSec,
-				// The fades belong to the track's edges, not to every repeat.
-				fadeInSec: played === 0 ? base.fadeInSec : 0,
-				fadeOutSec: played + thisSec >= spanSec ? base.fadeOutSec : 0,
-			});
-		}
-		return entries;
-	});
+					trimEndSec: offsetSec + thisSec,
+					// The fades belong to the track's edges, not to every repeat.
+					fadeInSec: played === 0 ? base.fadeInSec : 0,
+					fadeOutSec: played + thisSec >= spanSec ? base.fadeOutSec : 0,
+				});
+			}
+			return entries;
+		},
+	);
 	const visibleClips = resolveVisibleClips(document);
 	const clips: CompositorClipInput[] = visibleClips.flatMap((clip) => {
 		const asset = assetById.get(clip.assetId);
@@ -1037,7 +1075,7 @@ export function buildSceneDescription(
 				sourceStartSec: clip.sourceStartSec,
 				sourceEndSec: resolveClipSourceEndSec(clip, asset),
 				webcamOffsetSec: camera.offsetSec,
-				hasAudio: true,
+				hasAudio: !asset.separateRecordingAudio,
 				// A held segment has an empty source window and exists only for the frames it
 				// holds; every other clip holds nothing.
 			},
@@ -1108,12 +1146,7 @@ export function buildSceneDescription(
 	// different column from each other.
 	const outputDims = pickOutputDims(document, settings.aspectRatio);
 	const captionAspect = outputDims.height > 0 ? outputDims.width / outputDims.height : 16 / 9;
-	const captionSettings = getCaptionSettings(document, captionAspect);
-	const captionRegions = captionCuesToTextRegions(
-		deriveCaptionCues(document, captionSettings, getCaptionTranslations(document)),
-		captionSettings,
-		captionAspect,
-	);
+	const captionRegions = deriveRecordedCaptionRegions(document, captionAspect);
 	const projectedAnnotations = projectRegionsToSource(
 		[
 			...(document.annotations ?? []),

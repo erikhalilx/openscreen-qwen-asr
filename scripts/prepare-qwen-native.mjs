@@ -1,5 +1,5 @@
-// Reuse the complete, unmodified native payload of the pinned upstream release.
-// Native source is unchanged; this avoids requiring Rust/FFmpeg toolchains for local installation.
+// Restore the complete verified upstream baseline and its license list.
+// qwen:build then rebuilds this fork's modified capture helpers and compositor.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";

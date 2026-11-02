@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "Style settings for",
+		"sourceDisplay": "Caption sources",
+		"swapSources": "Swap caption heights",
+		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
+		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
 		"showBackground": "배경 표시",
 		"deleteTranslation": "이 번역 삭제",
 		"legacyAnnotations": "이 프로젝트에는 이전 자막 기능의 주석이 남아 있습니다({{count}}개). 자막 레이어 위에 그려집니다.",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "시스템 오디오",
+		"microphoneSource": "마이크",
 		"outputGain": "출력 레벨",
 		"help": "음성은 표준 라우드니스로 자동 조정됩니다. 거기서부터 출력 레벨을 조정하세요. 미리보기와 내보내기에 동일하게 적용됩니다.",
 		"reset": "오디오 재설정",

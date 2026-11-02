@@ -712,6 +712,9 @@ pub struct SceneAudio {
 #[serde(rename_all = "camelCase")]
 pub struct SceneAudioTrack {
     pub path: String,
+    /// Source recordings follow video speed; imported music remains at natural speed.
+    #[serde(default)]
+    pub playback_rate: Option<f64>,
     #[serde(default)]
     pub start_sec: f64,
     #[serde(default)]
@@ -744,6 +747,7 @@ pub enum SceneAudioTrackKind {
     #[default]
     Music,
     Voiceover,
+    Recording,
 }
 
 /// One click to be heard: `time_sec` is its place on the OUTPUT programme, `gain` the linear

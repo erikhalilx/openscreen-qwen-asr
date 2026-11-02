@@ -32,6 +32,7 @@ struct RecordingRequest: Decodable {
 	struct Audio: Decodable {
 		struct SystemAudio: Decodable {
 			let enabled: Bool
+			let gain: Double?
 		}
 
 		struct Microphone: Decodable {
@@ -43,6 +44,7 @@ struct RecordingRequest: Decodable {
 
 		let system: SystemAudio
 		let microphone: Microphone
+		let separateTracks: Bool?
 	}
 
 	struct Webcam: Decodable {
@@ -136,6 +138,9 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	// audio track 0 and nothing else. See AudioTrackMixer.
 	private var audioInput: AVAssetWriterInput?
 	private var audioMixer: AudioTrackMixer?
+	private var sourceAudioMixers: [AudioTrackMixer.Source: AudioTrackMixer] = [:]
+	private var sourceAudioInputs: [AVAssetWriterInput] = []
+	private var audioSources: [String] = []
 	/// Drives the mixer's cursor while nothing is arriving to drive it. Owned by the sample
 	/// queue: created when the writer session opens, cancelled on the same queue at teardown.
 	private var audioTicker: DispatchSourceTimer?
@@ -375,7 +380,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		guard let sampleBuffer = retimedSampleBuffer(sampleBuffer, subtracting: pauseState.offset) else {
 			return
 		}
-		audioMixer?.ingest(sampleBuffer, from: .system)
+		ingestAudio(sampleBuffer, from: .system)
 	}
 
 	func pause() {
@@ -453,12 +458,12 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 
 		if type == .audio {
-			audioMixer?.ingest(sampleBuffer, from: .system)
+			ingestAudio(sampleBuffer, from: .system)
 			return
 		}
 
 		if type.rawValue == microphoneOutputTypeRawValue {
-			audioMixer?.ingest(sampleBuffer, from: .microphone)
+			ingestAudio(sampleBuffer, from: .microphone)
 			return
 		}
 
@@ -490,6 +495,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			writer.startSession(atSourceTime: presentationTime)
 			didStartWriting = true
 			audioMixer?.beginTimeline(at: presentationTime)
+			for mixer in sourceAudioMixers.values { mixer.beginTimeline(at: presentationTime) }
 			startAudioTicker()
 		}
 		// Checked before the readiness gate, not only at a false append: a failed
@@ -906,9 +912,25 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		self.writer = writer
 		self.videoInput = input
 
-		// A single mixed AAC track at the bitrate Windows encodes its own mixed track with
-		// (24 000 B/s), so the two platforms produce comparable files.
-		if request.audio.system.enabled || nativeMicrophoneEnabled {
+		// Independent AAC inputs share the video's media clock. Legacy callers can
+		// still request the original mixed stream; Qwen recording requests separate inputs.
+		if request.audio.separateTracks == true {
+			for source in AudioTrackMixer.Source.allCases {
+				let system = source == .system
+				guard system ? request.audio.system.enabled : nativeMicrophoneEnabled else { continue }
+				let input = try addAudioInput(to: writer, bitRate: 192_000)
+				sourceAudioInputs.append(input)
+				audioSources.append(system ? "system" : "microphone")
+				sourceAudioMixers[source] = AudioTrackMixer(
+					input: input,
+					includesSystemAudio: system,
+					includesMicrophone: !system,
+					microphoneGain: request.audio.microphone.gain,
+					systemGain: request.audio.system.gain ?? 1,
+					clock: { [weak self] in self?.timelineNow() ?? .invalid }
+				)
+			}
+		} else if request.audio.system.enabled || nativeMicrophoneEnabled {
 			let input = try addAudioInput(to: writer, bitRate: 192_000)
 			audioInput = input
 			audioMixer = AudioTrackMixer(
@@ -916,6 +938,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				includesSystemAudio: request.audio.system.enabled,
 				includesMicrophone: nativeMicrophoneEnabled,
 				microphoneGain: request.audio.microphone.gain,
+				systemGain: request.audio.system.gain ?? 1,
 				clock: { [weak self] in self?.timelineNow() ?? .invalid }
 			)
 		}
@@ -943,7 +966,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	/// emits at; the leeway lets the system coalesce the wakeups, since being a few milliseconds
 	/// late only means the next tick emits two chunks instead of one.
 	private func startAudioTicker() {
-		guard audioMixer != nil, audioTicker == nil else {
+		guard audioMixer != nil || !sourceAudioMixers.isEmpty, audioTicker == nil else {
 			return
 		}
 
@@ -964,6 +987,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				return
 			}
 			self.audioMixer?.tick()
+			for mixer in self.sourceAudioMixers.values { mixer.tick() }
 		}
 		audioTicker = timer
 		timer.resume()
@@ -1010,6 +1034,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
 			let end = timelineNow()
 			audioMixer?.finish(atSourceTime: end)
+			for mixer in sourceAudioMixers.values { mixer.finish(atSourceTime: end) }
 			if didStartWriting, writer.status == .writing {
 				writer.endSession(atSourceTime: end)
 			}
@@ -1029,6 +1054,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 
 		videoInput?.markAsFinished()
 		audioInput?.markAsFinished()
+		for input in sourceAudioInputs { input.markAsFinished() }
 
 		await withCheckedContinuation { continuation in
 			writer.finishWriting {
@@ -1040,6 +1066,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			emit([
 				"event": "recording-stopped",
 				"screenPath": request.outputs.screenPath,
+				"audioSources": audioSources,
 				"droppedVideoFrames": droppedFrames,
 			])
 		} else {
@@ -1048,6 +1075,11 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				message: writer.error.map { "\($0)" } ?? "AVAssetWriter failed with status \(writer.status.rawValue)."
 			)
 		}
+	}
+
+	private func ingestAudio(_ sampleBuffer: CMSampleBuffer, from source: AudioTrackMixer.Source) {
+		audioMixer?.ingest(sampleBuffer, from: source)
+		sourceAudioMixers[source]?.ingest(sampleBuffer, from: source)
 	}
 
 	private func addAudioInput(to writer: AVAssetWriter, bitRate: Int) throws -> AVAssetWriterInput {

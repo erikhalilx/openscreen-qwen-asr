@@ -21,6 +21,8 @@ const defaults: RecordingPrefs = {
 	camDeviceName: null,
 	camQuality: "2160p",
 	systemAudioEnabled: false,
+	systemAudioVolume: 1,
+	microphoneVolume: 1,
 	cursorCaptureMode: "editable-overlay",
 	hideDesktopIcons: false,
 	autoZoomEnabled: true,

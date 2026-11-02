@@ -25,8 +25,10 @@ export type NativeMacRecordingRequest = {
 		hideSystemCursor: boolean;
 	};
 	audio: {
+		separateTracks?: boolean;
 		system: {
 			enabled: boolean;
+			gain?: number;
 		};
 		microphone: {
 			enabled: boolean;

@@ -61,6 +61,7 @@ import { keepTimeByWallClock } from "./wallClock";
 
 export interface VideoSource {
 	id: string;
+	suppressOriginalAudio?: boolean;
 	src: string;
 	/** Original filesystem path, used by the main process to expose the second audio track. */
 	filePath?: string;
@@ -662,9 +663,11 @@ export function VirtualPreview({
 			);
 		}
 	}, [voicePathsKey, retryToken, activeVoicePath]);
-	const voiceGainDb = activeSource?.filePath
-		? (loudnessGainDbByPath.get(activeSource.filePath) ?? 0)
-		: 0;
+	const voiceGainDb = activeSource?.suppressOriginalAudio
+		? -Infinity
+		: activeSource?.filePath
+			? (loudnessGainDbByPath.get(activeSource.filePath) ?? 0)
+			: 0;
 	const voiceGainDbRef = useRef(voiceGainDb);
 	voiceGainDbRef.current = voiceGainDb;
 
@@ -759,7 +762,8 @@ export function VirtualPreview({
 				source.connect(trackGain);
 				trackGain.connect(graph.gain);
 				// A voiceover is voice: the music ducks under it as under the recording.
-				if (audioTracksRef.current.find((track) => track.id === trackId)?.kind === "voiceover") {
+				const track = audioTracksRef.current.find((track) => track.id === trackId);
+				if (track?.kind === "voiceover" || track?.recordingSource) {
 					trackGain.connect(graph.analyser);
 				}
 				audioTrackGainNodesRef.current.set(trackId, trackGain);
@@ -1078,12 +1082,24 @@ export function VirtualPreview({
 					if (!el.paused) el.pause();
 					continue;
 				}
-				const trackTarget = takePieces
-					? (takePlaybackAt(takePieces, virtualTimeSecRef.current) ?? {
-							targetTimeSec: track.offsetMs / 1000,
-							shouldPlay: false,
-						})
-					: resolveTimelineAudioPlayback(outputTimeSec, outputStartSec, track, spanSec);
+				const trackTarget = track.recordingSource
+					? {
+							targetTimeSec: Math.max(
+								track.offsetMs / 1000,
+								Math.min(v.currentTime, track.sourceEndSec ?? Infinity),
+							),
+							shouldPlay:
+								activeClipIdRef.current === track.clipId &&
+								!v.paused &&
+								v.currentTime >= track.offsetMs / 1000 &&
+								v.currentTime < (track.sourceEndSec ?? Infinity),
+						}
+					: takePieces
+						? (takePlaybackAt(takePieces, virtualTimeSecRef.current) ?? {
+								targetTimeSec: track.offsetMs / 1000,
+								shouldPlay: false,
+							})
+						: resolveTimelineAudioPlayback(outputTimeSec, outputStartSec, track, spanSec);
 				// Fades measure against the SOURCE the walk consumes, never the take's ruler
 				// extent: an insertion grows the extent without adding a second of file, and
 				// a fade-out measured on it would start early here and nowhere else.
@@ -1096,7 +1112,8 @@ export function VirtualPreview({
 				// sums it into the programme at 1× — speed regions stretch clip PCM only,
 				// never the imported track — so following `v.playbackRate` would pitch a
 				// voiceover up under a 2× region and finish it early, diverging from export.
-				if (el.playbackRate !== 1) el.playbackRate = 1;
+				const trackRate = track.recordingSource ? v.playbackRate : 1;
+				if (el.playbackRate !== trackRate) el.playbackRate = trackRate;
 				// A voiceover is voice: levelled like the recording, its own gain trimming from
 				// there — the sum `mix_external_tracks` applies. A music bed is not levelled; it
 				// ducks under the voice instead.
@@ -1106,7 +1123,7 @@ export function VirtualPreview({
 						(source) => source.id === track.assetId,
 					)?.filePath;
 					trackGainDb += path ? (loudnessGainDbByPathRef.current.get(path) ?? 0) : 0;
-				} else {
+				} else if (!track.recordingSource) {
 					trackGainDb += duck.db;
 				}
 				const trackGainNode = audioTrackGainNodesRef.current.get(track.id);
@@ -1847,6 +1864,7 @@ export function VirtualPreview({
 							ref={setPrimaryAudioElement}
 							src={activeSource.src}
 							preload="metadata"
+							muted={activeSource.suppressOriginalAudio}
 							aria-hidden="true"
 							data-testid="preview-audio-primary"
 							// The recording's own mp4: without this its picture is decoded too.

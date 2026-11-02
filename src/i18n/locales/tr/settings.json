@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "Style settings for",
+		"sourceDisplay": "Caption sources",
+		"swapSources": "Swap caption heights",
+		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
+		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
 		"showBackground": "Arka planı göster",
 		"deleteTranslation": "Bu çeviriyi sil",
 		"legacyAnnotations": "Bu proje hâlâ eski altyazı özelliğinden kalan altyazı açıklamaları içeriyor ({{count}}). Altyazı katmanının üstünde çizilirler.",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "Sistem sesi",
+		"microphoneSource": "Mikrofon",
 		"outputGain": "Çıkış seviyesi",
 		"help": "Sesler otomatik olarak standart bir ses yüksekliğine getirilir. Çıkış seviyesini buradan ayarlayın; önizlemede ve dışa aktarmada aynı şekilde uygulanır.",
 		"reset": "Sesi sıfırla",

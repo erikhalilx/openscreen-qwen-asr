@@ -56,10 +56,12 @@ import {
 	type WebcamBackgroundMode,
 } from "@/components/video-editor/types";
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
+import { availableRecordedCaptionSources } from "@/lib/ai-edition/captions/recordedSources";
 import { resolveCaptionLane } from "@/lib/ai-edition/captions/settings";
 import {
 	AUDIO_FADE_MAX_MS,
 	collapseTracksToPills,
+	patchAudioTrack,
 	trackGroupId,
 } from "@/lib/ai-edition/document/audioTracks";
 import {
@@ -95,6 +97,7 @@ import {
 	findCueWordId,
 	isInsertedWord,
 	isSilenceWord,
+	lanePlacements,
 	placementRawExtent,
 	placementRawSec,
 	type TranscriptLane,
@@ -768,37 +771,51 @@ export function WallpaperPicker({
 function TranscriptLaneSwitch({
 	lane,
 	onChange,
+	lanes = ["recording", "voiceover"],
 }: {
 	lane: TranscriptLane;
 	onChange: (lane: TranscriptLane) => void;
+	lanes?: TranscriptLane[];
 }) {
 	const ts = useScopedT("settings");
 	return (
 		<>
 			<div className={styles.laneSwitch} role="group" aria-label={ts("transcript.laneLabel")}>
-				<button
-					type="button"
-					className={`${styles.laneSwitchBtn} ${lane === "recording" ? styles.isActive : ""}`}
-					aria-pressed={lane === "recording"}
-					onClick={() => onChange("recording")}
-				>
-					<Video size={13} />
-					{ts("transcript.laneRecording")}
-				</button>
-				<button
-					type="button"
-					className={`${styles.laneSwitchBtn} ${lane === "voiceover" ? styles.isActive : ""}`}
-					aria-pressed={lane === "voiceover"}
-					onClick={() => onChange("voiceover")}
-				>
-					<Mic size={13} />
-					{ts("transcript.laneVoiceover")}
-				</button>
+				{lanes.map((option) => (
+					<button
+						key={option}
+						type="button"
+						className={`${styles.laneSwitchBtn} ${lane === option ? styles.isActive : ""}`}
+						aria-pressed={lane === option}
+						onClick={() => onChange(option)}
+					>
+						{option === "recording" || option === "system" ? (
+							<Video size={13} />
+						) : (
+							<Mic size={13} />
+						)}
+						{ts(
+							option === "system"
+								? "audio.systemSource"
+								: option === "microphone"
+									? "audio.microphoneSource"
+									: option === "voiceover"
+										? "transcript.laneVoiceover"
+										: "transcript.laneRecording",
+						)}
+					</button>
+				))}
 			</div>
 			{/* Said out loud, because the choice reaches further than this tab: it decides the
 		    text burnt into the exported file. A user must never be surprised by which
 		    lane their captions came from. */}
-			<p className={styles.laneSwitchNote}>{ts("transcript.laneFeedsCaptions")}</p>
+			<p className={styles.laneSwitchNote}>
+				{ts(
+					lanes.includes("system") || lanes.includes("microphone")
+						? "captions.sourceTimelineHint"
+						: "transcript.laneFeedsCaptions",
+				)}
+			</p>
 		</>
 	);
 }
@@ -912,7 +929,23 @@ export function TranscriptPane({
 		},
 		[setCaptionSettings],
 	);
-	const placements = activeLane === "voiceover" ? voiceover : clips;
+	const placements = useMemo(
+		() => lanePlacements(activeLane, clips, audioTracks, removed),
+		[activeLane, clips, audioTracks, removed],
+	);
+	const sourceLanes = availableRecordedCaptionSources(document);
+	const lanes: TranscriptLane[] = sourceLanes.length
+		? [
+				...sourceLanes,
+				...(clips.some(
+					(clip) =>
+						!document?.assets.find((asset) => asset.id === clip.assetId)?.recordingAudio?.length,
+				)
+					? ["recording" as const]
+					: []),
+				...(voiceover.length ? ["voiceover" as const] : []),
+			]
+		: ["recording", "voiceover"];
 
 	const sections = useMemo(
 		() => buildAggregatedSections(placements, transcripts, assets, removed),
@@ -930,7 +963,9 @@ export function TranscriptPane({
 	);
 
 	const laneSwitch =
-		voiceover.length > 0 ? <TranscriptLaneSwitch lane={activeLane} onChange={setLane} /> : null;
+		voiceover.length > 0 || sourceLanes.length ? (
+			<TranscriptLaneSwitch lane={activeLane} lanes={lanes} onChange={setLane} />
+		) : null;
 	// Asked of the LANE, not the document: a project with a recording transcript and a
 	// freshly imported voiceover has transcripts, and the voiceover lane still has
 	// nothing to show — the empty state is what says so.
@@ -3448,9 +3483,18 @@ function WebcamFraming({
 
 export function AudioPane() {
 	const ts = useScopedT("settings");
+	const tracks = useProjectStore((state) => state.document?.audioTracks);
+	const recorded = (tracks ?? []).filter(
+		(track, index, all) =>
+			track.recordingSource &&
+			all.findIndex((other) => other.assetId === track.assetId && other.recordingSource) === index,
+	);
 	const { settings, set, setLive, commit, hasDocument } = useEditorSettings();
 	return (
 		<Pane title={ts("audio.title")} icon={<AudioLines size={16} />} helpText={ts("audio.help")}>
+			{recorded.map((track) => (
+				<RecordingSourceGain key={track.assetId} track={track} allClips />
+			))}
 			<div className={styles.sliderGrid}>
 				<SliderCell
 					label={ts("audio.outputGain")}
@@ -3475,6 +3519,68 @@ export function AudioPane() {
 				{ts("audio.reset")}
 			</button>
 		</Pane>
+	);
+}
+
+function RecordingSourceGain({
+	track,
+	allClips = false,
+}: {
+	track: AxcutAudioTrack;
+	allClips?: boolean;
+}) {
+	const ts = useScopedT("settings");
+	const [liveGain, setLiveGain] = useState<number | null>(null);
+	const update = async (patch: Partial<Pick<AxcutAudioTrack, "gainDb" | "muted">>) => {
+		const state = useProjectStore.getState();
+		if (!state.document) return;
+		let next = state.document;
+		for (const candidate of next.audioTracks) {
+			if (allClips ? candidate.assetId === track.assetId : candidate.id === track.id)
+				next = patchAudioTrack(next, candidate.id, patch);
+		}
+		await state.saveDocument(next, { history: true });
+	};
+	return (
+		<>
+			<div className={styles.sliderGrid}>
+				<SliderCell
+					label={ts(
+						track.recordingSource === "system" ? "audio.systemSource" : "audio.microphoneSource",
+					)}
+					value={liveGain ?? track.gainDb}
+					min={-60}
+					max={12}
+					step={0.5}
+					decimals={1}
+					suffix=" dB"
+					onChange={setLiveGain}
+					onCommit={async () => {
+						if (liveGain === null) return;
+						const target = liveGain;
+						try {
+							await update({ gainDb: target });
+						} finally {
+							setLiveGain((current) => (current === target ? null : current));
+						}
+					}}
+				/>
+			</div>
+			<div className={styles.paneRow}>
+				<span className={styles.label}>{ts("audioTrack.mute")}</span>
+				<Toggle
+					checked={track.muted}
+					ariaLabel={
+						ts(
+							track.recordingSource === "system" ? "audio.systemSource" : "audio.microphoneSource",
+						) +
+						" · " +
+						ts("audioTrack.mute")
+					}
+					onChange={(muted) => void update({ muted })}
+				/>
+			</div>
+		</>
 	);
 }
 
@@ -3517,6 +3623,19 @@ export function AudioTrackPane({ tl, onClose }: { tl: TimelineApi; onClose?: () 
 		setLiveFadeOut(null);
 	}, [trackId]);
 	if (!track) return null;
+	if (track.recordingSource)
+		return (
+			<Pane
+				title={ts(
+					track.recordingSource === "system" ? "audio.systemSource" : "audio.microphoneSource",
+				)}
+				icon={<AudioLines size={16} />}
+				helpText={ts("audio.help")}
+				onClose={onClose ?? (() => tl.clearSelection())}
+			>
+				<RecordingSourceGain key={track.id} track={track} />
+			</Pane>
+		);
 	const fileName = track.label || asset?.label || asset?.originalPath?.split(/[\\/]/).pop() || "";
 
 	// Match the region panes' danger-outlined delete button (see SelectionPane).

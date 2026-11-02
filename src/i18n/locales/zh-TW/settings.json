@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "樣式設定對象",
+		"sourceDisplay": "字幕來源",
+		"swapSources": "調換兩軌字幕位置",
+		"sourceTimelineHint": "兩路字幕共用錄影時間軸。刪剪語音會同步剪切畫面及兩路音訊；修改文字只影響目前來源。",
+		"sourceLayoutHint": "雙軌顯示時自動分層，預設系統音訊字幕更靠近畫面垂直中心；過大的字幕會自動適配。只開啟一軌時，保留該軌原有的位置設定。",
 		"showBackground": "顯示背景",
 		"deleteTranslation": "刪除這個翻譯",
 		"legacyAnnotations": "此專案仍含有舊字幕功能留下的字幕註解（{{count}} 個）。它們會繪製在字幕圖層之上。",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "系統音訊",
+		"microphoneSource": "麥克風",
 		"outputGain": "輸出音量",
 		"help": "人聲會自動統一到標準響度。在此基礎上調整輸出音量；它在預覽與匯出中的效果完全一致。",
 		"reset": "重設音訊",

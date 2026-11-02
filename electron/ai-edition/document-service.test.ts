@@ -45,6 +45,43 @@ describe("DocumentService", () => {
 	});
 
 	describe("createProject", () => {
+		it("imports complete recording source sidecars and restores them after reopening", async () => {
+			const doc = await service.createProject("Separate audio");
+			const video = path.join(mediaDir, "take.mp4");
+			const recordedAudio = ["system", "microphone"].map((kind) => ({
+				kind,
+				sourcePath: path.join(mediaDir, `take-${kind}.m4a`),
+			}));
+			await fs.writeFile(video, "video");
+			for (const source of recordedAudio) await fs.writeFile(source.sourcePath, "audio");
+			await fs.writeFile(
+				path.join(mediaDir, "take.session.json"),
+				JSON.stringify({ screenVideoPath: video, createdAt: 1, recordedAudio }),
+			);
+			const imported = await service.addAsset(doc.project.id, { path: video, kind: "video" });
+			expect(imported.assets[0].recordingAudio?.map((s) => s.kind)).toEqual([
+				"system",
+				"microphone",
+			]);
+			expect(imported.assets[0].separateRecordingAudio).toBe(true);
+			expect((await service.getProject(doc.project.id)).assets).toEqual(imported.assets);
+		});
+		it("keeps the original audio when a recording sidecar is malformed or incomplete", async () => {
+			const doc = await service.createProject("Fallback");
+			const video = path.join(mediaDir, "take.mp4");
+			await fs.writeFile(video, "video");
+			await fs.writeFile(
+				path.join(mediaDir, "take.session.json"),
+				JSON.stringify({
+					screenVideoPath: video,
+					createdAt: 1,
+					recordedAudio: [null, { kind: "system", sourcePath: path.join(mediaDir, "missing.m4a") }],
+				}),
+			);
+			const imported = await service.addAsset(doc.project.id, { path: video, kind: "video" });
+			expect(imported.assets).toHaveLength(1);
+			expect(imported.assets[0].separateRecordingAudio).toBeUndefined();
+		});
 		it("creates a v8 doc with the given title and writes it to disk", async () => {
 			const doc = await service.createProject("Demo Project");
 			expect(doc.schemaVersion).toBe(8);

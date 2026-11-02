@@ -15,6 +15,18 @@ afterEach(() => {
 });
 
 describe("app settings store", () => {
+	it("persists independent recording gains and rejects non-finite or out-of-range values", () => {
+		const dir = temp();
+		const store = new AppSettingsStore(dir);
+		store.setRecordingPreferences({ systemAudioVolume: 0.35, microphoneVolume: 1.75 });
+		expect(new AppSettingsStore(dir).getSnapshot().recording).toMatchObject({
+			systemAudioVolume: 0.35,
+			microphoneVolume: 1.75,
+		});
+		for (const value of [-0.1, 2.01, NaN, Infinity])
+			expect(() => store.setRecordingPreferences({ systemAudioVolume: value })).toThrow(TypeError);
+		expect(store.getSnapshot().recording.microphoneVolume).toBe(1.75);
+	});
 	it("uses defaults for absent fields and preserves unknown keys", () => {
 		const dir = temp();
 		const file = path.join(dir, "recording-settings.json");

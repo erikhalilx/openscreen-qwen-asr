@@ -16,7 +16,7 @@ vi.mock("node:child_process", async (importOriginal) => {
 });
 
 const mocks = vi.hoisted(() => ({
-	isTrustedAccessibilityClient: vi.fn(() => true),
+	isTrustedAccessibilityClient: vi.fn((_prompt?: boolean) => true),
 	// Shared rather than two separate vi.fn()s so a test can make every candidate path
 	// unreadable and reach the missing-helper branch.
 	accessSync: vi.fn(),
@@ -44,6 +44,7 @@ vi.mock("electron", () => ({
 import { spawn } from "node:child_process";
 import {
 	isMacCursorHelperUnavailable,
+	MacNativeCursorRecordingSession,
 	requestMacCursorAccessibilityAccess,
 } from "./macNativeCursorRecordingSession";
 
@@ -99,6 +100,25 @@ async function settle<T>(pending: Promise<T>, act: () => void): Promise<T> {
 }
 
 describe("requestMacCursorAccessibilityAccess", () => {
+	it("starts repeated recordings with silent trust checks even when the old grant is stale", async () => {
+		mocks.isTrustedAccessibilityClient.mockReturnValue(false);
+		for (let take = 0; take < 2; take++) {
+			helper = new FakeHelper();
+			spawnMock.mockReturnValue(helper as unknown as ReturnType<typeof spawn>);
+			const session = new MacNativeCursorRecordingSession({
+				getDisplayBounds: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+				maxSamples: 100,
+				sampleIntervalMs: 33,
+			});
+			await settle(session.start(), () =>
+				helper.emitEvent({ type: "ready", timestampMs: 1, accessibilityTrusted: false }),
+			);
+			await session.stop();
+		}
+		expect(mocks.isTrustedAccessibilityClient.mock.calls.every((args) => args[0] === false)).toBe(
+			true,
+		);
+	});
 	it("grants when the helper reports Accessibility trust", async () => {
 		const access = await settle(requestMacCursorAccessibilityAccess(), () =>
 			helper.emitEvent({ type: "ready", timestampMs: 1, accessibilityTrusted: true }),

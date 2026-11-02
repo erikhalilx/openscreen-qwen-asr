@@ -4,12 +4,8 @@
 // requested line length, as the Captions pane would. They are the transcript drawn at
 // render time, so `openscreen export` burns them in and the editor shows them editable.
 
-import {
-	deriveCaptionCues,
-	getCaptionSettings,
-	getCaptionTranslations,
-	patchCaptionSettings,
-} from "@/lib/ai-edition/captions";
+import { patchCaptionSettings } from "@/lib/ai-edition/captions";
+import { deriveRecordedCaptionRegions } from "@/lib/ai-edition/captions/recordedSources";
 import { resolveAspectRatioValue } from "@/lib/ai-edition/document/outputFormat";
 import { applyTranscriptionResult } from "@/lib/ai-edition/document/transcript";
 import type { AxcutDocument, AxcutTranscript } from "@/lib/ai-edition/schema";
@@ -28,15 +24,26 @@ export async function captionProject(
 ): Promise<{ document: AxcutDocument; captionCount: number; transcribed: boolean }> {
 	const assetId = document.project.primaryAssetId ?? document.assets[0]?.id;
 	if (!assetId) throw new Error("Project file does not reference any recorded media");
-	const existing = findAssetTranscript(document, assetId);
-	const transcript = existing ?? (await transcribe(document, assetId));
-	if (!transcriptHasSpeech(transcript)) {
+	const primary = document.assets.find((asset) => asset.id === assetId);
+	const sourceIds = primary?.recordingAudio?.length
+		? primary.recordingAudio.map((source) => source.assetId)
+		: [assetId];
+	let transcribed = document;
+	let ranTranscription = false;
+	let speech = false;
+	for (const sourceId of sourceIds) {
+		const existing = findAssetTranscript(transcribed, sourceId);
+		const transcript = existing ?? (await transcribe(transcribed, sourceId));
+		ranTranscription ||= !existing;
+		speech ||= transcriptHasSpeech(transcript);
+		if (!transcribed.transcripts.some((candidate) => candidate.assetId === sourceId))
+			transcribed = applyTranscriptionResult(transcribed, transcript).document;
+	}
+	if (!speech) {
 		throw new Error("No speech detected in the project's audio");
 	}
 	// A transcript only in the legacy `transcript` mirror is copied into `transcripts`, which the
 	// captions read.
-	const stored = document.transcripts.some((t) => t.assetId === assetId);
-	const transcribed = stored ? document : applyTranscriptionResult(document, transcript).document;
 	// The v1 caption annotations this command used to write: the Captions pane offers to
 	// clear them, and next to real captions they would show every line twice.
 	const cleared: AxcutDocument = {
@@ -53,10 +60,6 @@ export async function captionProject(
 		},
 		aspect,
 	);
-	const captionCount = deriveCaptionCues(
-		next,
-		getCaptionSettings(next, aspect),
-		getCaptionTranslations(next),
-	).length;
-	return { document: next, captionCount, transcribed: !existing };
+	const captionCount = deriveRecordedCaptionRegions(next, aspect).length;
+	return { document: next, captionCount, transcribed: ranTranscription };
 }

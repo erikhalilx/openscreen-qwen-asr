@@ -112,6 +112,8 @@ type UseScreenRecorderReturn = {
 	webcamDeviceName: string | undefined;
 	setWebcamDeviceName: (deviceName: string | undefined) => void;
 	systemAudioEnabled: boolean;
+	systemAudioVolume: number;
+	microphoneVolume: number;
 	setSystemAudioEnabled: (enabled: boolean) => void;
 	webcamEnabled: boolean;
 	setWebcamEnabled: (enabled: boolean) => Promise<boolean>;
@@ -270,6 +272,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const [webcamQuality, setWebcamQuality] = useState<WebcamQualityId>(DEFAULT_WEBCAM_QUALITY);
 	const [webcamDeviceName, setWebcamDeviceName] = useState<string | undefined>(undefined);
 	const [systemAudioEnabled, setSystemAudioEnabled] = useState(false);
+	const [systemAudioVolume, setSystemAudioVolume] = useState(1);
+	const [microphoneVolume, setMicrophoneVolume] = useState(1);
 	const [webcamEnabled, setWebcamEnabledState] = useState(false);
 	const [cursorCaptureMode, setCursorCaptureMode] = useState<CursorCaptureMode>("editable-overlay");
 	const [softwareEncoderFallbackNoticeVisible, setSoftwareEncoderFallbackNoticeVisible] =
@@ -286,6 +290,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		let cancelled = false;
 		let receivedNewerSnapshot = false;
 		const applyPrefs = (prefs: {
+			systemAudioVolume?: number;
+			microphoneVolume?: number;
 			micEnabled: boolean;
 			micDeviceId?: string | null;
 			micDeviceName?: string | null;
@@ -312,6 +318,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			}
 			setWebcamQuality(webcamQualityFrom(prefs.camQuality));
 			setSystemAudioEnabled(prefs.systemAudioEnabled);
+			setSystemAudioVolume(prefs.systemAudioVolume ?? 1);
+			setMicrophoneVolume(prefs.microphoneVolume ?? 1);
 			setCursorCaptureMode(prefs.cursorCaptureMode);
 			setRecordingPrefsLoaded(true);
 		};
@@ -1407,13 +1415,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				audio: {
 					system: {
 						enabled: systemAudioEnabled,
+						gain: systemAudioVolume,
 					},
 					microphone: {
 						enabled: recordMicrophone,
 						deviceId: microphoneDeviceId,
 						deviceName: microphoneDeviceName,
-						// Boosted only over system audio, like the Windows request above.
-						gain: nativeMicrophoneGain(systemAudioEnabled),
+						gain: microphoneVolume,
 					},
 				},
 				webcam: {
@@ -2482,6 +2490,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		webcamDeviceName,
 		setWebcamDeviceName,
 		systemAudioEnabled,
+		systemAudioVolume,
+		microphoneVolume,
 		setSystemAudioEnabled,
 		webcamEnabled,
 		setWebcamEnabled,

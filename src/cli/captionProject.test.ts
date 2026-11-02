@@ -66,6 +66,48 @@ function transcript(text: string): AxcutTranscript {
 const LINE = { minWordsPerLine: 1, maxWordsPerLine: 2 };
 
 describe("captionProject", () => {
+	it("creates both source captions on the recording clock, including a silent source", async () => {
+		const doc = project();
+		doc.assets[0].recordingAudio = [
+			{ kind: "system", assetId: "s" },
+			{ kind: "microphone", assetId: "m" },
+		];
+		for (const [index, id] of ["s", "m"].entries()) {
+			doc.assets.push({
+				id,
+				kind: "audio",
+				label: id,
+				originalPath: `/media/${id}.m4a`,
+				cameraTrack: null,
+				durationSec: 10,
+			});
+			doc.audioTracks.push({
+				id,
+				assetId: id,
+				kind: "music",
+				recordingSource: index === 0 ? "system" : "microphone",
+				startMs: 0,
+				endMs: 10000,
+				offsetMs: 0,
+				durationSec: 10,
+				gainDb: 0,
+				loop: false,
+				muted: false,
+				fadeInMs: 0,
+				fadeOutMs: 0,
+				origin: "system",
+				label: id,
+			});
+		}
+		const transcribe = vi.fn(async (_document: AxcutDocument, assetId: string) => ({
+			...transcript(assetId === "s" ? "" : "microphone speech"),
+			assetId,
+		}));
+		const result = await captionProject(doc, LINE, transcribe);
+		expect(transcribe.mock.calls.map((args) => args[1])).toEqual(["s", "m"]);
+		expect(result.document.transcripts).toHaveLength(2);
+		expect(result.captionCount).toBeGreaterThan(0);
+	});
 	it("transcribes the primary media and turns the editor's captions on", async () => {
 		const transcribe = vi.fn(async () => transcript("one two three four"));
 		const result = await captionProject(project(), LINE, transcribe);

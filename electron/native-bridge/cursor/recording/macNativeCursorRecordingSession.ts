@@ -130,11 +130,8 @@ export async function requestMacCursorAccessibilityAccess(): Promise<MacCursorAc
 	// where it cannot (missing-helper, error, exited, timeout) the grant is not what is
 	// missing, so the prompt is exactly the noise this function now exists to stop.
 	//
-	// Nothing is lost on the one path that does ask the user for the grant: reaching
-	// `not-determined` means the helper RAN, and it calls AXIsProcessTrustedWithOptions
-	// with kAXTrustedCheckOptionPrompt itself on every start
-	// (OpenScreenMacOSCursorHelper/main.swift), which is what puts OpenScreen in the
-	// Accessibility list for the user to tick.
+	// The helper is silent too. Only the explicit request from the Permissions window
+	// may ask macOS for a grant; a probe or a recording must never create that prompt.
 	let accessibilityTrusted = false;
 	try {
 		accessibilityTrusted = systemPreferences.isTrustedAccessibilityClient(false);
@@ -248,12 +245,10 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 		this.previousLeftButtonDown = false;
 		this.consecutiveOutsideSamples = 0;
 
-		// `true` here, unlike the silent read in requestMacCursorAccessibilityAccess: the
-		// return value is discarded, so prompting IS the point. Recording is starting and
-		// the helper is about to spawn, so this is the moment the grant can still change
-		// what the take records.
+		// Recording must not raise an OS permission alert on every take. The explicit
+		// Permissions window owns requests; cursor sampling can continue without AX trust.
 		try {
-			systemPreferences.isTrustedAccessibilityClient(true);
+			systemPreferences.isTrustedAccessibilityClient(false);
 		} catch {
 			// Without Accessibility, text/pointer affordance detection is unavailable;
 			// bitmaps are still captured natively via NSCursor.

@@ -1,5 +1,6 @@
 export interface ProjectMedia {
 	screenVideoPath: string;
+	recordedAudio?: RecordedAudioSource[];
 	webcamVideoPath?: string;
 	/**
 	 * Milliseconds to shift the webcam asset's playback position relative to
@@ -11,6 +12,11 @@ export interface ProjectMedia {
 	 */
 	webcamOffsetMs?: number;
 	cursorCaptureMode?: CursorCaptureMode;
+}
+
+export interface RecordedAudioSource {
+	kind: "system" | "microphone";
+	sourcePath: string;
 }
 
 export type CursorCaptureMode = "editable-overlay" | "system";
@@ -74,6 +80,25 @@ export function normalizeProjectMedia(candidate: unknown): ProjectMedia | null {
 
 	return {
 		screenVideoPath,
+		...(Array.isArray(raw.recordedAudio)
+			? {
+					recordedAudio: raw.recordedAudio
+						.flatMap((source) => {
+							if (
+								!source ||
+								typeof source !== "object" ||
+								(source.kind !== "system" && source.kind !== "microphone")
+							)
+								return [];
+							const sourcePath = normalizePath(source.sourcePath);
+							return sourcePath ? [{ kind: source.kind, sourcePath }] : [];
+						})
+						.filter(
+							(source, index, all) =>
+								all.findIndex((other) => other.kind === source.kind) === index,
+						),
+				}
+			: {}),
 		...(webcamVideoPath ? { webcamVideoPath } : {}),
 		...(webcamOffsetMs !== undefined ? { webcamOffsetMs } : {}),
 		...(cursorCaptureMode ? { cursorCaptureMode } : {}),

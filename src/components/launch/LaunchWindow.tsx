@@ -88,6 +88,7 @@ export function LaunchWindow() {
 	const tCommon = useScopedT("common");
 	// The microphone check's toast is worded where the camera check's is: in `editor`.
 	const tEditor = useScopedT("editor");
+	const tSettings = useScopedT("settings");
 	const {
 		locale,
 		setLocale,
@@ -120,6 +121,8 @@ export function LaunchWindow() {
 		microphoneDeviceName,
 		setMicrophoneDeviceName,
 		systemAudioEnabled,
+		systemAudioVolume,
+		microphoneVolume,
 		setSystemAudioEnabled,
 		webcamEnabled,
 		setWebcamEnabled,
@@ -919,6 +922,8 @@ export function LaunchWindow() {
 			micDeviceId?: string;
 			micDeviceName?: string;
 			systemAudioEnabled?: boolean;
+			systemAudioVolume?: number;
+			microphoneVolume?: number;
 			cursorCaptureMode?: "editable-overlay" | "system";
 		}) => {
 			void window.electronAPI?.setRecordingPrefs?.(patch).catch((error) => {
@@ -1381,6 +1386,19 @@ export function LaunchWindow() {
 						{isDeviceSettingsOpen && (
 							<HudDeviceSettings
 								showMicrophone={microphoneOffered}
+								audioVolumes={
+									getPlatform() === "darwin"
+										? {
+												systemLabel: tSettings("audio.systemSource"),
+												microphoneLabel: tSettings("audio.microphoneSource"),
+												system: systemAudioVolume,
+												microphone: microphoneVolume,
+												systemEnabled: systemAudioEnabled && !controlsLocked,
+												micEnabled: microphoneEnabled && !controlsLocked,
+												onChange: (kind, value) => persistRecordingPrefs({ [kind]: value }),
+											}
+										: undefined
+								}
 								micDevices={micDevices}
 								cameraDevices={cameraDevices}
 								activeMicId={microphoneDeviceId || selectedMicId}

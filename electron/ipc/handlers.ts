@@ -131,6 +131,7 @@ import {
 import {
 	type NativeMacCaptureExit,
 	nativeMacDiscardTargets,
+	readNativeMacHelperEvents,
 	sendNativeMacStopCommand,
 	waitForNativeMacCaptureStop,
 } from "../recording/nativeMacCaptureStop";
@@ -147,6 +148,7 @@ import {
 	waitForNativeWindowsCaptureStop,
 } from "../recording/nativeWindowsCaptureStop";
 import { removeEmptyCaptureOutput } from "../recording/removeEmptyCaptureOutput";
+import { separateRecordedAudio, validatedRecordedAudio } from "../recording/separateAudio";
 import { patchWebmDurationOnDisk } from "../recording/webm-duration";
 import { reindexRecordingOnDisk } from "../recording/webm-seek-index";
 import {
@@ -674,6 +676,8 @@ let currentRecordingSession: RecordingSession | null = null;
 // startNewRecording() switches windows. Persisted in AppSettingsStore and
 // broadcast on change; not project content.
 export interface RecordingPrefs {
+	systemAudioVolume?: number;
+	microphoneVolume?: number;
 	micEnabled: boolean;
 	micDeviceId: string | null;
 	/**
@@ -1847,6 +1851,11 @@ async function loadRecordedSessionForVideoPath(
 		}
 
 		approveFilePath(session.screenVideoPath);
+		session.recordedAudio = await validatedRecordedAudio(
+			session.screenVideoPath,
+			session.recordedAudio ?? [],
+		);
+		for (const source of session.recordedAudio) approveFilePath(source.sourcePath);
 		if (session.webcamVideoPath) {
 			approveFilePath(session.webcamVideoPath);
 		}
@@ -3234,6 +3243,7 @@ export function registerIpcHandlers(
 			}
 			const config: NativeMacRecordingRequest = {
 				...request,
+				audio: { ...request.audio, separateTracks: true },
 				schemaVersion: 1,
 				recordingId,
 				excludedWindowIds: collectMacCaptureExcludedWindowIds(captureExcludedWindowSourceIds),
@@ -3795,10 +3805,34 @@ export function registerIpcHandlers(
 				);
 			}
 
+			const stoppedEvent = readNativeMacHelperEvents(nativeMacCaptureOutputs.get(proc) ?? "")
+				.filter((event) => event.event === "recording-stopped")
+				.at(-1);
+			const sources = Array.isArray(stoppedEvent?.audioSources)
+				? stoppedEvent.audioSources.filter(
+						(source): source is "system" | "microphone" =>
+							source === "system" || source === "microphone",
+					)
+				: [];
+			let recordedAudio: NonNullable<RecordingSession["recordedAudio"]> = [];
+			try {
+				recordedAudio = await separateRecordedAudio(screenVideoPath, sources);
+			} catch (error) {
+				console.warn("[native-sck] Could not create separate audio sidecars:", error);
+				warning = [
+					warning,
+					"Separate audio controls are unavailable for this take. Both sources remain in the original recording.",
+				]
+					.filter(Boolean)
+					.join(" ");
+				nativeMacRecordingWarning = { screenVideoPath, message: warning };
+			}
+			for (const source of recordedAudio) approveFilePath(source.sourcePath);
 			const session: RecordingSession = {
 				screenVideoPath,
 				createdAt: recordingId,
 				cursorCaptureMode,
+				...(recordedAudio.length ? { recordedAudio } : {}),
 			};
 			setCurrentRecordingSessionState(session);
 			currentProjectPath = null;
@@ -3921,7 +3955,11 @@ export function registerIpcHandlers(
 				const webcamOffsetMs = Number.isFinite(payload.webcamOffsetMs)
 					? payload.webcamOffsetMs
 					: undefined;
+				const capturedSession = await loadRecordedSessionForVideoPath(screenVideoPath);
 				const session: RecordingSession = {
+					...(capturedSession?.recordedAudio?.length
+						? { recordedAudio: capturedSession.recordedAudio }
+						: {}),
 					screenVideoPath,
 					webcamVideoPath,
 					createdAt,

@@ -85,6 +85,24 @@ const docB: AxcutDocument = {
 const fontSizeOf = (doc: unknown) => getCaptionSettings(doc as AxcutDocument).fontSize;
 
 describe("useCaptions drag snapshots", () => {
+	it("commits a source's live style as one undo step without changing the other source", async () => {
+		const { result } = renderHook(() => useCaptions("system"));
+		act(() => result.current.setLive({ fontSize: 60 }));
+		act(() => result.current.setLive({ fontSize: 72 }));
+		await act(async () => {
+			await result.current.commit();
+		});
+		const edited = useProjectStore.getState().document;
+		expect(getCaptionSettings(edited, 16 / 9, "system").fontSize).toBe(72);
+		expect(getCaptionSettings(edited, 16 / 9, "microphone").fontSize).toBe(48);
+		expect(past).toHaveLength(1);
+		await act(async () => {
+			await undo();
+		});
+		expect(getCaptionSettings(useProjectStore.getState().document, 16 / 9, "system").fontSize).toBe(
+			48,
+		);
+	});
 	beforeEach(() => {
 		useProjectStore.getState().clear();
 		clearHistory();

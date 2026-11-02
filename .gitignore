@@ -167,3 +167,9 @@ __pycache__/
 *.pyc
 /runtime/
 /models/downloads/
+
+# Private source recordings and their session/cursor sidecars.
+*.m4a
+*.aac
+*.session.json
+*.mp4.cursor.json

@@ -562,7 +562,30 @@ function migrateLegacyPlacement(
 export function getCaptionSettings(
 	doc: AxcutDocument | null | undefined,
 	aspectValue = 16 / 9,
+	source?: "system" | "microphone",
 ): CaptionSettings {
+	if (source) {
+		const sources = legacyBlob(doc)?.recordedCaptions as Record<string, unknown> | undefined;
+		const entry = sources?.[source] as { style?: Record<string, unknown> } | undefined;
+		const style = entry?.style;
+		const base = getCaptionSettings(doc, aspectValue);
+		if (!doc || !style || typeof style !== "object") return base;
+		return getCaptionSettings(
+			{
+				...doc,
+				legacyEditor: {
+					...legacyBlob(doc),
+					captions: {
+						...base,
+						...style,
+						enabled: base.enabled,
+						captionLane: base.captionLane,
+					},
+				},
+			},
+			aspectValue,
+		);
+	}
 	const raw = storedCaptions(doc);
 	const d = DEFAULT_CAPTION_SETTINGS;
 	const defaultInsetY = defaultCaptionInsetY(aspectValue);
@@ -628,7 +651,7 @@ export function getCaptionSettings(
 	};
 }
 
-const CAPTION_LANES = ["recording", "voiceover"] as const;
+const CAPTION_LANES = ["recording", "voiceover", "system", "microphone"] as const;
 
 /**
  * The lane the captions are ACTUALLY read from — the stored choice, or "recording" when
@@ -643,8 +666,15 @@ export function resolveCaptionLane(
 	doc: AxcutDocument | null | undefined,
 	settings: CaptionSettings,
 ): TranscriptLane {
-	if (settings.captionLane !== "voiceover") return "recording";
-	return voiceoverPlacements(doc?.audioTracks ?? []).length > 0 ? "voiceover" : "recording";
+	const sources = (doc?.audioTracks ?? []).filter((track) => track.recordingSource);
+	if (settings.captionLane === "system" || settings.captionLane === "microphone") {
+		if (sources.some((track) => track.recordingSource === settings.captionLane))
+			return settings.captionLane;
+	}
+	if (settings.captionLane !== "voiceover") return sources[0]?.recordingSource ?? "recording";
+	return voiceoverPlacements(doc?.audioTracks ?? []).length > 0
+		? "voiceover"
+		: (sources[0]?.recordingSource ?? "recording");
 }
 
 export type CaptionSettingsPatch = Partial<CaptionSettings>;
@@ -662,7 +692,42 @@ export function patchCaptionSettings(
 	doc: AxcutDocument,
 	patch: CaptionSettingsPatch,
 	aspectValue = 16 / 9,
+	source?: "system" | "microphone",
 ): AxcutDocument {
+	if (source) {
+		let current = doc;
+		const { enabled, captionLane, ...style } = patch;
+		if (enabled !== undefined || captionLane !== undefined)
+			current = patchCaptionSettings(
+				doc,
+				{
+					...(enabled !== undefined ? { enabled } : {}),
+					...(captionLane !== undefined ? { captionLane } : {}),
+				},
+				aspectValue,
+			);
+		const base = legacyBlob(current) ?? {};
+		const options = base.recordedCaptions as Record<string, unknown> | undefined;
+		const entry = options?.[source] as Record<string, unknown> | undefined;
+		const normalized = getCaptionSettings(
+			patchCaptionSettings(
+				{
+					...current,
+					legacyEditor: { ...base, captions: getCaptionSettings(current, aspectValue, source) },
+				},
+				style,
+				aspectValue,
+			),
+			aspectValue,
+		);
+		return {
+			...current,
+			legacyEditor: {
+				...base,
+				recordedCaptions: { ...options, [source]: { ...entry, style: normalized } },
+			},
+		};
+	}
 	// The aspect matters on the FIRST write to a document that has never carried
 	// caption settings: that write is what materialises the defaults, and a portrait
 	// export wants a much larger inset than a landscape one. Reading without it here

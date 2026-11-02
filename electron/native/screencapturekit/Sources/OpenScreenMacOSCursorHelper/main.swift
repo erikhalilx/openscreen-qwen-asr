@@ -286,13 +286,6 @@ func leftButtonDown() -> Bool {
 	CGEventSource.buttonState(.hidSystemState, button: .left)
 }
 
-func requestAccessibilityTrust() -> Bool {
-	let options = [
-		kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true
-	] as CFDictionary
-	return AXIsProcessTrustedWithOptions(options)
-}
-
 let request: CursorHelperRequest
 if CommandLine.arguments.count >= 2,
 	let data = CommandLine.arguments[1].data(using: .utf8),
@@ -304,7 +297,9 @@ if CommandLine.arguments.count >= 2,
 }
 
 let intervalMs = max(8, request.sampleIntervalMs ?? 33)
-let accessibilityTrusted = requestAccessibilityTrust()
+// Only the app's explicit Permissions action may prompt. This helper is launched
+// for probes and on every take; prompting here repeats stale-signature TCC alerts.
+let accessibilityTrusted = AXIsProcessTrusted()
 let mouseTracker = MouseButtonTracker()
 let mouseTapReady = mouseTracker.start()
 emit([

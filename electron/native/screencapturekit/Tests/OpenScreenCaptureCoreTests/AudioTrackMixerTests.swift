@@ -502,6 +502,33 @@ final class AudioTrackMixerTests: XCTestCase {
 
 	// MARK: - Fixtures
 
+	func testSeparateSourcesShareTheClockAndKeepIndependentGains() {
+		let systemSink = RecordingSink()
+		let micSink = RecordingSink()
+		let clock = TestClock(CMTime(value: 50, timescale: 1))
+		let system = AudioTrackMixer(input: systemSink, includesSystemAudio: true,
+			includesMicrophone: false, microphoneGain: 1, systemGain: 0.5, clock: { clock.now })
+		let microphone = AudioTrackMixer(input: micSink, includesSystemAudio: false,
+			includesMicrophone: true, microphoneGain: 1.5, systemGain: 1, clock: { clock.now })
+		for mixer in [system, microphone] { mixer.beginTimeline(at: clock.now) }
+		clock.advance(seconds: 1)
+		let buffer = makeSourceBuffer(burst(seconds: 0.2, left: 0.25, right: 0.25), at: clock.now, nonInterleaved: true)
+		for mixer in [system, microphone] {
+			mixer.ingest(buffer, from: .system)
+			mixer.ingest(buffer, from: .microphone)
+		}
+		clock.advance(seconds: 1)
+		for mixer in [system, microphone] { mixer.finish(atSourceTime: clock.now) }
+		let sysFrames = mixedFrames(systemSink)
+		let micFrames = mixedFrames(micSink)
+		XCTAssertEqual(sysFrames.count, micFrames.count)
+		XCTAssertEqual(firstAudibleSecond(sysFrames) ?? -1, 1, accuracy: 0.001)
+		XCTAssertEqual(firstAudibleSecond(micFrames) ?? -1, 1, accuracy: 0.001)
+		XCTAssertEqual(Double(peak(micFrames, from: 1, to: 1.2)), Double(peak(sysFrames, from: 1, to: 1.2)) * 3, accuracy: 3)
+		assertContiguous(systemSink)
+		assertContiguous(micSink)
+	}
+
 	private func makeMixer(
 		sink: MixedAudioSink,
 		clock: TestClock,

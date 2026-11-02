@@ -92,6 +92,37 @@ function payload(result: CallToolResult): Record<string, unknown> {
 }
 
 describe("transcribe, on a project's file", () => {
+	it("transcribes each recorded source once and never sends the combined video to ASR", async () => {
+		const doc = fixtureDocument("proj_sources");
+		doc.assets[0].recordingAudio = [
+			{ kind: "system", assetId: "s" },
+			{ kind: "microphone", assetId: "m" },
+		];
+		doc.assets.push(
+			...["s", "m"].map((id) => ({
+				id,
+				kind: "audio" as const,
+				label: id,
+				originalPath: `/media/${id}.m4a`,
+				cameraTrack: null,
+			})),
+		);
+		await projects.saveProject(doc);
+		const { run, transcribe } = runnerWith(async () => ({ ...SPEECH, backend: "qwen-mlx" }));
+		const result = await run(TRANSCRIBE_TOOL, { projectId: doc.project.id, language: "zh" });
+		expect(result.isError).toBeUndefined();
+		expect(transcribe.mock.calls.map(([request]) => request.sourcePath)).toEqual([
+			"/media/s.m4a",
+			"/media/m.m4a",
+		]);
+		expect((await projects.getProject(doc.project.id)).transcripts.map((t) => t.assetId)).toEqual([
+			"s",
+			"m",
+		]);
+		expect(payload(result)).toMatchObject({
+			sources: [{ source: "system" }, { source: "microphone" }],
+		});
+	});
 	it("transcribes with the project's vocabulary and lands the words, with no checkpoint", async () => {
 		await projects.saveProject(fixtureDocument("proj_1"));
 		const { run, transcribe } = runnerWith(async () => SPEECH);

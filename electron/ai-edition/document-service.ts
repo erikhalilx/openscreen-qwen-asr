@@ -14,6 +14,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import fs, { type FileHandle } from "node:fs/promises";
 import path from "node:path";
 import { createId } from "../../src/lib/ai-edition/document/ids";
+import { syncRecordingAudio } from "../../src/lib/ai-edition/document/recordingAudio";
 import { removeClip } from "../../src/lib/ai-edition/document/timeline";
 import {
 	type AxcutAsset,
@@ -27,9 +28,11 @@ import {
 	type StylePresetAppearance,
 	stylePresetLegacyEditor,
 } from "../../src/lib/ai-edition/stylePresets";
+import { normalizeRecordingSession } from "../../src/lib/recordingSession";
 import { renameSyncWithFallback, renameWithRetry } from "../atomic-rename";
 import { ensureDocumentExtensions } from "../media/extensionClip";
 import { relinkProjectMedia } from "../media/projectMediaRelinker";
+import { validatedRecordedAudio } from "../recording/separateAudio";
 
 const PROJECT_FILE_EXTENSION = ".openscreen";
 // Older builds stored these same v3/v4 AxcutDocuments under `.axcut`. We read
@@ -47,7 +50,7 @@ export interface ProjectSummary {
 }
 
 function stampForSave(document: AxcutDocument): AxcutDocument {
-	const parsed = documentSchema.parse(document);
+	const parsed = syncRecordingAudio(documentSchema.parse(document));
 	return { ...parsed, project: { ...parsed.project, updatedAt: new Date().toISOString() } };
 }
 
@@ -598,7 +601,49 @@ export class DocumentService {
 			sizeBytes,
 			cameraTrack: null,
 		};
-		return this.saveProject(documentWithAsset(doc, asset));
+		let next = documentWithAsset(doc, asset);
+		if (asset.kind === "video") {
+			try {
+				const parsed = path.parse(absolutePath);
+				const session = normalizeRecordingSession(
+					JSON.parse(
+						await fs.readFile(path.join(parsed.dir, `${parsed.name}.session.json`), "utf8"),
+					),
+				);
+				if (session && path.basename(session.screenVideoPath) === path.basename(absolutePath)) {
+					const linked: NonNullable<AxcutAsset["recordingAudio"]> = [];
+					for (const source of await validatedRecordedAudio(
+						absolutePath,
+						session.recordedAudio ?? [],
+					)) {
+						const stat = await fs.stat(source.sourcePath);
+						const audio: AxcutAsset = {
+							id: createId("asset"),
+							kind: "audio",
+							label: source.kind === "system" ? "System audio" : "Microphone",
+							originalPath: source.sourcePath,
+							sizeBytes: stat.size,
+							cameraTrack: null,
+						};
+						next = { ...next, assets: [...next.assets, audio] };
+						linked.push({ kind: source.kind, assetId: audio.id });
+					}
+					if (linked.length)
+						next = {
+							...next,
+							assets: next.assets.map((candidate) =>
+								candidate.id === asset.id
+									? { ...candidate, separateRecordingAudio: true, recordingAudio: linked }
+									: candidate,
+							),
+						};
+				}
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT")
+					console.warn("Could not restore separate recording audio; using the original recording.");
+			}
+		}
+		return this.saveProject(next);
 	}
 
 	async removeAsset(projectId: string, assetId: string): Promise<AxcutDocument> {

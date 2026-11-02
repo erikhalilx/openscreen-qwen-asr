@@ -671,6 +671,26 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 				true,
 			);
 		}
+		if (asset.kind === "video" && asset.recordingAudio?.length) {
+			const results = [];
+			let failed = false;
+			for (const source of asset.recordingAudio) {
+				const result = await transcribe(
+					{ projectId: targetId, assetId: source.assetId, ...(language ? { language } : {}) },
+					editsAllowed,
+				);
+				failed ||= result.isError === true;
+				const message = result.content.find((item) => item.type === "text");
+				let summary: unknown = message?.type === "text" ? message.text : "";
+				try {
+					summary = JSON.parse(String(summary));
+				} catch {
+					/* An engine error may be plain text. */
+				}
+				results.push({ source: source.kind, result: summary });
+			}
+			return textResult(JSON.stringify({ assetId: asset.id, sources: results }), failed);
+		}
 		if (onEditor && deps.host.transcribe) {
 			return editorTranscription(
 				await deps.host.transcribe(targetId, asset.id, language),

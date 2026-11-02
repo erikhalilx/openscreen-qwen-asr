@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "Style settings for",
+		"sourceDisplay": "Caption sources",
+		"swapSources": "Swap caption heights",
+		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
+		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
 		"showBackground": "背景を表示",
 		"deleteTranslation": "この翻訳を削除",
 		"legacyAnnotations": "このプロジェクトには旧字幕機能の注釈が残っています（{{count}}）。字幕レイヤーの上に描画されます。",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "システム音声",
+		"microphoneSource": "マイク",
 		"outputGain": "出力レベル",
 		"help": "音声は標準のラウドネスに自動で揃えられます。そこから出力レベルを調整してください。プレビューと書き出しで同じように適用されます。",
 		"reset": "オーディオをリセット",

@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"sourceStyles": "Style settings for",
+		"sourceDisplay": "Caption sources",
+		"swapSources": "Swap caption heights",
+		"sourceTimelineHint": "Both sources use the recording timeline. Cutting speech edits the picture and both audio tracks; text corrections affect only the selected source.",
+		"sourceLayoutHint": "With both sources enabled, captions use separate heights; system audio is nearer the vertical center by default. Large captions fit automatically. A single enabled source keeps its original position.",
 		"showBackground": "Mostra sfondo",
 		"deleteTranslation": "Elimina questa traduzione",
 		"legacyAnnotations": "Questo progetto contiene ancora annotazioni di sottotitoli della vecchia funzione ({{count}}). Vengono disegnate sopra il livello dei sottotitoli.",
@@ -387,6 +392,8 @@
 		}
 	},
 	"audio": {
+		"systemSource": "Audio di sistema",
+		"microphoneSource": "Microfono",
 		"outputGain": "Livello di uscita",
 		"help": "Le voci vengono livellate automaticamente a un volume percepito standard. Regola il livello di uscita a partire da lì; si applica allo stesso modo nell’anteprima e nell’esportazione.",
 		"reset": "Reimposta audio",

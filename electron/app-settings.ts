@@ -19,6 +19,9 @@ export interface RecordingPreferences {
 	/** Capture resolution for the camera. See WEBCAM_QUALITY_PRESETS. */
 	camQuality: WebcamQualityId;
 	systemAudioEnabled: boolean;
+	/** Linear capture gain; 0 silences that source, 1 is unity. */
+	systemAudioVolume?: number;
+	microphoneVolume?: number;
 	cursorCaptureMode: CursorCaptureMode;
 	/** Display captures on macOS and Windows. Opt-in: on Windows the icons also leave the real desktop while recording. */
 	hideDesktopIcons: boolean;
@@ -41,6 +44,8 @@ export const DEFAULT_RECORDING_PREFERENCES: RecordingPreferences = {
 	camDeviceName: null,
 	camQuality: DEFAULT_WEBCAM_QUALITY,
 	systemAudioEnabled: false,
+	systemAudioVolume: 1,
+	microphoneVolume: 1,
 	cursorCaptureMode: "editable-overlay",
 	hideDesktopIcons: false,
 	autoZoomEnabled: true,
@@ -117,6 +122,8 @@ function parseRecording(raw: RawSettings): RecordingPreferences {
 			raw.systemAudioEnabled,
 			DEFAULT_RECORDING_PREFERENCES.systemAudioEnabled,
 		),
+		systemAudioVolume: recordingVolume(raw.systemAudioVolume),
+		microphoneVolume: recordingVolume(raw.microphoneVolume),
 		cursorCaptureMode:
 			raw.cursorCaptureMode === "system" || raw.cursorCaptureMode === "editable-overlay"
 				? raw.cursorCaptureMode
@@ -124,6 +131,12 @@ function parseRecording(raw: RawSettings): RecordingPreferences {
 		hideDesktopIcons: bool(raw.hideDesktopIcons, DEFAULT_RECORDING_PREFERENCES.hideDesktopIcons),
 		autoZoomEnabled: bool(raw.autoZoomEnabled, DEFAULT_RECORDING_PREFERENCES.autoZoomEnabled),
 	};
+}
+
+function recordingVolume(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 2
+		? value
+		: 1;
 }
 
 function parseSource(value: unknown): RecordingSourceDescriptor | null {
@@ -167,6 +180,12 @@ function validateRecordingPatch(patch: Partial<RecordingPreferences>): void {
 	for (const [key, value] of Object.entries(patch)) {
 		if (!allowed.has(key)) throw new TypeError(`unknown recording preference: ${key}`);
 		if (value === undefined) continue;
+		if (
+			(key === "systemAudioVolume" || key === "microphoneVolume") &&
+			(typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 2)
+		) {
+			throw new TypeError(`${key} must be between 0 and 2`);
+		}
 		if ((key.endsWith("Enabled") || key === "hideDesktopIcons") && typeof value !== "boolean") {
 			throw new TypeError(`${key} must be a boolean`);
 		}

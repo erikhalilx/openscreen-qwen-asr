@@ -12,7 +12,7 @@ An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork wi
 
 ## Install from source
 
-Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled with that Node release), and [uv](https://docs.astral.sh/uv/getting-started/installation/). Use npm, as required by the Electron native module build. Allow at least 8 GB free for installation and additional space for recordings/exports; 16 GB unified memory is the tested configuration, not a reservation against other apps.
+Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled with that Node release), [uv](https://docs.astral.sh/uv/getting-started/installation/), Xcode with its command-line tools, and [Rust](https://rust-lang.org/tools/install/). Select Xcode with `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` if necessary. Use npm, as required by the Electron native module build. Allow at least 16 GB free for installation and native compilation, plus recordings/exports; 16 GB unified memory is the tested configuration, not a reservation against other apps.
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
@@ -35,11 +35,11 @@ npm run qwen:setup -- --model-path /path/to/Qwen3-ASR-0.6B
 
 The installer checks that checkpoint against the official manifest and never installs dependencies or writes files there. Converted/quantized checkpoints with different hashes are not silently accepted. See [model details](models/README.md).
 
-The native build helper downloads the complete, checksum-verified native payload and license list from the upstream **v2.1.2** release. Native source is unchanged. This preserves capture, webcam effects, preview and export without requiring Rust/FFmpeg compilation on a new device. Full native source and build commands remain in this repository for developers.
+The build first downloads the checksum-verified upstream **v2.1.2** native payload and license list, then rebuilds this fork's Swift capture/cursor helpers and Rust compositor with an LGPL-only FFmpeg SDK. These changes preserve independent system/microphone audio and synchronized export. Xcode and Rust are required; the first native build downloads dependencies and takes longer than subsequent builds.
 
 ### 中文安装说明
 
-请先安装 [Node.js 22.22.1](https://nodejs.org/en/download)、npm 10.9.4（随该 Node.js 版本提供）以及 [uv](https://docs.astral.sh/uv/getting-started/installation/)。本项目要求使用 npm，因为 Electron 原生模块的构建依赖它。安装至少预留 8 GB 可用空间，并为录制文件和导出文件额外预留空间；16 GB 统一内存是已测试配置，并不代表应用会独占这些内存。
+请先安装 [Node.js 22.22.1](https://nodejs.org/en/download)、npm 10.9.4（随该 Node.js 版本提供）、[uv](https://docs.astral.sh/uv/getting-started/installation/)、带命令行工具的 Xcode 和 [Rust](https://rust-lang.org/tools/install/)。必要时执行 `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` 选择 Xcode。本项目要求使用 npm，因为 Electron 原生模块的构建依赖它。安装和原生编译至少预留 16 GB 可用空间，另需为录制和导出预留空间；16 GB 统一内存是已测试配置，并不代表应用会独占这些内存。
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
@@ -62,7 +62,31 @@ npm run qwen:setup -- --model-path /path/to/Qwen3-ASR-0.6B
 
 安装器会根据官方清单校验该权重，既不会在该目录安装依赖，也不会写入文件。哈希不同的转换版或量化版权重不会被静默接受。详见[模型说明](models/README.md)。
 
-原生构建辅助脚本会从上游 **v2.1.2** 发布版本下载完整且经过校验的原生组件和许可证清单。原生源码保持不变，因此新设备无需自行编译 Rust/FFmpeg，也能保留录屏、摄像头效果、预览和导出功能。完整的原生源码与开发者构建命令仍保留在本仓库中。
+构建脚本先下载并校验上游 **v2.1.2** 原生组件和许可证，再使用仅启用 LGPL 的 FFmpeg SDK，重新编译本 fork 修改过的 Swift 录屏/光标辅助程序和 Rust 合成器，以保留系统声、麦克风独立音轨和同步导出能力。因此需要 Xcode 和 Rust；首次原生构建会下载依赖，耗时较长。
+
+## Recording audio / 录制音频
+
+On supported Macs, enable system audio and/or microphone, then adjust their independent 0–200% recording levels in **Device settings** on the recording bar or in the editor's **Record** page. Enabled sources are stored as separate AAC streams and adjacent source files. A 0% recording level permanently records silence for that source; editing gain cannot restore it.
+
+在支持的 Mac 上，打开系统音频和/或麦克风后，可在录制条的**设备设置**或编辑器的**录制**页面，分别调整两路 0–200% 的录制音量。启用的声音来源保存为独立 AAC 音轨及同目录音频文件。录制音量为 0% 时，该路录入的是静音，后期增益无法恢复。
+
+The editor's **Audio** panel controls each recorded source's gain and mute independently; selecting its timeline pill adjusts that clip's source. Source tracks follow picture edits, trims and speed changes. Keep the `.mp4`, `.session.json`, `-system.m4a` and `-microphone.m4a` files together when moving a recording. Older mixed recordings keep their existing audio behavior and cannot be separated retrospectively.
+
+编辑器的**音频**面板可分别调整录入的系统声和麦克风增益、静音；选中时间轴上的对应音轨，可调整当前片段的该路声音。音轨跟随画面移动、剪切和变速。移动录制文件时，请同时保留 `.mp4`、`.session.json`、`-system.m4a` 和 `-microphone.m4a`。旧版已混音的录制保持原有行为，无法事后还原成独立两路。
+
+## Two-source captions / 双轨字幕
+
+Recordings with separate source audio are transcribed by Qwen independently, in sequence, on the same recording clock. In **Transcript**, choose **System audio** or **Microphone** to use the original word correction, seeking, cutting, restore and undo controls for that source. Cutting speech edits the shared picture timeline and both audio tracks; correcting its text changes only that source. Audio mute and caption visibility are independent.
+
+对于含独立音轨的录制，Qwen 会按顺序分别识别系统声与麦克风，两者使用同一条录屏时间轴。在**转录文本**中切换**系统音频**或**麦克风**，即可分别使用原有的文字修正、点击定位、删剪、恢复及撤销功能。删剪语音会同步剪切画面与两路音频；修改文字只影响当前来源。音频静音和字幕显示开关相互独立。
+
+In **Captions**, keep the master switch and independently enable either source. **Style settings for** selects the source whose font, colour, plate, six-position anchor, insets, line length and translation you edit. With one source enabled, its original placement behavior is preserved. With both enabled, the shared preview/export layout reserves different heights, placing system audio closer to the vertical center by default. **Swap caption heights** reverses those heights while keeping each source's style. Oversized captions automatically fit the two reserved areas.
+
+在**字幕**面板中，保留总开关，并可分别开启或关闭两类字幕。**样式设置对象**用于选择要调整的来源，两轨分别保留字体、颜色、底板、六种位置、边距、行长及翻译设置。只显示一轨时，其配置和显示行为保持原样；同时显示两轨时，预览与导出使用同一套分层布局，默认系统音频字幕更靠近画面垂直中心。**调换两轨字幕位置**只交换高度，保留各自样式；字号过大时会自动适配两块独立区域。
+
+Both transcripts, styles and switches are saved with the project. CLI captions and MCP transcription also recognize the separate sources; MCP `setCaptionSettings` accepts `source`, `systemEnabled`, `microphoneEnabled` and `swapSources`. Existing mixed recordings retain their original single caption flow.
+
+两路转录、样式和开关均随项目保存。CLI 字幕和 MCP 转写同样支持独立来源；MCP 的 `setCaptionSettings` 可传入 `source`、`systemEnabled`、`microphoneEnabled` 和 `swapSources`。旧版已混音的录制继续使用原有单路字幕流程。
 
 ## Data and operation
 

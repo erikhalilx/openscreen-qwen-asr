@@ -30,6 +30,11 @@ import {
 	removeCaptionTranslation,
 	translationCoverage,
 } from "../../src/lib/ai-edition/captions";
+import {
+	availableRecordedCaptionSources,
+	getRecordedCaptionOptions,
+	patchRecordedCaptionOptions,
+} from "../../src/lib/ai-edition/captions/recordedSources";
 import { resolveCaptionLane } from "../../src/lib/ai-edition/captions/settings";
 import {
 	CAPTION_WORDS_PER_LINE_MAX,
@@ -59,6 +64,10 @@ const languageCode = z
 export const getCaptionsArgs = z.object({});
 
 export const setCaptionSettingsArgs = z.object({
+	source: z.enum(["system", "microphone"]).optional(),
+	systemEnabled: z.boolean().optional(),
+	microphoneEnabled: z.boolean().optional(),
+	swapSources: z.boolean().optional(),
 	enabled: z.boolean().optional(),
 	style: z.enum(STYLE_IDS).optional(),
 	fontFamily: z.enum(TEXT_FONT_FAMILIES).optional(),
@@ -73,7 +82,7 @@ export const setCaptionSettingsArgs = z.object({
 	insetX: z.number().min(0).max(CAPTION_INSET_X_MAX).optional(),
 	minWordsPerLine: wordsPerLine.optional(),
 	maxWordsPerLine: wordsPerLine.optional(),
-	lane: z.enum(["recording", "voiceover"]).optional(),
+	lane: z.enum(["recording", "voiceover", "system", "microphone"]).optional(),
 	language: languageCode.nullable().optional(),
 });
 
@@ -125,10 +134,16 @@ function captionedTranscripts(
 	settings: CaptionSettings,
 ): AxcutTranscript[] {
 	const placed = new Set(
-		lanePlacements(
-			resolveCaptionLane(document, settings),
-			document.timeline.clips,
-			document.audioTracks ?? [],
+		(availableRecordedCaptionSources(document).length &&
+		resolveCaptionLane(document, settings) !== "voiceover"
+			? availableRecordedCaptionSources(document).flatMap((source) =>
+					lanePlacements(source, document.timeline.clips, document.audioTracks),
+				)
+			: lanePlacements(
+					resolveCaptionLane(document, settings),
+					document.timeline.clips,
+					document.audioTracks ?? [],
+				)
 		).map((placement) => placement.assetId),
 	);
 	return document.transcripts.filter((t) => placed.has(t.assetId));
@@ -142,6 +157,19 @@ function captionsReport(document: AxcutDocument): Record<string, unknown> {
 	const nothingToCaption = transcripts.every((t) => !transcriptHasSpeech(t));
 	return {
 		settings,
+		...(availableRecordedCaptionSources(document).length
+			? {
+					sources: {
+						...getRecordedCaptionOptions(document),
+						styles: Object.fromEntries(
+							availableRecordedCaptionSources(document).map((source) => [
+								source,
+								getCaptionSettings(document, aspectOf(document), source),
+							]),
+						),
+					},
+				}
+			: {}),
 		style: captionStyleOf(settings) ?? "custom",
 		plate: captionPlateOf(settings),
 		resolvedLane: resolveCaptionLane(document, settings),
@@ -194,10 +222,20 @@ export function executeCaptionTool(
 		case "setCaptionSettings": {
 			const parsed = setCaptionSettingsArgs.safeParse(args);
 			if (!parsed.success) return failure(parsed.error.message);
-			const { style, plate, plateOpacity, lane, ...fields } = parsed.data;
+			const {
+				style,
+				plate,
+				plateOpacity,
+				lane,
+				source,
+				systemEnabled,
+				microphoneEnabled,
+				swapSources,
+				...fields
+			} = parsed.data;
 			if (!hasAnyField(parsed.data)) return failure("Pass at least one setting to change.");
 			const aspect = aspectOf(document);
-			const current = getCaptionSettings(document, aspect);
+			const current = getCaptionSettings(document, aspect, source);
 			if (fields.language) {
 				const layers = Object.keys(getCaptionTranslations(document));
 				if (!layers.includes(fields.language)) {
@@ -222,13 +260,26 @@ export function executeCaptionTool(
 					`minWordsPerLine (${min}) cannot exceed maxWordsPerLine (${max}). Nothing was modified.`,
 				);
 			}
-			const next = patchCaptionSettings(document, patch, aspect);
+			let next = patchCaptionSettings(document, patch, aspect, source);
+			if (
+				systemEnabled !== undefined ||
+				microphoneEnabled !== undefined ||
+				swapSources !== undefined
+			)
+				next = patchRecordedCaptionOptions(next, {
+					...(systemEnabled !== undefined ? { system: { enabled: systemEnabled } } : {}),
+					...(microphoneEnabled !== undefined
+						? { microphone: { enabled: microphoneEnabled } }
+						: {}),
+					...(swapSources !== undefined ? { swap: swapSources } : {}),
+				});
 			const report = captionsReport(next);
 			return {
 				ok: true,
 				document: next,
 				resultJson: JSON.stringify({
 					settings: report.settings,
+					...(report.sources ? { sources: report.sources } : {}),
 					style: report.style,
 					plate: report.plate,
 					resolvedLane: report.resolvedLane,
