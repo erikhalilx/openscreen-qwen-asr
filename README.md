@@ -1,4 +1,10 @@
-# OpenScreen Qwen3-ASR
+# OpenScreen Qwen3-ASR 0.2
+
+## Version 0.2 changes / 0.2 版本迭代
+
+Version 0.1 introduced local Qwen3-ASR transcription and real character/word alignment. Version 0.2 adds separate system/microphone recording tracks with independent recording and editing volumes; independent transcripts, caption visibility, styling and height swapping; improved caption insets; up to one extra second of caption display without delaying the next line; a line-length limit of 25; and source-specific SRT export on the edited video clock. Accessibility permission handling and development-profile isolation are improved. Semantic sentence splitting remains unchanged. Fork version 0.2.0 is based on upstream OpenScreen 2.1.2.
+
+0.1 提供本地千问识别与真实字词对齐。0.2 新增系统声/麦克风独立录制双音轨、录制前与后期独立音量、两路转录与字幕开关/样式/高度交换；修复字幕边距调节，默认多显示最多一秒且不推迟下一句，行长上限扩至 25，并支持按成片时间轴分别导出两路 SRT。同时改进辅助功能授权处理和开发环境隔离。语义断句规则尚未调整。Fork 版本号为 0.2.0，上游基础版本仍为 OpenScreen 2.1.2。
 
 An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Based on **v2.1.2**, upstream commit `d8889c626f859e0be8f4f87fdffc7362629550bc`.
 

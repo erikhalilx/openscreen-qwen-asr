@@ -3,7 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 PROJECT_ROOT="$PWD"
-SOURCE_APP="$PROJECT_ROOT/release/2.1.2/mac-arm64/OpenScreen Qwen.app"
+APP_VERSION="$(node -p 'require("./package.json").version')"
+SOURCE_APP="$PROJECT_ROOT/release/$APP_VERSION/mac-arm64/OpenScreen Qwen.app"
 INSTALL_ROOT="${OPENSCREEN_QWEN_INSTALL_DIR:-/Applications}"
 TARGET_APP="$INSTALL_ROOT/OpenScreen Qwen.app"
 if [[ ! -d "$SOURCE_APP" ]]; then
