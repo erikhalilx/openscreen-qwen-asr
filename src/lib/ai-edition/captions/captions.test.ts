@@ -142,6 +142,14 @@ describe("caption settings", () => {
 		);
 	});
 
+	it("persists 25 words per line and clamps larger stored values", () => {
+		const next = patchCaptionSettings(doc(), { maxWordsPerLine: 25 });
+		expect(getCaptionSettings(next).maxWordsPerLine).toBe(25);
+		expect(
+			getCaptionSettings(patchCaptionSettings(next, { maxWordsPerLine: 26 })).maxWordsPerLine,
+		).toBe(25);
+	});
+
 	it("swaps min/max words when they are set the wrong way round", () => {
 		const next = patchCaptionSettings(doc(), { minWordsPerLine: 9, maxWordsPerLine: 3 });
 		expect(getCaptionSettings(next)).toMatchObject({ minWordsPerLine: 3, maxWordsPerLine: 9 });

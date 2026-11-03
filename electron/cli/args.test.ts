@@ -253,12 +253,12 @@ describe("parseCliArgs", () => {
 	});
 
 	it("bounds caption word counts to what the editor's caption settings allow", () => {
-		expect(parse(["captions", "a.openscreen", "--max-words", "12"])).toMatchObject({
-			maxWordsPerCaption: 12,
+		expect(parse(["captions", "a.openscreen", "--max-words", "25"])).toMatchObject({
+			maxWordsPerCaption: 25,
 		});
-		expect(parse(["captions", "a.openscreen", "--max-words", "13"])).toMatchObject({
+		expect(parse(["captions", "a.openscreen", "--max-words", "26"])).toMatchObject({
 			kind: "error",
-			message: expect.stringContaining("from 1 to 12"),
+			message: expect.stringContaining("from 1 to 25"),
 		});
 		expect(parse(["captions", "a.openscreen", "--min-words", "0"])).toMatchObject({
 			kind: "error",

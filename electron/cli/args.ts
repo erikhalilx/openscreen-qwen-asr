@@ -85,7 +85,7 @@ Usage:
   openscreen sources [--json] [-o <file>]            List displays, windows, microphones and cameras
   openscreen pack <project.openscreen> --out <dir>   Copy project + media into one portable folder
   openscreen captions <project.openscreen>           Transcribe (on-device Qwen ASR) and turn captions on
-                     [--min-words <1-12>] [--max-words <1-12>]
+                     [--min-words <1-25>] [--max-words <1-25>]
   openscreen info <project.openscreen> [--json]      Inspect a project file
   openscreen mcp                                     Serve the agent tools over MCP on stdio
   openscreen help                                    Show this help

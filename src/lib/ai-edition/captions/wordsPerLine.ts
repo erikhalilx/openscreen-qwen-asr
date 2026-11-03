@@ -3,4 +3,4 @@
 // editor would refuse. Dependency-free on purpose: the Electron main process imports it.
 
 export const CAPTION_WORDS_PER_LINE_MIN = 1;
-export const CAPTION_WORDS_PER_LINE_MAX = 12;
+export const CAPTION_WORDS_PER_LINE_MAX = 25;

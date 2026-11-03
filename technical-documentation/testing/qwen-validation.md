@@ -1,5 +1,11 @@
 # Qwen fork validation
 
+## Caption line limit — 2026-11-03
+
+The shared line-length limit now accepts up to 25 units through the caption pane, stored settings, CLI and editing tools. Defaults and segmentation rules are unchanged. Tests verify both recorded caption sources can store 25, settings clamp above 25 and the CLI accepts 25/rejects 26. Targeted tests: 91 passed; full suite: 4,970 passed and one existing skip. Both TypeScript configurations and lint pass (26 inherited warnings). GUI verification was skipped: the installed editor was in use, and the development application shares its single-instance lock. No application was replaced, no user project was changed, and no new package was installed. See [segmentation findings](../architecture/qwen-caption-segmentation.md) for the separate research into semantic splitting.
+
+行长上限已统一扩展到 25，设置窗、项目保存、命令行和编辑接口使用同一范围；默认值和断句逻辑不变。测试覆盖两路字幕设为 25、超限归一化及命令行边界：针对性测试 91 项通过，全量 4,970 项通过、1 项原有跳过项，两份类型检查和 lint 通过。安装版工作室正在使用，开发版又共用单实例锁，因此未关闭用户项目或执行本轮 GUI 验证，也未替换应用、修改用户项目或安装新包。语义断句仅完成调研，结论另见架构文档。
+
 ## Caption display hold — 2026-11-03
 
 The display layer copies aligned cues and extends their ends by up to one playback second, bounded by the next visible cue on that source and the programme end. Raw transcript/cue timing generation is untouched. Unit tests cover short/zero/exact-one-second gaps, programme boundaries, deleted cues, cuts, 2x/0.5x playback and a speed boundary; dual-source tests confirm that the other source does not truncate the hold.

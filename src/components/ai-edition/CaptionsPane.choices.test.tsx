@@ -110,6 +110,27 @@ describe("caption choices", () => {
 		expect(stored().fontFamily).toBe("Lora");
 	});
 
+	it("allows 25 words per line on either recorded caption source", () => {
+		show({}, true);
+		for (const source of ["system", "microphone"] as const) {
+			if (source === "microphone") {
+				fireEvent.click(
+					within(screen.getByRole("group", { name: "Style settings for" })).getByRole("button", {
+						name: "Microphone",
+					}),
+				);
+			}
+			const maximum = screen.getByRole("slider", { name: "Max words per line" });
+			expect(maximum).toHaveAttribute("max", "25");
+			fireEvent.change(maximum, { target: { value: "25" } });
+			expect(getCaptionSettings(useProjectStore.getState().document, 16 / 9, source)).toMatchObject(
+				{
+					maxWordsPerLine: 25,
+				},
+			);
+		}
+	});
+
 	it("never lets the minimum words per line pass the maximum", () => {
 		show({ captions: { enabled: true, minWordsPerLine: 2, maxWordsPerLine: 5 } });
 		fireEvent.change(screen.getByRole("slider", { name: "Min words per line" }), {
