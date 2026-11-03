@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "Exportovat SRT",
+		"srtMixedRecording": "Zvuk záznamu (smíšený)",
+		"srtHint": "Použije časování upraveného videa a aktuální titulky. Exportovat lze i skryté zdroje.",
+		"srtSaved": "Titulky SRT byly uloženy.",
+		"srtFailed": "Titulky SRT se nepodařilo exportovat.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

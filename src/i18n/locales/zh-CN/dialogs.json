@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "保存 SRT 字幕",
 		"saveGif": "保存导出的 GIF",
 		"saveVideo": "保存导出的视频",
 		"selectVideo": "选择视频文件",

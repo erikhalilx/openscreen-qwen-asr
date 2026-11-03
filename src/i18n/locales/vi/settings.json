@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "Xuất SRT",
+		"srtMixedRecording": "Âm thanh bản ghi (hỗn hợp)",
+		"srtHint": "Dùng thời gian của video đã chỉnh sửa và văn bản phụ đề hiện tại. Cũng có thể xuất riêng nguồn bị ẩn.",
+		"srtSaved": "Đã lưu phụ đề SRT.",
+		"srtFailed": "Không thể xuất phụ đề SRT.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

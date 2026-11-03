@@ -16,7 +16,7 @@ const privateEmail = /[A-Za-z0-9._%+-]+@(?:163\.com|qq\.com|126\.com)/i;
 const credential =
 	/(?:gh[pousr]_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{40,}|AKIA[A-Z0-9]{16}|-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----)/;
 const forbidden =
-	/(?:^|\/)(?:\.research|\.venv-qwen|\.local-models|node_modules|dist-electron|release|build-licenses|runtime)(?:\/|$)|(?:^|\/)qwen\.local\.json$|\.(?:safetensors|gguf|pt|pth|p12|pfx|pem|key|dmg|session\.json|mp4\.cursor\.json)$|(?:^|\/)recording-\d+-(?:system|microphone)\.m4a$/i;
+	/(?:^|\/)(?:\.research|\.venv-qwen|\.local-models|node_modules|dist-electron|release|build-licenses|runtime)(?:\/|$)|(?:^|\/)qwen\.local\.json$|\.(?:safetensors|gguf|pt|pth|p12|pfx|pem|key|dmg|srt|session\.json|mp4\.cursor\.json)$|(?:^|\/)recording-\d+-(?:system|microphone)\.m4a$/i;
 const failures = new Set();
 function inspect(name, content) {
 	if (forbidden.test(name) || (/(?:^|\/)\.env(?:\.|$)/.test(name) && !name.endsWith(".example")))

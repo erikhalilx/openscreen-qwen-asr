@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "SRT を書き出す",
+		"srtMixedRecording": "録音音声（ミックス）",
+		"srtHint": "編集後の動画の時間と現在の字幕を使用します。非表示の音源の字幕も個別に書き出せます。",
+		"srtSaved": "SRT 字幕を保存しました。",
+		"srtFailed": "SRT 字幕を書き出せませんでした。",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

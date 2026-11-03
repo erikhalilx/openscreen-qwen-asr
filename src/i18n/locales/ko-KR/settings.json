@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "SRT 내보내기",
+		"srtMixedRecording": "녹음 오디오 (혼합)",
+		"srtHint": "편집된 동영상의 시간과 현재 자막을 사용합니다. 숨겨진 소스의 자막도 따로 내보낼 수 있습니다.",
+		"srtSaved": "SRT 자막을 저장했습니다.",
+		"srtFailed": "SRT 자막을 내보내지 못했습니다.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

@@ -157,6 +157,7 @@ import { wallpaperAcceptsMotion } from "@/native/sceneDescription";
 import { ASPECT_RATIO_PRESETS, type AspectRatio } from "@/utils/aspectRatioUtils";
 import { useClickSound } from "../../hooks/useClickSound";
 import { useCanSegmentCamera } from "../../native/hooks/useSegmentationSupport";
+import { CaptionSrtExport } from "./CaptionSrtExport";
 import { CaptionsPane } from "./CaptionsPane";
 import { ColorField } from "./ColorField";
 import { insertionsEnabled } from "./insertionsEnabled";
@@ -998,6 +999,9 @@ export function TranscriptPane({
 				helpText={helpText}
 				actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
 			>
+				<div className={styles.transcriptExportRow}>
+					<CaptionSrtExport />
+				</div>
 				{laneSwitch}
 				<div
 					style={{
@@ -1049,6 +1053,9 @@ export function TranscriptPane({
 			helpText={helpText}
 			actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
 		>
+			<div className={styles.transcriptExportRow}>
+				<CaptionSrtExport />
+			</div>
 			{laneSwitch}
 			{/* The gestures are invisible until tried: nothing on a plain word stream says
 			 * that double-click corrects and Backspace cuts. One muted line names them; the

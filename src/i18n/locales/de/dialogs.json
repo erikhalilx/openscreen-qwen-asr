@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "SRT-Untertitel speichern",
 		"saveGif": "Exportiertes GIF speichern",
 		"saveVideo": "Exportiertes Video speichern",
 		"selectVideo": "Videodatei auswählen",

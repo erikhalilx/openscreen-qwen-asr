@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "Uložit titulky SRT",
 		"saveGif": "Uložit exportovaný GIF",
 		"saveVideo": "Uložit exportované video",
 		"selectVideo": "Vybrat video soubor",

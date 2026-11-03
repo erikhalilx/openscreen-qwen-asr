@@ -54,6 +54,7 @@ import { lanePlacements } from "@/lib/ai-edition/timeline/aggregated-transcript"
 import { firstTimelineBusyView } from "@/lib/ai-edition/transcription/status";
 import { TEXT_FONT_FAMILIES } from "@/lib/textFonts";
 import { nativeBridgeClient } from "@/native";
+import { CaptionSrtExport } from "./CaptionSrtExport";
 import styles from "./NewEditorShell.module.css";
 import { ChoiceRow, SliderCell, Toggle } from "./RightPanes";
 import { TextColorField } from "./TextColorField";
@@ -274,6 +275,7 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 					<CaptionsIcon size={14} />
 				</span>
 				<h2>{t("facets.captions")}</h2>
+				<CaptionSrtExport />
 				{/* Its own provider, like `Toggle`: the pane renders without the app's root one in the
 				    tests. */}
 				{onClose ? (

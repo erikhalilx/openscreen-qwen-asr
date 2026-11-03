@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "Save SRT subtitles",
 		"saveGif": "Save exported GIF",
 		"saveVideo": "Save exported video",
 		"selectVideo": "Choose a video file",

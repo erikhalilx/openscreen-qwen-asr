@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "تصدير SRT",
+		"srtMixedRecording": "صوت التسجيل (مختلط)",
+		"srtHint": "يستخدم توقيت الفيديو المعدّل ونص الترجمة الحالي. يمكن تصدير المصادر المخفية أيضًا.",
+		"srtSaved": "تم حفظ ترجمة SRT.",
+		"srtFailed": "تعذّر تصدير ترجمة SRT.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

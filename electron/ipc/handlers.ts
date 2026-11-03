@@ -164,6 +164,7 @@ import {
 } from "../recording-source-settings";
 import { getSttManager } from "../stt";
 import { createRunnerWindow } from "../windows";
+import { registerCaptionSrtHandler } from "./captionSrt";
 import { getSourcesByType, shouldEnumerateSourceTypesSeparately } from "./desktopSourceTypes";
 import { registerNativeBridgeHandlers } from "./nativeBridge";
 import { createNativeMacMidCaptureErrorWatch } from "./nativeMacMidCaptureErrorWatch";
@@ -2007,6 +2008,7 @@ export function registerIpcHandlers(
 	/** The editor holds changes it has not saved (main.ts): an MCP take would close it. */
 	editorHasUnsavedChanges?: () => boolean,
 ) {
+	registerCaptionSrtHandler();
 	/** The HUD is recording a take, the user's or an MCP client's. Set by `setAppRecording` only. */
 	let appRecording = false;
 	/**

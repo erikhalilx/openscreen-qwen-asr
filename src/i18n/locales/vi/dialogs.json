@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "Lưu phụ đề SRT",
 		"saveGif": "Lưu GIF đã xuất",
 		"saveVideo": "Lưu Video đã xuất",
 		"selectVideo": "Chọn tệp video",

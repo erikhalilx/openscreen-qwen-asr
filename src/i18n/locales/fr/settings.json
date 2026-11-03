@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "Exporter SRT",
+		"srtMixedRecording": "Audio enregistré (mixé)",
+		"srtHint": "Utilise le minutage de la vidéo montée et le texte actuel. Les sources masquées peuvent aussi être exportées.",
+		"srtSaved": "Sous-titres SRT enregistrés.",
+		"srtFailed": "Impossible d’exporter les sous-titres SRT.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

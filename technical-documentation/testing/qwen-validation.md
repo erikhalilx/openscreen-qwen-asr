@@ -1,5 +1,17 @@
 # Qwen fork validation
 
+## Separate SRT export — 2026-11-03
+
+SRT export is available from the Transcript tool row and Captions header. Each recorded source exports independently, including when hidden, with its current text, line layout and translation. Timestamps use the common edited programme clock, with trims, speed changes and the display-only one-second hold. Mixed legacy recordings remain explicitly mixed. Export opens a native save dialog with overwrite confirmation and writes UTF-8 only to its chosen SRT destination. Subtitle exports are gitignored and rejected by the publication scanner even if forcibly added.
+
+Computer-use on an isolated development profile opened a copy of the saved synthetic dual-source project. System captions were exported from Transcript; microphone captions were hidden and then exported from Captions. Both native saves succeeded. Each file has six sequentially numbered cues and FFmpeg recognizes both as SubRip. System begins at 0.000 seconds, microphone at 2.960 seconds; their last cues end at 10.360 and 13.320 seconds. The microphone offset is preserved instead of resetting each file to zero. The word-count slider also reached 25. The installed application and its active project were not replaced or closed. Development now uses a separate profile/lock (or the existing E2E data-directory override).
+
+Automated checks cover source isolation, hidden captions, text corrections, source translations, cuts, combined cuts/speed, duplicated clips, legacy projects without audio tracks, timestamp formatting, native file writing, invalid destinations, cancellation and retry. New SRT and caption compatibility tests: 37 passed. Final full suite: 4,994 passed, one existing skip; both TypeScript configurations, production Vite build, i18n, lint (26 inherited warnings) and privacy audit passed. No ASR regeneration, real capture, MP4 re-export, other platforms or release promotion was performed for this export-only change; no new package was installed.
+
+在转录面板工具行和字幕窗口标题栏均可导出 SRT，两种录制来源分别导出，隐藏字幕也可导出；文字、行长和已选翻译取当前设置，时间轴计算剪切、变速及额外一秒展示时间。旧版混音仍明确标注为混合来源。系统保存窗口确认目的地及覆盖操作，文件按 UTF-8 写入。SRT 导出文件已加入 Git 排除和发布审计拦截规则，并验证强制添加也会被拒绝。
+
+桌面操作在隔离开发版中验证两个入口和实际保存：两份文件各六条，FFmpeg 均识别为 SubRip。系统声从 0 秒开始，麦克风保留 2.960 秒偏移，末条分别结束于 10.360 和 13.320 秒；关闭麦克风字幕显示后仍可导出。行长滑块可增至 25。没有关闭或替换正在使用的安装版及其项目；开发环境现使用独立配置目录和单实例锁。针对性检查 37 项通过，全量 4,994 项通过、1 项原有跳过项，两份类型检查、生产构建、翻译键、lint 和脱敏检查通过。未重做 ASR、真实录制、MP4 导出、其他平台或候选版本晋级，本轮未安装新包。
+
 ## Caption line limit — 2026-11-03
 
 The shared line-length limit now accepts up to 25 units through the caption pane, stored settings, CLI and editing tools. Defaults and segmentation rules are unchanged. Tests verify both recorded caption sources can store 25, settings clamp above 25 and the CLI accepts 25/rejects 26. Targeted tests: 91 passed; full suite: 4,970 passed and one existing skip. Both TypeScript configurations and lint pass (26 inherited warnings). GUI verification was skipped: the installed editor was in use, and the development application shares its single-instance lock. No application was replaced, no user project was changed, and no new package was installed. See [segmentation findings](../architecture/qwen-caption-segmentation.md) for the separate research into semantic splitting.

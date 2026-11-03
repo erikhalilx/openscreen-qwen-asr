@@ -2509,6 +2509,18 @@ textarea.control {
   cursor: pointer;
 }
 .paneHeadBtn:hover { background: color-mix(in oklab, var(--fg) 12%, transparent); color: var(--fg); }
+.paneHeadBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+.transcriptExportRow { display: flex; justify-content: flex-end; padding: 0 var(--sp-4) 8px; }
+
+.srtExportMenu {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 250px;
+  font: 400 12px/1.5 var(--font-body);
+}
+.srtExportMenu .paneHeadBtn { width: 100%; justify-content: flex-start; }
+.srtExportMenu p { margin: 4px 0 0; color: var(--muted); }
 
 /* Two mutually exclusive readings of the same tab, so: one track, one lit half.
    Not tabs — tabs would say the two transcripts sit side by side, and only one of

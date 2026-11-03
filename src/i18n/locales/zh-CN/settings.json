@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "导出 SRT",
+		"srtMixedRecording": "录制音频（混合）",
+		"srtHint": "按成片时间轴和当前字幕文字导出，隐藏的音源字幕也可单独导出。",
+		"srtSaved": "SRT 字幕已保存。",
+		"srtFailed": "SRT 字幕导出失败。",
 		"sourceStyles": "样式设置对象",
 		"sourceDisplay": "字幕来源",
 		"swapSources": "调换两轨字幕位置",

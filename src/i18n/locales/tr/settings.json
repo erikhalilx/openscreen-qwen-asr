@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "SRT dışa aktar",
+		"srtMixedRecording": "Kayıt sesi (karışık)",
+		"srtHint": "Düzenlenmiş videonun zamanlamasını ve geçerli metni kullanır. Gizli kaynaklar da dışa aktarılabilir.",
+		"srtSaved": "SRT altyazıları kaydedildi.",
+		"srtFailed": "SRT altyazıları dışa aktarılamadı.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

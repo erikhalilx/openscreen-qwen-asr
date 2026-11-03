@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "Exportar SRT",
+		"srtMixedRecording": "Áudio gravado (misto)",
+		"srtHint": "Usa os tempos do vídeo editado e o texto atual. Fontes ocultas também podem ser exportadas.",
+		"srtSaved": "Legendas SRT salvas.",
+		"srtFailed": "Não foi possível exportar as legendas SRT.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

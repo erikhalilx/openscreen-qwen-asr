@@ -76,6 +76,7 @@
 		}
 	},
 	"fileDialogs": {
+		"saveSrt": "SRT 字幕を保存",
 		"saveGif": "エクスポートしたGIFを保存",
 		"saveVideo": "エクスポートした動画を保存",
 		"selectVideo": "動画ファイルを選択",

@@ -204,6 +204,11 @@
 		"gif": "GIF"
 	},
 	"captions": {
+		"exportSrt": "Экспорт SRT",
+		"srtMixedRecording": "Звук записи (смешанный)",
+		"srtHint": "Использует время смонтированного видео и текущий текст. Скрытые источники также можно экспортировать.",
+		"srtSaved": "Субтитры SRT сохранены.",
+		"srtFailed": "Не удалось экспортировать субтитры SRT.",
 		"sourceStyles": "Style settings for",
 		"sourceDisplay": "Caption sources",
 		"swapSources": "Swap caption heights",

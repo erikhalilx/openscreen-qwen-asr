@@ -173,3 +173,6 @@ __pycache__/
 *.aac
 *.session.json
 *.mp4.cursor.json
+
+# Exported subtitles can contain private transcript text.
+*.srt

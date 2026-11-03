@@ -92,6 +92,10 @@ Caption display holds each line for up to one extra playback second after its al
 
 每条字幕在原始结束时间后，默认额外保留最多 1 秒实际播放时间；如果同一路的下一条字幕提前开始，或视频已结束，就立即切换或结束显示。两轨分别应用此规则。识别结果、原始逐字对齐时间戳和字幕出现时间均不改变，预览与导出使用相同的展示规则，并适配剪切及变速。
 
+Use **SRT** in the **Transcript** pane's top tool row or the **Captions** header, then choose **System audio** or **Microphone** to save a separate UTF-8 subtitle file. Each file uses the edited video's common timeline, including cuts, speed changes and the one-second display hold. Export follows each source's current text, line length and selected translation, even when its display is hidden. SRT contains text and timing, without the preview's fonts, colours or stacking. Old mixed recordings are labelled **Recording audio (mixed)** and cannot be split into sources retrospectively.
+
+在**转录文本**面板上方工具行或**字幕**窗口标题栏点击 **SRT**，选择**系统音频**或**麦克风**，分别保存 UTF-8 字幕文件。两份文件共用成片时间轴，并计算剪切、变速和额外一秒展示时间；使用各来源当前的文字、行长和已选翻译，关闭显示的字幕也可单独导出。SRT 只包含文字和时间，不保存预览中的字体、颜色及分层位置。旧版混音录制标为**录制音频（混合）**，无法事后还原成两路来源。
+
 Both transcripts, styles and switches are saved with the project. CLI captions and MCP transcription also recognize the separate sources; MCP `setCaptionSettings` accepts `source`, `systemEnabled`, `microphoneEnabled` and `swapSources`. Existing mixed recordings retain their original single caption flow.
 
 两路转录、样式和开关均随项目保存。CLI 字幕和 MCP 转写同样支持独立来源；MCP 的 `setCaptionSettings` 可传入 `source`、`systemEnabled`、`microphoneEnabled` 和 `swapSources`。旧版已混音的录制继续使用原有单路字幕流程。

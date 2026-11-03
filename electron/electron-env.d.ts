@@ -297,6 +297,10 @@ interface Window {
 		starPromptExportFinished: () => Promise<{ offer: boolean; store: boolean }>;
 		dismissStarPrompt: () => Promise<void>;
 		openStoreReview: () => Promise<{ success: boolean }>;
+		saveCaptionSrt: (
+			fileName: string,
+			contents: string,
+		) => Promise<{ success: boolean; canceled?: boolean }>;
 		pickExportSavePath: (
 			fileName: string,
 			exportFolder?: string,
