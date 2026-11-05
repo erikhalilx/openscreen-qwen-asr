@@ -39,6 +39,7 @@ const APPEARANCE: StylePresetAppearance = {
 		asArrow: [],
 		clickImpact: false,
 		clickSound: false,
+		clickSoundPreset: "realistic",
 		clickSoundGainDb: 0,
 	},
 	cursorShow: true,

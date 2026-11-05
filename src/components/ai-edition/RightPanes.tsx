@@ -1,3 +1,4 @@
+import { CameraLayoutPane } from "./CameraLayoutPane";
 // Six right-rail panes matching design/openscreen-editor.html. Each control
 // reads from + writes to the project document via `useEditorSettings`, so the
 // design's UI is the canonical surface (no more "more options" link to a
@@ -64,6 +65,7 @@ import {
 	patchAudioTrack,
 	trackGroupId,
 } from "@/lib/ai-edition/document/audioTracks";
+import { layoutRuns, setLayoutPreset } from "@/lib/ai-edition/document/layout";
 import {
 	collectNativeFormats,
 	formatFillAvailability,
@@ -106,7 +108,7 @@ import {
 } from "@/lib/ai-edition/timeline/aggregated-transcript";
 import { assetCameraSource, hasAnyClipWithCamera } from "@/lib/ai-edition/timeline/camera";
 import { breatheCut } from "@/lib/ai-edition/timeline/cut-breath";
-import { formatMs } from "@/lib/ai-edition/timeline/format";
+import { formatMs, formatSec } from "@/lib/ai-edition/timeline/format";
 import { removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
 import {
 	type AssetTranscriptionView,
@@ -126,6 +128,7 @@ import {
 } from "@/lib/cursor/cursorThemes";
 import { gradientSeedColor, oneColorGradient } from "@/lib/gradientBuilder";
 import {
+	WEBCAM_ANCHOR_LABEL_KEYS as ANCHOR_KEYS,
 	DEFAULT_WEBCAM_ROUNDNESS,
 	FRAME_THEMES,
 	type FrameTheme,
@@ -165,6 +168,7 @@ import styles from "./NewEditorShell.module.css";
 import { useRecordedCursorTypes } from "./recordedCursorTypes";
 import { useTranscriptionLabel } from "./TranscriptionStatus";
 import { transcriptionBusyLabel } from "./transcriptionBusyLabel";
+import { LayoutPicker } from "./v4/LayoutPicker";
 
 interface PaneProps {
 	title: string;
@@ -2711,45 +2715,6 @@ export function VideoEffectsPane() {
 
 // ─── Layout (webcam)──────────────────────────────────────────────
 
-// Each preset draws itself (viewBox 0 0 32 22): the recording as an outline, the camera filled.
-const WEBCAM_PRESETS = [
-	{
-		value: "picture-in-picture",
-		labelKey: "layout.pictureInPicture",
-		icon: (
-			<>
-				<rect x="1.5" y="1.5" width="29" height="19" rx="3" />
-				<rect x="19.5" y="11" width="8.5" height="6.5" rx="1.5" fill="currentColor" stroke="none" />
-			</>
-		),
-	},
-	{
-		value: "dual-frame",
-		labelKey: "layout.dualFrame",
-		icon: (
-			<>
-				<rect x="1.5" y="3.5" width="18" height="15" rx="2.5" />
-				<rect x="21.5" y="3.5" width="9" height="15" rx="2.5" fill="currentColor" stroke="none" />
-			</>
-		),
-	},
-	{
-		value: "vertical-stack",
-		labelKey: "layout.verticalStack",
-		icon: (
-			<>
-				<rect x="6.5" y="1.5" width="19" height="11" rx="2" />
-				<rect x="6.5" y="14" width="19" height="6.5" rx="2" fill="currentColor" stroke="none" />
-			</>
-		),
-	},
-	{
-		value: "no-webcam",
-		labelKey: "layout.noWebcam",
-		icon: <rect x="1.5" y="1.5" width="29" height="19" rx="3" />,
-	},
-] as const;
-
 // Webcam size (% of frame width) that maps to the native compositor's default PiP webcam
 // (fixture a_side = 320px @ 1920 ≈ 16.7%). `webcamSizePreset / this` = the native size scale
 // (1 = fixture default), so the slider reads as a direct multiplier on the shipped webcam.
@@ -2760,17 +2725,6 @@ const CAMERA_SHAPES = [
 	{ value: "square", labelKey: "layout.shapes.square", x: 4, y: 4, w: 16, h: 16 },
 	{ value: "rectangle", labelKey: "layout.shapes.original", x: 3, y: 6, w: 18, h: 12 },
 ] as const satisfies ReadonlyArray<{ value: WebcamMask } & Record<string, unknown>>;
-
-const ANCHOR_KEYS: Record<WebcamAnchor, string> = {
-	"top-left": "layout.anchors.topLeft",
-	top: "layout.anchors.top",
-	"top-right": "layout.anchors.topRight",
-	left: "layout.anchors.left",
-	right: "layout.anchors.right",
-	"bottom-left": "layout.anchors.bottomLeft",
-	bottom: "layout.anchors.bottom",
-	"bottom-right": "layout.anchors.bottomRight",
-};
 
 /** The frame, with the camera where this anchor puts it (viewBox 0 0 32 22, as the presets). */
 function anchorIcon(anchor: WebcamAnchor) {
@@ -2850,11 +2804,23 @@ const CAMERA_BACKGROUND_MODES: Array<{
 export function LayoutPane() {
 	const canSegmentCamera = useCanSegmentCamera();
 	const ts = useScopedT("settings");
+	const tt = useScopedT("timeline");
 	const { settings, set, setLive, commit, hasDocument } = useEditorSettings();
 	const { pick: handlePickWebcamWallpaper, input: webcamWallpaperInput } = useWallpaperFileInput(
 		(dataUrl) => set({ webcamWallpaper: dataUrl }),
 	);
 	const document = useProjectStore((s) => s.document);
+	const currentTime = useProjectStore((s) => s.currentTimeSec);
+	const saveDocument = useProjectStore((s) => s.saveDocument);
+	const runs = useMemo(() => (document ? layoutRuns(document) : []), [document]);
+	const hasLayoutChanges =
+		Boolean(document?.layoutRegions?.length) ||
+		runs.length > 1 ||
+		Boolean(runs[0]?.member.legacyCamera);
+	const lastPassage = runs.at(-1);
+	const passage =
+		runs.find((r) => currentTime >= r.start && currentTime < r.end) ??
+		(lastPassage && currentTime >= lastPassage.end ? lastPassage : undefined);
 	// A project can hold clips with no camera attached at all (plain imports or a
 	// recording made without a webcam). Keep the saved camera preference for later, but
 	// make the disabled control describe whether this project has any camera at all.
@@ -2873,9 +2839,25 @@ export function LayoutPane() {
 		[document],
 	);
 	const effectiveLayoutPreset = resolveWebcamLayoutPreset(
-		settings.webcamLayoutPreset,
+		hasLayoutChanges && passage ? passage.member.preset : settings.webcamLayoutPreset,
 		hasAnyCamera,
 	);
+	const passageHasCamera =
+		!hasLayoutChanges || !passage
+			? hasAnyCamera
+			: Boolean(
+					document?.timeline.clips.some(
+						(clip) =>
+							clip.timelineEndSec > passage.start &&
+							clip.timelineStartSec < passage.end &&
+							document.assets.some(
+								(asset) =>
+									asset.id === clip.assetId &&
+									asset.cameraTrack?.visible &&
+									asset.cameraTrack.sourcePath,
+							),
+					),
+				);
 
 	// Synchro initiale : cf. NativeCompositorOverlay (`pushAllNativeParams`).
 	// the mask shape picker only makes sense for Picture-in-Picture.
@@ -2922,41 +2904,41 @@ export function LayoutPane() {
 	};
 	return (
 		<Pane title={ts("layout.title")} icon={<Camera size={16} />} helpText={helpText}>
-			{/* The heading names the current layout: the tiles below only draw theirs. */}
 			<div className={styles.sectionLabel}>
 				{ts("layout.preset")}
-				<span className={styles.sectionLabelValue}>
-					{ts(
-						WEBCAM_PRESETS.find((p) => p.value === effectiveLayoutPreset)?.labelKey ??
-							"layout.noWebcam",
-					)}
-				</span>
+				<span className={styles.sectionLabelValue}>{tt(`layouts.${effectiveLayoutPreset}`)}</span>
 			</div>
-			<div style={{ padding: "0 var(--sp-4) 12px" }}>
-				<ChoiceRow<(typeof WEBCAM_PRESETS)[number]["value"]>
-					label={ts("layout.preset")}
-					tiles
-					options={WEBCAM_PRESETS.map((p) => ({
-						value: p.value,
-						label: ts(p.labelKey),
-						icon: (
-							<svg
-								viewBox="0 0 32 22"
-								width={32}
-								height={22}
-								fill="none"
-								stroke="currentColor"
-								strokeWidth="1.75"
-								aria-hidden="true"
-							>
-								{p.icon}
-							</svg>
-						),
-					}))}
-					value={effectiveLayoutPreset}
-					disabled={layoutControlsDisabled}
-					onChange={(preset) => void set({ webcamLayoutPreset: preset })}
-				/>
+			<div className={styles.label} style={{ marginBottom: 8 }}>
+				{!hasLayoutChanges
+					? tt("layouts.wholeVideo")
+					: passage &&
+						tt("layouts.fromUntil", {
+							start: formatSec(passage.start),
+							end: formatSec(passage.end),
+						})}
+			</div>
+			<LayoutPicker
+				iconOnly
+				label={ts("layout.preset")}
+				value={effectiveLayoutPreset}
+				hasCamera={passageHasCamera}
+				disabled={!hasDocument || (hasLayoutChanges && !passage)}
+				onSelect={(preset) => {
+					if (!document) return;
+					if (hasLayoutChanges) {
+						if (!passage) return;
+						void saveDocument(setLayoutPreset(document, passage.ids[0], preset), { history: true });
+					} else void set({ webcamLayoutPreset: preset });
+				}}
+			/>
+			{hasLayoutChanges && !passageHasCamera ? (
+				<p className={styles.label}>{tt("layouts.noCamera")}</p>
+			) : null}
+			{hasLayoutChanges && passage && passageHasCamera && isPip ? (
+				<CameraLayoutPane regionId={passage.ids[0]} />
+			) : null}
+			<div className={styles.sectionLabel} style={{ marginTop: 16 }}>
+				{tt("layouts.sharedSettings")}
 			</div>
 			<div className={styles.paneRow}>
 				<span className={styles.label}>{ts("layout.mirrorWebcam")}</span>
@@ -2971,7 +2953,7 @@ export function LayoutPane() {
 					}}
 				/>
 			</div>
-			{supportsReactiveZoom ? (
+			{supportsReactiveZoom && !hasLayoutChanges ? (
 				<div className={styles.paneRow}>
 					<span className={styles.label}>{ts("layout.reactiveWebcam")}</span>
 					<Toggle
@@ -2983,8 +2965,11 @@ export function LayoutPane() {
 					/>
 				</div>
 			) : null}
-			{isPip ? (
+			{isPip && !hasLayoutChanges ? (
 				<>
+					{hasLayoutChanges ? (
+						<p className={styles.laneSwitchNote}>{ts("layout.newSegmentDefaults")}</p>
+					) : null}
 					<div className={styles.sectionLabel}>{ts("layout.webcamShape")}</div>
 					<div style={{ padding: "0 var(--sp-4) 12px" }}>
 						<ChoiceRow<WebcamMask>
@@ -3502,6 +3487,7 @@ export function AudioPane() {
 			{recorded.map((track) => (
 				<RecordingSourceGain key={track.assetId} track={track} allClips />
 			))}
+			<ClickSoundControls />
 			<div className={styles.sliderGrid}>
 				<SliderCell
 					label={ts("audio.outputGain")}
@@ -3526,6 +3512,65 @@ export function AudioPane() {
 				{ts("audio.reset")}
 			</button>
 		</Pane>
+	);
+}
+
+function ClickSoundControls() {
+	const ts = useScopedT("settings");
+	const { settings, set, setLive, commit, hasDocument } = useEditorSettings();
+	const clickSound = useClickSound();
+	return (
+		<>
+			<div className={styles.sectionLabel}>{ts("audio.mouseEffects")}</div>
+			<div className={styles.paneRow}>
+				<span className={styles.label}>{ts("cursor.clickSound")}</span>
+				<Toggle
+					ariaLabel={ts("cursor.clickSound")}
+					checked={settings.cursor.clickSound}
+					disabled={!hasDocument || (!clickSound.hasClicks && !settings.cursor.clickSound)}
+					onChange={(enabled) => {
+						void set({ cursor: { clickSound: enabled } });
+						if (enabled) void clickSound.prepare(settings.cursor.clickSoundPreset);
+					}}
+				/>
+			</div>
+			<div style={{ padding: "0 var(--sp-4) 12px" }}>
+				<ChoiceRow<"realistic" | "bubble">
+					label={ts("audio.mouseSoundPreset")}
+					display="both"
+					options={[
+						{ value: "realistic", label: ts("audio.mouseRealistic") },
+						{ value: "bubble", label: ts("audio.mouseBubble") },
+					]}
+					value={settings.cursor.clickSoundPreset}
+					disabled={!hasDocument}
+					onChange={(clickSoundPreset) => {
+						void set({ cursor: { clickSoundPreset } });
+						if (settings.cursor.clickSound) void clickSound.prepare(clickSoundPreset);
+					}}
+				/>
+			</div>
+			<div className={styles.sliderGrid}>
+				<SliderCell
+					label={ts("cursor.clickSoundVolume")}
+					value={settings.cursor.clickSoundGainDb}
+					min={SETTING_BOUNDS.cursorClickSoundGainDb[0]}
+					max={SETTING_BOUNDS.cursorClickSoundGainDb[1]}
+					step={0.5}
+					decimals={1}
+					suffix=" dB"
+					defaultValue={DEFAULT_EDITOR_SETTINGS.cursor.clickSoundGainDb}
+					disabled={!hasDocument || !clickSound.hasClicks || !settings.cursor.clickSound}
+					onChange={(clickSoundGainDb) => setLive({ cursor: { clickSoundGainDb } })}
+					onCommit={() => void commit()}
+				/>
+			</div>
+			<p className={styles.laneSwitchNote}>
+				{!clickSound.isLoading && !clickSound.hasClicks
+					? ts("audio.noMouseClicks")
+					: ts("audio.mouseEffectsHint")}
+			</p>
+		</>
 	);
 }
 
@@ -3831,7 +3876,6 @@ export function CursorPane() {
 		[settings.cursorTheme],
 	);
 	const recordedTypes = useRecordedCursorTypes();
-	const clickSound = useClickSound();
 	// Each kind the video shows, pictured by the first of its states it shows.
 	const recordedKinds = CURSOR_KIND_IDS.flatMap((kind) => {
 		const type = CURSOR_KINDS[kind].find((state) => recordedTypes?.has(state));
@@ -4074,48 +4118,6 @@ export function CursorPane() {
 					/>
 				</div>
 			) : null}
-			{/* The same clicks, heard. Offered only once the take is known to contain some. It is a
-			    setting rather than a track on the timeline: the hits are placed by the same
-			    projection the click zoom uses, so they follow every edit instead of going stale. */}
-			{settings.cursorShow && clickSound.hasClicks ? (
-				<>
-					<div className={styles.paneRow}>
-						<span className={styles.label}>{ts("cursor.clickSound")}</span>
-						<Toggle
-							ariaLabel={ts("cursor.clickSound")}
-							tooltip={ts("cursor.clickSoundTip")}
-							checked={settings.cursor.clickSound}
-							disabled={!hasDocument}
-							onChange={(v) => {
-								void set({ cursor: { clickSound: v } });
-								// Read the cues and stage the samples on the way in, so the first
-								// export asked for after this is not a race with a background read.
-								if (v) void clickSound.prepare();
-							}}
-						/>
-					</div>
-					{/* How loud. Offered only once there is a sound to turn down, and bounded by the
-					    same table the mixer reads, so the slider cannot ask for a level the export
-					    would flatten. */}
-					{settings.cursor.clickSound ? (
-						<div className={styles.sliderGrid}>
-							<SliderCell
-								label={ts("cursor.clickSoundVolume")}
-								value={settings.cursor.clickSoundGainDb}
-								min={SETTING_BOUNDS.cursorClickSoundGainDb[0]}
-								max={SETTING_BOUNDS.cursorClickSoundGainDb[1]}
-								step={0.5}
-								decimals={1}
-								suffix=" dB"
-								defaultValue={DEFAULT_EDITOR_SETTINGS.cursor.clickSoundGainDb}
-								disabled={!hasDocument}
-								onChange={(clickSoundGainDb) => setLive({ cursor: { clickSoundGainDb } })}
-								onCommit={() => void commit()}
-							/>
-						</div>
-					) : null}
-				</>
-			) : null}
 		</Pane>
 	);
 }
@@ -4183,7 +4185,7 @@ export function ChoiceRow<T extends string | number>({
 	describedBy,
 }: {
 	label: string;
-	/** `null` leaves a hole in the grid: the middle of the camera's position grid. An option
+	/** `null` leaves an intentional hole in a choice grid. An option
 	 *  can be `disabled` on its own: a disabled button takes no focus and opens no tooltip, so
 	 *  the reason must be visible text the row points at (`describedBy`).
 	 *  `title` is a tooltip that adds to the label (a clip count). An icon-only option gets its

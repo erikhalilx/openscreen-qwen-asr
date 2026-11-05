@@ -121,8 +121,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		let filter: SCContentFilter
 		let width: Int
 		let height: Int
-		// Global frame (points, top-left origin) of the captured region. Used by the
-		// renderer to normalize cursor positions into the captured window's space.
+		// Global frame (points, top-left origin) the cursor is normalised against.
 		let captureFrame: CGRect
 	}
 
@@ -170,7 +169,10 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	private let hostClock = CMClockGetHostTimeClock()
 	private let picked: PickedSource?
 	/// A `SystemAudioTap` (macOS 14.2+), held untyped so this class keeps its macOS 13 floor.
+	/// Sample queue only, like the microphone buffers whose arrival starts it.
 	private var systemAudioTap: AnyObject?
+	/// Sample queue only. When the tap starts anyway if the microphone has not delivered yet.
+	private var tapFallbackDeadline: Date?
 	/// Sample queue only. Cleared before the writer is finalised: a tap stops on its own
 	/// queue, and a buffer it had in flight must not reach a finished writer input.
 	private var acceptsTappedAudio = true
@@ -260,7 +262,6 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			try stream.addStreamOutput(self, type: microphoneOutputType, sampleHandlerQueue: sampleQueue)
 		}
 		try setupWriter()
-		startSystemAudioTapIfNeeded()
 
 		self.stream = stream
 		systemAudioStream = audioStream
@@ -269,6 +270,19 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			"schemaVersion": 1,
 		])
 		try await stream.startCapture()
+		// On an idle Mac the tap's device does not run until something plays, and a tap
+		// started before the stream's microphone held the microphone back with it until then
+		// (#1173). So a take with a microphone starts its tap on the first microphone buffer;
+		// the deadline is the fallback for a microphone that never delivers.
+		if tapsSystemAudio {
+			sampleQueue.sync {
+				if nativeMicrophoneEnabled {
+					tapFallbackDeadline = Date().addingTimeInterval(1)
+				} else {
+					startSystemAudioTapIfNeeded()
+				}
+			}
+		}
 		if let audioStream {
 			do {
 				try await audioStream.startCapture()
@@ -319,8 +333,19 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		await finishWriter()
 	}
 
+	/// Sample queue. A microphone that never delivers must not cost the take its system audio.
+	private func startSystemAudioTapIfMicrophoneSilent() {
+		guard let deadline = tapFallbackDeadline, Date() >= deadline else {
+			return
+		}
+		tapFallbackDeadline = nil
+		startSystemAudioTapIfNeeded()
+	}
+
+	/// Sample queue. Starts the tap once; a no-op after that, and after the take has stopped.
 	private func startSystemAudioTapIfNeeded() {
-		guard tapsSystemAudio, #available(macOS 14.2, *) else {
+		guard tapsSystemAudio, systemAudioTap == nil, acceptsTappedAudio, #available(macOS 14.2, *)
+		else {
 			return
 		}
 		let tap = SystemAudioTap { [weak self] sampleBuffer in
@@ -353,13 +378,14 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	/// prompt left unanswered cannot hold the recording's stop hostage; what the tap still
 	/// delivers is dropped by `acceptsTappedAudio`.
 	private func stopSystemAudioTap() {
-		sampleQueue.sync {
+		let tap = sampleQueue.sync { () -> AnyObject? in
 			acceptsTappedAudio = false
+			defer { systemAudioTap = nil }
+			return systemAudioTap
 		}
-		guard let tap = systemAudioTap else {
+		guard let tap else {
 			return
 		}
-		systemAudioTap = nil
 		tapControlQueue.async {
 			if #available(macOS 14.2, *), let tap = tap as? SystemAudioTap {
 				tap.stop()
@@ -446,6 +472,9 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 	}
 
 	func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+		if type.rawValue == microphoneOutputTypeRawValue {
+			startSystemAudioTapIfNeeded()
+		}
 		guard CMSampleBufferDataIsReady(sampleBuffer) else {
 			return
 		}
@@ -629,7 +658,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			filter: picked.filter,
 			width: size.width,
 			height: size.height,
-			captureFrame: picked.frame
+			captureFrame: captureContentFrame(for: picked.filter, fallback: picked.frame)
 		)
 	}
 
@@ -722,7 +751,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				filter: filter,
 				width: size.width,
 				height: size.height,
-				captureFrame: display.frame
+				captureFrame: captureContentFrame(for: filter, fallback: display.frame)
 			)
 		case "window":
 			guard let windowId = request.source.windowId else {
@@ -747,7 +776,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 				filter: filter,
 				width: size.width,
 				height: size.height,
-				captureFrame: window.frame
+				captureFrame: captureContentFrame(for: filter, fallback: window.frame)
 			)
 		default:
 			throw HelperError.invalidSourceType(request.source.type)
@@ -988,6 +1017,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			}
 			self.audioMixer?.tick()
 			for mixer in self.sourceAudioMixers.values { mixer.tick() }
+			self.startSystemAudioTapIfMicrophoneSilent()
 		}
 		audioTicker = timer
 		timer.resume()
@@ -1180,6 +1210,33 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 
 		return status == .complete
+	}
+
+	/// One-window filters use `kCGWindowBounds`: a picker window's `contentRect` sits
+	/// below the pixels the cursor is on (#1130). Displays keep `contentRect`.
+	private func captureContentFrame(for filter: SCContentFilter, fallback: CGRect) -> CGRect {
+		if #available(macOS 15.2, *),
+			filter.includedWindows.count == 1,
+			let windowID = filter.includedWindows.first?.windowID,
+			let bounds = Self.cgWindowBounds(windowID) {
+			return bounds
+		}
+		guard #available(macOS 14.0, *) else { return fallback }
+		return filter.contentRect
+	}
+
+	private static func cgWindowBounds(_ windowID: UInt32) -> CGRect? {
+		guard let entries = CGWindowListCopyWindowInfo(.optionIncludingWindow, CGWindowID(windowID))
+			as? [[String: Any]],
+			let raw = entries.first(where: {
+				($0[kCGWindowNumber as String] as? NSNumber)?.uint32Value == windowID
+			})?[kCGWindowBounds as String] as? NSDictionary
+		else { return nil }
+		var rect = CGRect.null
+		guard CGRectMakeWithDictionaryRepresentation(raw, &rect), rect.width > 0, rect.height > 0 else {
+			return nil
+		}
+		return rect
 	}
 
 	/// Output-buffer size for a filter, capped by the resolution the app asked for.

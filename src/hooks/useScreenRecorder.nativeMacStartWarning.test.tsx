@@ -20,10 +20,12 @@ const SOURCE = { id: "screen:0:0", name: "Screen 1", display_id: "1", thumbnail:
 let api: Record<string, ReturnType<typeof vi.fn>>;
 let emitSystemAudioUnavailable: (() => void) | undefined;
 let openAccessibilitySettings: ReturnType<typeof vi.fn>;
+let prepareRecording: ReturnType<typeof vi.fn>;
 
 function stubElectronAPI(systemAudioEnabled = false) {
 	emitSystemAudioUnavailable = undefined;
 	openAccessibilitySettings = vi.fn(async () => undefined);
+	prepareRecording = vi.fn(async () => ({ ready: true }));
 	api = {
 		getRecordingPrefs: vi.fn(async () => ({
 			micEnabled: true,
@@ -55,7 +57,7 @@ function stubElectronAPI(systemAudioEnabled = false) {
 	};
 	window.electronAPI = api as unknown as ElectronAPI;
 	Object.defineProperty(window.electronAPI, "permissions", {
-		value: { openSettings: openAccessibilitySettings },
+		value: { openSettings: openAccessibilitySettings, prepareRecording },
 	});
 }
 
@@ -75,6 +77,80 @@ beforeEach(() => {
 afterEach(() => {
 	vi.useRealTimers();
 	vi.restoreAllMocks();
+});
+
+describe("macOS permissions before countdown", () => {
+	it("waits for permission consent before showing the timer and ignores repeated starts", async () => {
+		let allow: ((value: { ready: boolean }) => void) | undefined;
+		prepareRecording.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					allow = resolve;
+				}),
+		);
+		const view = renderHook(() => useScreenRecorder());
+		await settle();
+		await act(async () => {
+			view.result.current.toggleRecording();
+		});
+		await settle(5_000);
+		await act(async () => {
+			view.result.current.toggleRecording();
+		});
+		expect(prepareRecording).toHaveBeenCalledOnce();
+		expect(prepareRecording).toHaveBeenCalledWith({
+			microphone: true,
+			camera: false,
+			systemAudio: false,
+		});
+		expect(api.showCountdownOverlay).not.toHaveBeenCalled();
+		expect(api.startNativeMacRecording).not.toHaveBeenCalled();
+		await act(async () => {
+			allow?.({ ready: true });
+		});
+		await settle(3_500);
+		expect(api.showCountdownOverlay).toHaveBeenCalledOnce();
+		expect(api.startNativeMacRecording).toHaveBeenCalledOnce();
+		expect(prepareRecording).toHaveBeenCalledOnce();
+	});
+
+	it("does not count down or record when the required microphone is denied", async () => {
+		prepareRecording.mockResolvedValue({ ready: false, blocked: "microphone" });
+		const view = renderHook(() => useScreenRecorder());
+		await settle();
+		await act(async () => {
+			view.result.current.toggleRecording();
+		});
+		await settle(5_000);
+		expect(api.showCountdownOverlay).not.toHaveBeenCalled();
+		expect(api.startNativeMacRecording).not.toHaveBeenCalled();
+		expect(toast.error).toHaveBeenCalledWith(
+			"recording.permissionDenied",
+			expect.objectContaining({ action: expect.any(Object) }),
+		);
+	});
+
+	it("does not start a countdown after unmounting while consent is pending", async () => {
+		let allow: ((value: { ready: boolean }) => void) | undefined;
+		prepareRecording.mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					allow = resolve;
+				}),
+		);
+		const view = renderHook(() => useScreenRecorder());
+		await settle();
+		await act(async () => {
+			view.result.current.toggleRecording();
+		});
+		view.unmount();
+		await act(async () => {
+			allow?.({ ready: true });
+		});
+		await settle(5_000);
+		expect(api.showCountdownOverlay).not.toHaveBeenCalled();
+		expect(api.startNativeMacRecording).not.toHaveBeenCalled();
+	});
 });
 
 describe("useScreenRecorder native macOS start warnings", () => {

@@ -308,7 +308,8 @@
 			"right": "Bên phải",
 			"bottomLeft": "Dưới cùng bên trái",
 			"bottom": "Dưới cùng",
-			"bottomRight": "Dưới cùng bên phải"
+			"bottomRight": "Dưới cùng bên phải",
+			"center": "Chính giữa"
 		},
 		"selectPreset": "Chọn cài đặt sẵn",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Nền máy ảnh",
 		"helpNoWebcam": "Dự án này không có camera nên các tùy chọn bố cục bị tắt và thiết lập sẵn hiển thị “Không có webcam”. Bố cục đã lưu của bạn vẫn được giữ lại cho khi bạn thêm camera.",
 		"title": "Bố cục camera",
-		"noWebcam": "Không có webcam"
+		"noWebcam": "Không có webcam",
+		"cameraTrack": "Bố cục camera",
+		"fullscreenLayout": "Toàn màn hình",
+		"enableTrack": "Bật đường bố cục camera",
+		"hideSegment": "Ẩn camera trong đoạn này",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Trượt sang trái",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Hiệu ứng chuột",
+		"mouseEffectsHint": "Thời gian và vị trí phân biệt nhấp đơn và nhấp đúp. Ẩn con trỏ không tắt âm thanh.",
+		"noMouseClicks": "Bản ghi này không có dữ liệu nhấp chuột.",
 		"systemSource": "Âm thanh hệ thống",
 		"microphoneSource": "Micrô",
 		"outputGain": "Mức đầu ra",
 		"help": "Giọng nói được tự động cân bằng về độ lớn tiêu chuẩn. Hãy điều chỉnh mức đầu ra từ đó; nó được áp dụng giống hệt nhau trong bản xem trước và khi xuất.",
 		"reset": "Đặt lại âm thanh",
-		"title": "Âm thanh"
+		"title": "Âm thanh",
+		"mouseSoundPreset": "Bộ âm thanh",
+		"mouseRealistic": "Chân thực",
+		"mouseBubble": "Bong bóng"
 	},
 	"language": {
 		"title": "Ngôn ngữ"

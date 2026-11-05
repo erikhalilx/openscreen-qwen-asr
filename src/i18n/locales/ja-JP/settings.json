@@ -131,7 +131,7 @@
 		"frameTheme": "テーマ",
 		"frameThemeLight": "ライト",
 		"frameThemeDark": "ダーク",
-		"roundnessFrameHelp": "範囲はフレームによって変わります。100% は見た目が崩れない最大の丸みです。",
+		"roundnessFrameHelp": "範囲はフレームによって異なります。100% は見た目が崩れない最大の丸みです。",
 		"shadowNone": "なし",
 		"shadowLight": "弱",
 		"shadowMedium": "中",
@@ -308,7 +308,8 @@
 			"right": "右",
 			"bottomLeft": "左下",
 			"bottom": "下",
-			"bottomRight": "右下"
+			"bottomRight": "右下",
+			"center": "中央"
 		},
 		"selectPreset": "プリセットを選択",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "カメラ背景",
 		"helpNoWebcam": "このプロジェクトにはカメラがないため、レイアウトの設定は無効で、プリセットは「Webカメラなし」と表示されます。保存されたレイアウトは、カメラを追加したときのために保持されます。",
 		"title": "カメラレイアウト",
-		"noWebcam": "Webカメラなし"
+		"noWebcam": "Webカメラなし",
+		"cameraTrack": "カメラレイアウト",
+		"fullscreenLayout": "全画面",
+		"enableTrack": "カメラレイアウトトラックを有効化",
+		"hideSegment": "この区間のカメラを非表示",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "左へスライド",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "マウス効果音",
+		"mouseEffectsHint": "クリックの間隔と位置でシングル・ダブルを判別します。カーソルを隠しても音は再生されます。",
+		"noMouseClicks": "この録画にはクリック記録がありません。",
 		"systemSource": "システム音声",
 		"microphoneSource": "マイク",
 		"outputGain": "出力レベル",
 		"help": "音声は標準のラウドネスに自動で揃えられます。そこから出力レベルを調整してください。プレビューと書き出しで同じように適用されます。",
 		"reset": "オーディオをリセット",
-		"title": "オーディオ"
+		"title": "オーディオ",
+		"mouseSoundPreset": "効果音セット",
+		"mouseRealistic": "リアル",
+		"mouseBubble": "バブル"
 	},
 	"language": {
 		"title": "言語"
@@ -447,7 +463,7 @@
 		"motionBlur": "モーションブラー",
 		"theme": "カーソルのスタイル",
 		"autoHide": "非アクティブ時に非表示",
-		"autoHideTip": "カーソルは動きが止まると消えます",
+		"autoHideTip": "カーソルは動きが止まるとフェードアウトします",
 		"bounceNone": "なし",
 		"bounceLight": "弱",
 		"bounceStrong": "強"

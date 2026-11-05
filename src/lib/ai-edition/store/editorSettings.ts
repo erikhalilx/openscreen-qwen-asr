@@ -190,6 +190,7 @@ interface LegacyShape {
 	cursorAlwaysArrow?: boolean;
 	cursorClickImpact?: boolean;
 	cursorClickSound?: boolean;
+	cursorClickSoundPreset?: "realistic" | "bubble";
 	cursorClickSoundGainDb?: number;
 	cursorShow?: boolean;
 	cursorAutoHide?: boolean;
@@ -241,6 +242,7 @@ export function getEditorSettings(doc: AxcutDocument | null | undefined): Editor
 		),
 		clickImpact: bool(legacy?.cursorClickImpact, DEFAULT_EDITOR_SETTINGS.cursor.clickImpact),
 		clickSound: bool(legacy?.cursorClickSound, DEFAULT_EDITOR_SETTINGS.cursor.clickSound),
+		clickSoundPreset: legacy?.cursorClickSoundPreset === "bubble" ? "bubble" : "realistic",
 		clickSoundGainDb: readBounded(
 			legacy?.cursorClickSoundGainDb,
 			"cursorClickSoundGainDb",
@@ -400,6 +402,7 @@ function nextLegacy(current: LegacyShape | null, patch: EditorSettingsPatch): Le
 		}
 		if (c.clickImpact !== undefined) next.cursorClickImpact = c.clickImpact;
 		if (c.clickSound !== undefined) next.cursorClickSound = c.clickSound;
+		if (c.clickSoundPreset !== undefined) next.cursorClickSoundPreset = c.clickSoundPreset;
 		if (c.clickSoundGainDb !== undefined) next.cursorClickSoundGainDb = c.clickSoundGainDb;
 		if (c.theme !== undefined) next.cursorTheme = c.theme;
 		if (c.show !== undefined) next.cursorShow = c.show;

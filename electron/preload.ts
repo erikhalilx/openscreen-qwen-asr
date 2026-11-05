@@ -18,6 +18,7 @@ import {
 	NATIVE_BRIDGE_CHANNEL,
 	type NativeBridgeRequest,
 } from "../src/native/contracts";
+import type { UpdateBadge } from "./background-update";
 import type { RecordingPrefs } from "./ipc/handlers";
 import type {
 	SttStatusEvent,
@@ -208,6 +209,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		return ipcRenderer.invoke("request-camera-access");
 	},
 	permissions: {
+		prepareRecording: (
+			options: import("./permissions/macPermissions").RecordingPermissionOptions,
+		) => ipcRenderer.invoke("permissions:prepare-recording", options),
 		get: () => ipcRenderer.invoke("permissions:get"),
 		request: (kind: string) => ipcRenderer.invoke("permissions:request", kind),
 		openSettings: (kind: string) => ipcRenderer.invoke("permissions:open-settings", kind),
@@ -240,8 +244,15 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		recording: boolean,
 		recordingId?: number,
 		cursorCaptureMode?: import("../src/lib/recordingSession").CursorCaptureMode,
+		reserveOnly?: boolean,
 	) => {
-		return ipcRenderer.invoke("set-recording-state", recording, recordingId, cursorCaptureMode);
+		return ipcRenderer.invoke(
+			"set-recording-state",
+			recording,
+			recordingId,
+			cursorCaptureMode,
+			reserveOnly,
+		);
 	},
 	isNativeWindowsCaptureAvailable: () => {
 		return ipcRenderer.invoke("is-native-windows-capture-available");
@@ -494,6 +505,16 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	 *  permanent half; this one also answers "not mid-take", so it is only correct for a caller
 	 *  that asks at the moment it shows the affordance. */
 	canCheckForUpdatesNow: () => ipcRenderer.invoke("can-check-for-updates-now") as Promise<boolean>,
+	/** The update button's state: null hides it. Found by the main process's background check. */
+	getUpdateBadge: () => ipcRenderer.invoke("get-update-badge") as Promise<UpdateBadge | null>,
+	onUpdateBadgeChanged: (callback: (badge: UpdateBadge | null) => void) => {
+		const listener = (_event: unknown, badge: UpdateBadge | null) => callback(badge);
+		ipcRenderer.on("update-badge-changed", listener);
+		return () => ipcRenderer.removeListener("update-badge-changed", listener);
+	},
+	/** The button's click. Resolves at once; the dialogs or the restart that follow are the main
+	 *  process's. */
+	applyUpdate: () => ipcRenderer.invoke("apply-update") as Promise<void>,
 	revealInFolder: (filePath: string) => {
 		return ipcRenderer.invoke("reveal-in-folder", filePath);
 	},

@@ -98,6 +98,9 @@ interface Window {
 		}>;
 		/** macOS privacy permissions; see electron/permissions/macPermissions.ts. */
 		permissions: {
+			prepareRecording: (
+				options: import("./permissions/macPermissions").RecordingPermissionOptions,
+			) => Promise<import("./permissions/macPermissions").RecordingPermissionResult>;
 			get: () => Promise<import("./permissions/macPermissions").PermissionsSnapshot>;
 			request: (kind: import("./permissions/macPermissions").PermissionKind) => Promise<void>;
 			openSettings: (kind: import("./permissions/macPermissions").PermissionKind) => Promise<void>;
@@ -149,7 +152,8 @@ interface Window {
 			recording: boolean,
 			recordingId?: number,
 			cursorCaptureMode?: import("../src/lib/recordingSession").CursorCaptureMode,
-		) => Promise<void>;
+			reserveOnly?: boolean,
+		) => Promise<{ success: boolean; error?: string }>;
 		isNativeWindowsCaptureAvailable: () => Promise<{
 			success: boolean;
 			available: boolean;
@@ -473,6 +477,11 @@ interface Window {
 		checkForUpdates: () => Promise<void>;
 		showAbout: () => Promise<void>;
 		canCheckForUpdatesNow: () => Promise<boolean>;
+		getUpdateBadge: () => Promise<import("./background-update").UpdateBadge | null>;
+		onUpdateBadgeChanged: (
+			callback: (badge: import("./background-update").UpdateBadge | null) => void,
+		) => () => void;
+		applyUpdate: () => Promise<void>;
 		revealInFolder: (
 			filePath: string,
 		) => Promise<{ success: boolean; error?: string; message?: string }>;

@@ -48,7 +48,6 @@ import {
 import {
 	AI_EDITION_OPEN_PROJECT_CHANNEL,
 	type CursorRecordingData,
-	type CursorRecordingSample,
 	type ProjectFileResult,
 	type ProjectPathResult,
 } from "../../src/native/contracts";
@@ -102,6 +101,7 @@ import {
 	type LinuxCaptureSourceKind,
 	LinuxNativeCaptureSession,
 } from "../native-bridge/capture/linuxNativeCaptureSession";
+import { compactCursorTelemetryPauseRanges } from "../native-bridge/cursor/recording/cursorPauseRanges";
 import { createCursorRecordingSession } from "../native-bridge/cursor/recording/factory";
 import {
 	isMacCursorHelperUnavailable,
@@ -164,6 +164,11 @@ import {
 } from "../recording-source-settings";
 import { getSttManager } from "../stt";
 import { createRunnerWindow } from "../windows";
+import {
+	assertWindowsUpdateIdle,
+	isWindowsUpdatePending,
+	WINDOWS_UPDATE_PENDING_MESSAGE,
+} from "../windows-update";
 import { registerCaptionSrtHandler } from "./captionSrt";
 import { getSourcesByType, shouldEnumerateSourceTypesSeparately } from "./desktopSourceTypes";
 import { registerNativeBridgeHandlers } from "./nativeBridge";
@@ -195,7 +200,12 @@ const MAX_RECORDED_VOICEOVER_BYTES = 512 * 1024 * 1024;
 // by renderer URL. These are the only names the staging handler accepts, and they match
 // HIT_FILES in src/lib/ai-edition/clickSound.ts.
 const CLICK_SOUND_DIR = path.join(app.getPath("userData"), "click-sfx");
-const CLICK_SOUND_HIT_FILES: string[] = ["click-down.wav", "click-up.wav"];
+const CLICK_SOUND_HIT_FILES: string[] = [
+	"mouse-realistic-single.wav",
+	"mouse-realistic-double.wav",
+	"mouse-bubble-single.wav",
+	"mouse-bubble-double.wav",
+];
 const MAX_CLICK_HIT_BYTES = 4 * 1024 * 1024;
 const nativeMacCaptureEvents = new EventEmitter();
 
@@ -884,7 +894,9 @@ const nativeMacCaptureOutputs = new WeakMap<ChildProcessWithoutNullStreams, stri
 let nativeMacRecordingWarning: { screenVideoPath: string; message: string } | null = null;
 /** True while stop-native-mac-recording runs: the take is ending on purpose. */
 let nativeMacStopInFlight = false;
-// Global frame of the region captured by the SCK helper (see getSelectedSourceBounds).
+// Global frame the macOS cursor is normalised against (see getSelectedSourceBounds).
+// Seeded from the source frame before the first sample, then replaced by the
+// helper's `recording-started.captureBounds` for a window take.
 let activeMacCaptureBounds: Rectangle | null = null;
 let linuxNativeCaptureSession: LinuxNativeCaptureSession | null = null;
 /**
@@ -1132,22 +1144,31 @@ function selectedSourceFromPick(
 	};
 }
 
+/** Legacy `window:` ids and a window chosen in Apple's picker. Display picks are not. */
+function isMacWindowCaptureSourceId(sourceId: string | null | undefined) {
+	return (
+		typeof sourceId === "string" &&
+		(sourceId.startsWith("window:") || sourceId.startsWith(`${MAC_PICKER_SOURCE_PREFIX}window:`))
+	);
+}
+
 function getSelectedSourceBounds() {
+	// A window take is normalised against the rect the helper is recording. That
+	// rect is seeded from the source frame before the first cursor sample and
+	// replaced by `recording-started.captureBounds`, the ScreenCaptureKit content
+	// rect. The picker's frame and the display bounds must not stay in charge for
+	// the take: either one leaves the pointer above the click (#1130).
+	if (isMacWindowCaptureSourceId(selectedSource?.id) && activeMacCaptureBounds) {
+		return activeMacCaptureBounds;
+	}
+
 	// A pick from Apple's picker carries its own frame; there is no desktopCapturer
-	// display to look up for it.
+	// display to look up for it. Display picks keep this frame for the whole take.
 	if (isMacPickerSourceId(selectedSource?.id)) {
 		const pick = macPickerSession?.getSelection();
 		if (pick) {
 			return pick.bounds;
 		}
-	}
-
-	// Single-window capture records only the window's region, not the whole display.
-	// Normalizing the cursor against display bounds leaves a fixed offset in the export,
-	// so prefer the helper-reported window frame when capturing a window.
-	const isWindowSource = selectedSource?.id?.startsWith("window:") === true;
-	if (isWindowSource && activeMacCaptureBounds) {
-		return activeMacCaptureBounds;
 	}
 
 	const cursor = screen.getCursorScreenPoint();
@@ -1433,45 +1454,11 @@ function shiftPendingCursorTelemetry(offsetMs: number) {
 function compactPendingCursorTelemetryPauseRanges(
 	ranges: Array<{ startMs: number; endMs: number }>,
 ) {
-	if (!pendingCursorRecordingData || ranges.length === 0) {
-		return;
-	}
-
-	const normalizedRanges = ranges
-		.map((range) => ({
-			startMs: Math.max(0, Math.min(range.startMs, range.endMs)),
-			endMs: Math.max(0, Math.max(range.startMs, range.endMs)),
-		}))
-		.filter((range) => Number.isFinite(range.startMs) && Number.isFinite(range.endMs))
-		.filter((range) => range.endMs > range.startMs)
-		.sort((a, b) => a.startMs - b.startMs);
-
-	if (normalizedRanges.length === 0) {
-		return;
-	}
-
-	pendingCursorRecordingData = {
-		...pendingCursorRecordingData,
-		samples: pendingCursorRecordingData.samples
-			.map((sample) => {
-				let pausedBeforeSampleMs = 0;
-				for (const range of normalizedRanges) {
-					if (sample.timeMs >= range.startMs && sample.timeMs <= range.endMs) {
-						return null;
-					}
-					if (sample.timeMs > range.endMs) {
-						pausedBeforeSampleMs += range.endMs - range.startMs;
-					}
-				}
-
-				return {
-					...sample,
-					timeMs: Math.max(0, sample.timeMs - pausedBeforeSampleMs),
-				};
-			})
-			.filter((sample): sample is CursorRecordingSample => Boolean(sample))
-			.sort((a, b) => a.timeMs - b.timeMs),
-	};
+	if (!pendingCursorRecordingData) return;
+	pendingCursorRecordingData = compactCursorTelemetryPauseRanges(
+		pendingCursorRecordingData,
+		ranges,
+	);
 }
 
 function completeNativeMacCursorPauseRange(endMs = Date.now()) {
@@ -1651,8 +1638,16 @@ function tryParseNativeHelperEvent(line: string) {
 
 function dispatchNativeMacHelperEvent(event: Record<string, unknown>) {
 	const bounds = event.captureBounds as Rectangle | undefined;
-	if (bounds && bounds.width > 0 && bounds.height > 0) {
+	// Display takes never adopt this rect: their cursor stays on the display bounds.
+	// Adopting it there would move a capture whose alignment is already right.
+	if (
+		isMacWindowCaptureSourceId(selectedSource?.id) &&
+		bounds &&
+		bounds.width > 0 &&
+		bounds.height > 0
+	) {
 		activeMacCaptureBounds = bounds;
+		cursorRecordingSession?.updateCaptureBounds?.(bounds);
 	}
 	nativeMacCaptureEvents.emit("helper-event", event);
 }
@@ -2003,7 +1998,7 @@ export function registerIpcHandlers(
 	getSourceSelectorWindow: () => BrowserWindow | null,
 	getNotesWindow: () => BrowserWindow | null,
 	getCountdownOverlayWindow?: () => BrowserWindow | null,
-	onRecordingStateChange?: (recording: boolean, sourceName: string) => void,
+	onRecordingStateChange?: (recording: boolean, sourceName: string, preparing?: boolean) => void,
 	_switchToHud?: () => void,
 	/** The editor holds changes it has not saved (main.ts): an MCP take would close it. */
 	editorHasUnsavedChanges?: () => boolean,
@@ -2017,10 +2012,10 @@ export function registerIpcHandlers(
 	 * for a client's take to start, and the tray shows it. A native path that called
 	 * `onRecordingStateChange` itself left the MCP recorder waiting on a take already running.
 	 */
-	const setAppRecording = (recording: boolean, sourceName: string) => {
+	const setAppRecording = (recording: boolean, sourceName: string, preparing = false) => {
 		appRecording = recording;
-		mcpAppRecorder.recordingChanged(recording);
-		onRecordingStateChange?.(recording, sourceName);
+		if (!preparing) mcpAppRecorder.recordingChanged(recording);
+		onRecordingStateChange?.(recording, sourceName, preparing);
 	};
 	const appSettings = new AppSettingsStore(app.getPath("userData"));
 	const broadcastSelectedSource = (source: SelectedSource | null) => {
@@ -2364,6 +2359,9 @@ export function registerIpcHandlers(
 	// Asked before every take starts. A disk that fills up mid-take used to be found only
 	// when the take was saved, and the take was lost with it.
 	ipcMain.handle("check-recording-storage", async () => {
+		if (isWindowsUpdatePending()) {
+			return { success: false, error: WINDOWS_UPDATE_PENDING_MESSAGE };
+		}
 		const problem = await recordingStorageProblem(RECORDINGS_DIR);
 		if (!problem) return { success: true };
 		if (problem.kind === "unavailable") {
@@ -2540,6 +2538,7 @@ export function registerIpcHandlers(
 
 	/** The editor's Record button: over to the HUD, which starts the take by itself. */
 	function startNewRecording() {
+		assertWindowsUpdateIdle();
 		_switchToHud?.();
 		const hudWindow = getMainWindow();
 		if (hudWindow && !hudWindow.isDestroyed()) {
@@ -2798,7 +2797,10 @@ export function registerIpcHandlers(
 
 				linuxNativeCaptureSession = session;
 				linuxNativeCaptureRecordingId = recordingId;
-				linuxNativeCaptureCursorMode = cursorCaptureMode;
+				// The portal may lack EMBEDDED and get METADATA instead (#1357): the
+				// pointer is then not in the pixels, so the editor has to draw it.
+				linuxNativeCaptureCursorMode =
+					session.cursorMode === "metadata" ? "editable-overlay" : cursorCaptureMode;
 
 				// The portal's answer, not an in-app selection — on Wayland there
 				// is none to have. This used to read `selectedSource || { name:
@@ -2918,6 +2920,10 @@ export function registerIpcHandlers(
 	ipcMain.handle(
 		"start-native-windows-recording",
 		async (_, request: NativeWindowsRecordingRequest) => {
+			if (isWindowsUpdatePending()) {
+				return { success: false, error: WINDOWS_UPDATE_PENDING_MESSAGE };
+			}
+			let startReserved = false;
 			try {
 				if (!isWindowsGraphicsCaptureOsSupported()) {
 					return {
@@ -3046,6 +3052,13 @@ export function registerIpcHandlers(
 					outputPath,
 				});
 
+				assertWindowsUpdateIdle();
+				if (appRecording || nativeWindowsCaptureProcess) {
+					return { success: false, error: "Native Windows capture is already running." };
+				}
+				// Reserve startup before cursor/helper awaits without reporting a started take.
+				startReserved = true;
+				setAppRecording(true, selectedSource?.name ?? "Screen", true);
 				await fs.mkdir(RECORDINGS_DIR, { recursive: true });
 				nativeWindowsCaptureOutput = "";
 				nativeWindowsCaptureTargetPath = outputPath;
@@ -3070,6 +3083,7 @@ export function registerIpcHandlers(
 					pendingCursorRecordingData = null;
 				}
 
+				assertWindowsUpdateIdle();
 				const proc = spawn(helperPath, [JSON.stringify(config)], {
 					cwd: RECORDINGS_DIR,
 					stdio: ["pipe", "pipe", "pipe"],
@@ -3143,6 +3157,7 @@ export function registerIpcHandlers(
 				};
 			} catch (error) {
 				console.error("Failed to start native Windows recording:", error);
+				if (!startReserved) return { success: false, error: String(error) };
 				const failedProc = nativeWindowsCaptureProcess;
 				const failedOutputPaths = [
 					nativeWindowsCaptureTargetPath,
@@ -3161,6 +3176,7 @@ export function registerIpcHandlers(
 					}
 				}
 				await stopCursorRecording();
+				setAppRecording(false, selectedSource?.name ?? "Screen");
 				return { success: false, error: String(error) };
 			}
 		},
@@ -3206,6 +3222,10 @@ export function registerIpcHandlers(
 				};
 			}
 			if (!pickerSession) {
+				const permissions = await getMacPermissions().read();
+				if (permissions.screen !== "granted" || permissions.screenRequiresRelaunch) {
+					return { success: false, error: "Screen permission is required before recording." };
+				}
 				try {
 					await desktopCapturer.getSources({
 						types: ["screen"],
@@ -3225,7 +3245,7 @@ export function registerIpcHandlers(
 			if (request.audio?.microphone?.enabled) {
 				const micStatus = systemPreferences.getMediaAccessStatus("microphone");
 				if (micStatus !== "granted") {
-					await systemPreferences.askForMediaAccess("microphone");
+					return { success: false, error: "Microphone permission is required before recording." };
 				}
 			}
 			const sourceDisplay =
@@ -3233,6 +3253,9 @@ export function registerIpcHandlers(
 					? (screen.getAllDisplays().find((display) => display.id === request.source.displayId) ??
 						null)
 					: getSelectedDisplay();
+			// Drop the previous take before this lookup. A window with no frame of its
+			// own would otherwise seed the cursor from that take's capture rect.
+			activeMacCaptureBounds = null;
 			const bounds =
 				pick?.bounds ?? request.source.bounds ?? sourceDisplay?.bounds ?? getSelectedSourceBounds();
 			const captureExcludedWindowSourceIds: string[] = [];
@@ -3297,7 +3320,14 @@ export function registerIpcHandlers(
 			nativeMacIsPaused = false;
 			nativeMacStopInFlight = false;
 			nativeMacRecordingWarning = null;
-			activeMacCaptureBounds = null;
+			// Before the cursor session samples. A legacy window otherwise normalises
+			// its opening samples against the display, and a picker window would keep
+			// the picker's frame after the helper has reported the content rect it is
+			// actually recording (#1130). Display takes stay unset, so the display
+			// bounds remain authoritative.
+			if (isMacWindowCaptureSourceId(selectedSource?.id) && bounds.width > 0 && bounds.height > 0) {
+				activeMacCaptureBounds = bounds;
+			}
 
 			const cursorStartTimeMs = Date.now();
 			if (cursorCaptureMode === "editable-overlay") {
@@ -4186,7 +4216,22 @@ export function registerIpcHandlers(
 
 	ipcMain.handle(
 		"set-recording-state",
-		async (_, recording: boolean, recordingId?: number, cursorCaptureMode?: CursorCaptureMode) => {
+		async (
+			_,
+			recording: boolean,
+			recordingId?: number,
+			cursorCaptureMode?: CursorCaptureMode,
+			reserveOnly?: boolean,
+		) => {
+			if (recording && isWindowsUpdatePending()) {
+				return { success: false, error: WINDOWS_UPDATE_PENDING_MESSAGE };
+			}
+			const source = selectedSource || { name: "Screen" };
+			if (recording) {
+				// Claim the take synchronously, before cursor setup yields to an updater.
+				setAppRecording(recording, source.name, true);
+				if (reserveOnly) return { success: true };
+			}
 			const normalizedCursorCaptureMode =
 				normalizeCursorCaptureMode(cursorCaptureMode) ?? "editable-overlay";
 			if (recording && normalizedCursorCaptureMode === "editable-overlay") {
@@ -4195,8 +4240,8 @@ export function registerIpcHandlers(
 				await stopCursorRecording();
 			}
 
-			const source = selectedSource || { name: "Screen" };
 			setAppRecording(recording, source.name);
+			return { success: true };
 		},
 	);
 
@@ -4300,7 +4345,7 @@ export function registerIpcHandlers(
 				return { success: false, message: "Invalid path" };
 			}
 			const lower = filePath.toLowerCase();
-			if (!lower.endsWith(".mp4") && !lower.endsWith(".gif")) {
+			if (![".mp4", ".gif", ".wav", ".m4a"].some((extension) => lower.endsWith(extension))) {
 				return { success: false, message: "Invalid file type" };
 			}
 
@@ -5295,8 +5340,9 @@ export function registerIpcHandlers(
 		getAiEditionDocuments: () => aiEditionDocuments,
 		getStylePresets: () => stylePresets,
 		getAiEditionLlmConfig,
-		runAiEditionChat: (projectId, sessionId, message, document, sink) =>
+		runAiEditionChat: (projectId, sessionId, message, document, sink, signal) =>
 			runChat(projectId, sessionId, message, getAiEditionLlmConfig(), document, sink, {
+				signal,
 				cursor: agentCursorTelemetryReader,
 				cameraSegmentation: () => loudnessService.probeSegmentation(),
 				checkShaderEffect: (code, params) => loudnessService.checkShaderEffect(code, params),

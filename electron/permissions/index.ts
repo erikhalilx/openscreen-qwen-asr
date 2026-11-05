@@ -97,23 +97,29 @@ function requestSystemAudioAccess(): Promise<void> {
 	const helperPath = findMacScreenAccessHelperPath();
 	if (!helperPath) {
 		console.warn("[permissions] no capture helper to request system audio with");
-		return Promise.resolve();
+		return Promise.reject(new Error("The system audio permission helper is unavailable"));
 	}
-	return new Promise((resolve) => {
+	return new Promise((resolve, reject) => {
 		const child = spawn(helperPath, ["--request-system-audio"], { stdio: "ignore" });
 		const timer = setTimeout(() => {
 			child.kill();
-			resolve();
+			reject(new Error("System audio permission request timed out"));
 		}, SYSTEM_AUDIO_REQUEST_TIMEOUT_MS);
 		const done = () => {
 			clearTimeout(timer);
 			resolve();
 		};
 		child.once("error", (error) => {
-			console.warn("[permissions] system audio request failed:", error);
-			done();
+			clearTimeout(timer);
+			reject(error);
 		});
-		child.once("close", done);
+		child.once("close", (code) => {
+			if (code === 0) done();
+			else {
+				clearTimeout(timer);
+				reject(new Error("System audio permission request failed"));
+			}
+		});
 	});
 }
 
@@ -204,6 +210,18 @@ const isKind = (value: unknown): value is PermissionKind => KINDS.includes(value
 
 export function registerPermissionsIpc(): void {
 	ipcMain.handle("permissions:get", () => getMacPermissions().read());
+	ipcMain.handle("permissions:prepare-recording", (_event, options: unknown) => {
+		if (!options || typeof options !== "object")
+			throw new Error("Invalid recording permission options");
+		const o = options as Record<string, unknown>;
+		if (["microphone", "camera", "systemAudio"].some((k) => typeof o[k] !== "boolean"))
+			throw new Error("Invalid recording permission options");
+		return getMacPermissions().prepareRecording({
+			microphone: o.microphone === true,
+			camera: o.camera === true,
+			systemAudio: o.systemAudio === true,
+		});
+	});
 	ipcMain.handle("permissions:request", (_event, kind: unknown) =>
 		isKind(kind) ? getMacPermissions().request(kind) : undefined,
 	);

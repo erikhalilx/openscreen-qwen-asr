@@ -40,6 +40,7 @@ import {
 	separateAudioLanes,
 } from "./audioTracks";
 import { createId } from "./ids";
+import { layoutAt, layoutRuns, materializeLayouts, removeLayoutChange } from "./layout";
 
 /** The region families a delete can target by id. Shared with the store so "which kinds
  *  exist" has exactly one definition. `trim` is a source-time cut; the rest are pill-merged
@@ -50,6 +51,7 @@ export type RegionKind =
 	| "trim"
 	| "annotation"
 	| "speed"
+	| "layout"
 	| "cameraFullscreen"
 	| "audio"
 	| "shaderEffect";
@@ -390,6 +392,9 @@ export function mapAllRegionCollections(
 	// A clip edit can take a shader effect's last fragment with it: its definition goes too.
 	return pruneUnusedShaderEffects({
 		...document,
+		...(document.layoutRegions
+			? { layoutRegions: fn(document.layoutRegions, "layout") as AxcutDocument["layoutRegions"] }
+			: {}),
 		zoomRanges: fn(
 			document.zoomRanges as unknown as StoredRegion[],
 			"zoom",
@@ -746,6 +751,7 @@ function sameInterval(a: Interval, b: Interval): boolean {
 function anchoredRegionsOf(document: AxcutDocument): Array<{ id: string; clipId: string }> {
 	const legacy = document.legacyEditor as Record<string, unknown> | null;
 	const collections: StoredRegion[][] = [
+		...(document.layoutRegions ? [document.layoutRegions] : []),
 		document.zoomRanges as unknown as StoredRegion[],
 		document.annotations as unknown as StoredRegion[],
 		(legacy?.speedRegions as StoredRegion[] | undefined) ?? [],
@@ -1108,7 +1114,27 @@ export function insertAssetClip(
 		timelineEndSec: length,
 		wordRefs: [],
 	});
-	return withClipsChanged(document, clips);
+	const insertionTime =
+		document.timeline.clips[index]?.timelineStartSec ??
+		Math.max(0, (document.timeline.clips.at(-1)?.timelineEndSec ?? 0) - 0.0001);
+	const withLayouts: AxcutDocument = document.layoutRegions?.length
+		? {
+				...document,
+				layoutRegions: [
+					...materializeLayouts(document),
+					{
+						id: createId("layout"),
+						clipId: clip.id,
+						sourceStartSec: clip.sourceStartSec,
+						sourceEndSec: clip.sourceEndSec,
+						startMs: 0,
+						endMs: length * 1000,
+						preset: layoutAt(document, insertionTime),
+					},
+				],
+			}
+		: document;
+	return withClipsChanged(withLayouts, clips);
 }
 
 /**
@@ -1193,7 +1219,10 @@ export function removeRegion(document: AxcutDocument, kind: RegionKind, id: stri
 				zoomRanges: dropPillById(document.zoomRanges, id) as AxcutDocument["zoomRanges"],
 			};
 		case "annotation":
-			return { ...document, annotations: dropPillById(document.annotations, id) };
+			return {
+				...document,
+				annotations: dropPillById(document.annotations, id, { annotations: true }),
+			};
 		case "audio":
 			// Not `dropPillById`: an audio track's fragments are grouped by
 			// `trackId`, and deleting the pill has to take the asset with it when
@@ -1217,6 +1246,8 @@ export function removeRegion(document: AxcutDocument, kind: RegionKind, id: stri
 			);
 			return { ...document, legacyEditor: { ...legacy, speedRegions: prev } };
 		}
+		case "layout":
+			return removeLayoutChange(document, id);
 		case "cameraFullscreen": {
 			const legacy = (document.legacyEditor as Record<string, unknown>) ?? {};
 			const prev = dropPillById(
@@ -1275,6 +1306,10 @@ const EDIT_REGIONS: Record<
 	cameraFullscreen: {
 		count: (d) => legacyRegionCount(d, "cameraFullscreenRegions"),
 		clear: (d) => withLegacyRegionsCleared(d, "cameraFullscreenRegions"),
+	},
+	layout: {
+		count: (d) => Math.max(0, layoutRuns(d).length - 1),
+		clear: (d) => ({ ...d, layoutRegions: [] }),
 	},
 	shaderEffect: {
 		count: (d) => (d.shaderEffectRanges ?? []).length,

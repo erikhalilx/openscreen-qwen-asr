@@ -308,7 +308,8 @@
 			"right": "Справа",
 			"bottomLeft": "Слева внизу",
 			"bottom": "Внизу",
-			"bottomRight": "Справа внизу"
+			"bottomRight": "Справа внизу",
+			"center": "По центру"
 		},
 		"selectPreset": "Выбрать пресет",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Фон камеры",
 		"helpNoWebcam": "В этом проекте нет камеры, поэтому настройки компоновки отключены, а пресет показывает «Без веб-камеры». Сохранённая компоновка останется на случай, если вы добавите камеру.",
 		"title": "Расположение камеры",
-		"noWebcam": "Без веб-камеры"
+		"noWebcam": "Без веб-камеры",
+		"cameraTrack": "Макеты камеры",
+		"fullscreenLayout": "Полный экран",
+		"enableTrack": "Включить дорожку макетов камеры",
+		"hideSegment": "Скрыть камеру в этом сегменте",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Скольжение влево",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Звуки мыши",
+		"mouseEffectsHint": "Время и положение определяют одиночный или двойной щелчок. Скрытие курсора не отключает звук.",
+		"noMouseClicks": "В этой записи нет сохранённых щелчков.",
 		"systemSource": "Системный звук",
 		"microphoneSource": "Микрофон",
 		"outputGain": "Уровень выхода",
 		"help": "Голос автоматически выравнивается до стандартной громкости. Настройте уровень выхода относительно неё; он одинаково применяется в предпросмотре и при экспорте.",
 		"reset": "Сбросить аудио",
-		"title": "Аудио"
+		"title": "Аудио",
+		"mouseSoundPreset": "Набор звуков",
+		"mouseRealistic": "Реалистичный",
+		"mouseBubble": "Пузырь"
 	},
 	"language": {
 		"title": "Язык"

@@ -308,7 +308,8 @@
 			"right": "اليمين",
 			"bottomLeft": "أسفل اليسار",
 			"bottom": "أسفل",
-			"bottomRight": "أسفل اليمين"
+			"bottomRight": "أسفل اليمين",
+			"center": "الوسط"
 		},
 		"selectPreset": "حدد إعدادًا مسبقًا",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "خلفية الكاميرا",
 		"helpNoWebcam": "لا يحتوي هذا المشروع على كاميرا، لذلك فإن عناصر التحكم في التخطيط معطّلة ويعرض الإعداد المسبق «بدون كاميرا». يُحتفظ بالتخطيط المحفوظ لحين إضافة كاميرا.",
 		"title": "تخطيط الكاميرا",
-		"noWebcam": "بدون كاميرا"
+		"noWebcam": "بدون كاميرا",
+		"cameraTrack": "تخطيطات الكاميرا",
+		"fullscreenLayout": "ملء الشاشة",
+		"enableTrack": "تفعيل مسار تخطيطات الكاميرا",
+		"hideSegment": "إخفاء الكاميرا في هذا المقطع",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "انزلاق لليسار",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "مؤثرات نقر الفأرة",
+		"mouseEffectsHint": "يحدد توقيت النقر وموضعه صوت النقرة المفردة أو المزدوجة. إخفاء المؤشر لا يكتم الصوت.",
+		"noMouseClicks": "لا يتضمن هذا التسجيل نقرات مسجلة لإضافة أصوات إليها.",
 		"systemSource": "صوت النظام",
 		"microphoneSource": "الميكروفون",
 		"outputGain": "ضبط مستوى الإخراج",
 		"help": "تُضبط الأصوات تلقائيًا على مستوى جهارة قياسي. اضبط مستوى الإخراج انطلاقًا منه؛ يُطبَّق بالطريقة نفسها في المعاينة وعند التصدير.",
 		"reset": "إعادة ضبط الصوت",
-		"title": "الصوت"
+		"title": "الصوت",
+		"mouseSoundPreset": "مجموعة الأصوات",
+		"mouseRealistic": "واقعي",
+		"mouseBubble": "فقاعة"
 	},
 	"language": {
 		"title": "اللغة"

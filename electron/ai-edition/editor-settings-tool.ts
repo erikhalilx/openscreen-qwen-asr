@@ -1,3 +1,5 @@
+import { layoutRuns } from "../../src/lib/ai-edition/document/layout";
+import { LAYOUT_PRESETS } from "../../src/lib/layoutTypes";
 // The project's look for the agent: `setEditorSettings`, which writes it, and the `settings`
 // block `getCurrentDocument` reads it back through (#1180, batch A).
 //
@@ -33,7 +35,6 @@ import { hasAnyClipWithCamera } from "../../src/lib/ai-edition/timeline/camera";
 import {
 	resolveWebcamLayoutPreset,
 	supportsWebcamReactiveZoom,
-	type WebcamLayoutPreset,
 } from "../../src/lib/compositeLayout";
 import {
 	CURSOR_KIND_IDS,
@@ -55,12 +56,7 @@ import { ASPECT_RATIO_PRESETS, type AspectRatio } from "../../src/utils/aspectRa
 import type { AgentToolExecution } from "./agent-tools";
 import { measureTextInShippedFonts } from "./text-measure";
 
-const WEBCAM_LAYOUT_PRESETS = [
-	"picture-in-picture",
-	"dual-frame",
-	"vertical-stack",
-	"no-webcam",
-] as const satisfies readonly WebcamLayoutPreset[];
+const WEBCAM_LAYOUT_PRESETS = LAYOUT_PRESETS;
 
 /** The tightest the camera framing goes: a third of the picture (the pane's `MIN_CROP_SIZE`). */
 const MIN_WEBCAM_CROP_SIZE = 1 / 3;
@@ -147,6 +143,7 @@ export const setEditorSettingsArgs = z
 				clickBounce: bounded("cursorClickBounce"),
 				clickImpact: z.boolean(),
 				clickSound: z.boolean(),
+				clickSoundPreset: z.enum(["realistic", "bubble"]),
 				clickSoundGainDb: bounded("cursorClickSoundGainDb"),
 				model3d: z.boolean(),
 			})
@@ -207,6 +204,7 @@ function settingsForModel(document: AxcutDocument) {
 			clickBounce: s.cursor.clickBounce,
 			clickImpact: s.cursor.clickImpact,
 			clickSound: s.cursor.clickSound,
+			clickSoundPreset: s.cursor.clickSoundPreset,
 			clickSoundGainDb: s.cursor.clickSoundGainDb,
 			model3d: s.cursor.model3d,
 		},
@@ -263,7 +261,10 @@ export function inactiveSettings(
 		for (const key of WEBCAM_KEYS) out[key] = "No clip on the timeline has a camera.";
 	} else {
 		const preset = resolveWebcamLayoutPreset(s.webcamLayoutPreset, true);
-		if (preset !== "picture-in-picture") {
+		const hasPipPassage = layoutRuns(document).some(
+			(run) => run.member.preset === "picture-in-picture",
+		);
+		if (preset !== "picture-in-picture" && !hasPipPassage) {
 			const why = `Only the picture-in-picture layout has it; the layout is ${preset}.`;
 			for (const key of [
 				"webcamMaskShape",
@@ -274,7 +275,7 @@ export function inactiveSettings(
 				out[key] = why;
 			}
 		}
-		if (!supportsWebcamReactiveZoom(preset)) {
+		if (!supportsWebcamReactiveZoom(preset) && !hasPipPassage) {
 			out.webcamReactiveZoom = `Only a picture-in-picture camera shrinks on zoom; the layout is ${preset}.`;
 		}
 		if (segmentation !== null && segmentation !== "ready") {
@@ -294,11 +295,11 @@ export function inactiveSettings(
 
 	if (!s.cursorShow) {
 		const why = "The cursor is hidden (cursor.show is false).";
-		for (const key of ["autoHide", "model3d", "asArrow", "clickImpact", "clickSound"]) {
+		for (const key of ["autoHide", "model3d", "asArrow", "clickImpact"]) {
 			out[`cursor.${key}`] = why;
 		}
-		out["cursor.clickSoundGainDb"] = why;
-	} else if (!s.cursor.clickSound) {
+	}
+	if (!s.cursor.clickSound) {
 		out["cursor.clickSoundGainDb"] = "The click sound is off (cursor.clickSound is false).";
 	}
 	return out;

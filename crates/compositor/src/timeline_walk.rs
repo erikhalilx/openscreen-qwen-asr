@@ -22,7 +22,7 @@ use crate::frame_geometry::webcam_is_real;
 use crate::pipeline::{ClipSource, Decoder};
 use crate::regions::{speed_segments_for_window, SpeedSegment};
 use crate::scene::Scene;
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
 /// Ce que le décodeur sait de la PROCHAINE frame, sans l'adopter.
@@ -72,6 +72,25 @@ pub(crate) fn frame_step(next: NextFrameTime, offset_sec: f64, target_sec: f64) 
         // (« la dernière frame dont le pts est ≤ t »).
         NextFrameTime::At(t) if t + offset_sec > target_sec => FrameStep::Hold,
         NextFrameTime::At(_) => FrameStep::Commit,
+    }
+}
+
+/// Durée disponible d'une source vidéo : le plus long de la durée annoncée par le flux et de
+/// celle du conteneur (`container_us`, en µs, négatif si inconnue).
+///
+/// Une capture d'écran statique (ScreenCaptureKit ne livre rien tant que l'écran ne change
+/// pas) ne contient parfois qu'UNE frame : `duration=0.067` pour un fichier de 87 s dont la
+/// piste audio, elle, couvre tout. Borner le clip à la durée du flux le raccourcissait à une
+/// frame, voire l'écartait sans bruit s'il commençait après. La sémantique de hold de
+/// `advance_decoder_to` tient déjà la dernière frame jusqu'au bout de la fenêtre ; la borne
+/// doit donc être celle du conteneur, qui couvre aussi l'audio.
+pub(crate) fn cover_container_duration(stream_sec: Option<f64>, container_us: i64) -> Option<f64> {
+    let container_sec = (container_us > 0)
+        .then(|| container_us as f64 / 1_000_000.0)
+        .filter(|s| s.is_finite() && *s > 0.0);
+    match (stream_sec, container_sec) {
+        (Some(stream), Some(container)) => Some(stream.max(container)),
+        (stream, container) => stream.or(container),
     }
 }
 
@@ -158,7 +177,11 @@ pub(crate) unsafe fn walk_composited_timeline(
     on_frame: &mut dyn FnMut(u64) -> Result<()>,
     on_clip_end: &mut dyn FnMut(usize, f64, u64, &[SpeedSegment]) -> Result<()>,
 ) -> Result<u64> {
-    walk_timeline(clips, gpu, comp, cfg, out_fps, scene, screen_decs, webcam_decs, None, on_frame, on_clip_end)
+    let frames = walk_timeline(clips, gpu, comp, cfg, out_fps, scene, screen_decs, webcam_decs, None, on_frame, on_clip_end)?;
+    if frames == 0 {
+        bail!("No video frames were exported. Check that the clips contain readable video before exporting again.");
+    }
+    Ok(frames)
 }
 
 /// Une frame de sortie relue par `render_frames`.
@@ -253,6 +276,46 @@ unsafe fn catch_up(dec: &mut Decoder, target: f64, clip_start: f64) -> Result<()
     }
 }
 
+/// Normal recordings can have audio up to roughly half a second longer than
+/// video. Hold the last frame of a camera only in that margin: an unbounded
+/// fallback would hide a genuinely truncated camera recording. A screen whose
+/// container covers the clip start is held without bound (see `walk_timeline`).
+const CLIP_START_TAIL_TOLERANCE_SEC: f64 = 0.5;
+
+/// Whether the frame a clip-start seek landed on (`current`) can stand in at
+/// `target`, or `None` when only the first frame can tell. `hold_tail_sec` is how
+/// far past the last frame the hold may reach.
+fn accepts_clip_start(current: f64, target: f64, hold_tail_sec: f64) -> Option<bool> {
+    if current <= target && target - current <= hold_tail_sec + 1e-6 {
+        return Some(true);
+    }
+    if (target - current).abs() <= CLIP_START_TAIL_TOLERANCE_SEC + 1e-6 {
+        return Some(true);
+    }
+    if current <= target {
+        return Some(false);
+    }
+    None
+}
+
+/// Seek a clip start within the tail margin. A future frame across an
+/// interior gap is invalid, but a request before the first frame of an offset
+/// stream retains the existing first-frame hold.
+unsafe fn seek_clip_start(decoder: &mut Decoder, target: f64, hold_tail_sec: f64) -> Result<bool> {
+    let frame = decoder.seek_to_or_last(target)?;
+    if frame.is_null() {
+        return Ok(false);
+    }
+    if let Some(accepted) = accepts_clip_start(decoder.cur_time_sec(), target, hold_tail_sec) {
+        return Ok(accepted);
+    }
+    // Only a distant future result needs this extra seek. Distinguish a late
+    // stream origin from a missing interior interval using the actual first
+    // frame, without changing decoder timestamps or the normal seek path.
+    let first = decoder.seek_to(0.0)?;
+    Ok(!first.is_null() && decoder.cur_time_sec() > target)
+}
+
 /// `walk_composited_timeline`, qui ne compose que les frames de sortie `only` (triées) quand il y
 /// en a : les autres avancent le compteur sans décoder ni composer, et la marche s'arrête après
 /// la dernière. Un flux sans pts fiable avance d'une frame par frame de sortie : sauter le rend
@@ -294,6 +357,12 @@ unsafe fn walk_timeline(
     comp.set_segmentation_deterministic(true);
 
     'clips: for (clip_index, clip) in clips.iter().enumerate() {
+        // A completed inspection must not open or seek an unrelated later clip.
+        if let Some(only) = only {
+            if only.last().is_none_or(|&last| frames > last) {
+                break 'clips;
+            }
+        }
         // Le preset de layout est GLOBAL (un seul panneau pour toute la timeline) mais la
         // caméra est PAR CLIP : un projet mélange sans problème un enregistrement avec webcam
         // et un import qui n'en a pas. Le preset ne doit donc s'appliquer qu'aux clips qui ont
@@ -350,6 +419,12 @@ unsafe fn walk_timeline(
         // par le même offset que le seek (`webcam_time = screen_time - offset`).
         let webcam_available_screen_end =
             webcam_available_duration.map(|duration| duration + clip.webcam_offset_sec);
+        if has_camera && webcam_available_screen_end.is_some_and(|end| end + CLIP_START_TAIL_TOLERANCE_SEC < clip.source_start_sec) {
+            bail!(
+                "Cannot export clip {}: the camera video ends before this clip starts. Record the camera again or remove its track before exporting.",
+                clip_index + 1,
+            );
+        }
         let mut source_end_sec = clip.source_end_sec;
         if let Some(duration) = screen_available_duration {
             source_end_sec = source_end_sec.min(duration);
@@ -391,14 +466,31 @@ unsafe fn walk_timeline(
 
         // un seul seek keyframe, puis chaque décodeur avance selon son propre pts jusqu'aux
         // temps source demandés par les spans de vitesse.
-        if sdec.seek_to(clip.source_start_sec)?.is_null() {
-            continue; // clip vide / au-delà de la source
-        }
-        if wdec
-            .seek_to((clip.source_start_sec - clip.webcam_offset_sec).max(0.0))?
-            .is_null()
+        // La fin du clip est déjà bornée par la durée disponible : si le conteneur couvre le
+        // début du clip, la dernière frame du flux écran peut être tenue jusque-là.
+        let screen_hold_tail = if screen_available_duration.is_some_and(|d| d > clip.source_start_sec) {
+            f64::INFINITY
+        } else {
+            CLIP_START_TAIL_TOLERANCE_SEC
+        };
+        if !seek_clip_start(sdec, clip.source_start_sec, screen_hold_tail)
+            .with_context(|| format!("Cannot export clip {}: could not read the screen video.", clip_index + 1))?
         {
-            continue;
+            bail!("Cannot export clip {}: the screen video has no readable frame at the clip's start.", clip_index + 1);
+        }
+        let webcam_start = if has_camera {
+            (clip.source_start_sec - clip.webcam_offset_sec).max(0.0)
+        } else {
+            clip.source_start_sec
+        };
+        let webcam_error = if has_camera {
+            format!("Cannot export clip {}: the camera video has no readable frame at the clip's start. Record the camera again or remove its track before exporting.", clip_index + 1)
+        } else {
+            format!("Cannot export clip {}: the screen video has no readable frame at the clip's start.", clip_index + 1)
+        };
+        let webcam_hold_tail = if has_camera { CLIP_START_TAIL_TOLERANCE_SEC } else { screen_hold_tail };
+        if !seek_clip_start(wdec, webcam_start, webcam_hold_tail).with_context(|| webcam_error.clone())? {
+            bail!(webcam_error);
         }
 
         if cursor_enabled {
@@ -427,7 +519,7 @@ unsafe fn walk_timeline(
             for segment_frame in 0..segment.frame_count {
                 let target_source_time = segment.source_time(segment_frame, out_fps as f64);
                 if let Some(only) = only {
-                    if only.last().map_or(true, |&last| frames > last) {
+                    if only.last().is_none_or(|&last| frames > last) {
                         break 'clips;
                     }
                     if only.binary_search(&frames).is_err() {
@@ -502,7 +594,51 @@ unsafe fn walk_timeline(
 
 #[cfg(test)]
 mod tests {
-    use super::{frame_step, FrameStep, NextFrameTime, RenderedFrame};
+    use super::{
+        accepts_clip_start, cover_container_duration, frame_step, FrameStep, NextFrameTime,
+        RenderedFrame, CLIP_START_TAIL_TOLERANCE_SEC,
+    };
+
+    /// Le fichier signalé, clip 5–15 s : la seule frame est à 0 s, le conteneur couvre le clip.
+    /// Elle doit être tenue, pas refusée comme une queue de flux tronquée.
+    #[test]
+    fn a_clip_after_the_only_frame_holds_it_when_the_container_covers_it() {
+        assert_eq!(accepts_clip_start(0.0, 5.0, f64::INFINITY), Some(true));
+    }
+
+    /// Sans conteneur pour la couvrir (webcam, durée inconnue), la queue reste bornée.
+    #[test]
+    fn a_bounded_hold_still_refuses_a_distant_last_frame() {
+        assert_eq!(accepts_clip_start(0.0, 5.0, CLIP_START_TAIL_TOLERANCE_SEC), Some(false));
+        assert_eq!(accepts_clip_start(9.8, 10.2, CLIP_START_TAIL_TOLERANCE_SEC), Some(true));
+    }
+
+    /// Une frame FUTURE lointaine (trou intérieur ou origine tardive) ne profite pas du hold
+    /// illimité : c'est la première frame qui tranche.
+    #[test]
+    fn an_unbounded_hold_does_not_accept_a_distant_future_frame() {
+        assert_eq!(accepts_clip_start(20.0, 15.0, f64::INFINITY), None);
+    }
+
+    /// Le fichier signalé : une frame (0,067 s) de vidéo, 87,38 s de conteneur. Le clip ne doit
+    /// être ni raccourci à une frame ni écarté.
+    #[test]
+    fn a_one_frame_video_stream_is_covered_by_the_container() {
+        assert_eq!(cover_container_duration(Some(40.0 / 600.0), 87_380_000), Some(87.38));
+    }
+
+    #[test]
+    fn a_normal_file_keeps_its_stream_duration() {
+        assert_eq!(cover_container_duration(Some(10.0), 10_000_000), Some(10.0));
+        assert_eq!(cover_container_duration(Some(10.0), 9_990_000), Some(10.0));
+    }
+
+    #[test]
+    fn an_unknown_side_falls_back_to_the_other() {
+        assert_eq!(cover_container_duration(None, 5_000_000), Some(5.0));
+        assert_eq!(cover_container_duration(Some(5.0), i64::MIN), Some(5.0));
+        assert_eq!(cover_container_duration(None, i64::MIN), None);
+    }
 
     /// La cadence de lecture, en une phrase : à 24 fps, une seconde réelle doit adopter 24
     /// frames et pas une de plus. Le bug d'origine (un pas fixe de 1/60 s, une frame par

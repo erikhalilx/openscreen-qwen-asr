@@ -15,15 +15,16 @@ import { audioGainScalar, getEditorSettings } from "./store/editorSettings";
 import { resolveClipSourceEndSec } from "./timeline/clipDuration";
 import { removedRawSpans } from "./timeline/programme-time";
 
-export const CLICK_SOUND_DOWN_URL = "sounds/click-down.wav";
-export const CLICK_SOUND_UP_URL = "sounds/click-up.wav";
-/** The names the two samples are staged under, and the only names the main process accepts. */
-const HIT_FILES = { down: "click-down.wav", up: "click-up.wav" } as const;
+export type ClickSoundPreset = "realistic" | "bubble";
+export const CLICK_SOUND_FILES = {
+	realistic: { down: "mouse-realistic-single.wav", up: "mouse-realistic-double.wav" },
+	bubble: { down: "mouse-bubble-single.wav", up: "mouse-bubble-double.wav" },
+} as const;
+export const CLICK_SOUND_DOWN_URL = `sounds/${CLICK_SOUND_FILES.realistic.down}`;
+export const CLICK_SOUND_UP_URL = `sounds/${CLICK_SOUND_FILES.realistic.up}`;
 
-/** A press with no matching release inside this window gets a synthetic one this far later. */
-const MAX_RELEASE_GAP_MS = 600;
-const FALLBACK_RELEASE_MS = 110;
-const DOUBLE_TAP_MS = 90;
+export const DOUBLE_CLICK_WINDOW_MS = 500;
+const DOUBLE_CLICK_DISTANCE = 0.01;
 /** A playhead move larger than this is a seek, not a frame: no hit is owed across it. Kept well
  *  past one frame at the fastest preview rate (16x is ~0.27 s of raw time per frame), because a
  *  stray click after a small jump is a smaller wrong than a click that never sounds.
@@ -38,12 +39,16 @@ export interface ClickCue {
 	timeSec: number;
 	gain: number;
 	release: boolean;
+	/** Second press in a grouped pair, retained so edits can keep either click separately.
+	 * The legacy mixer's `release` selector now chooses the complete double-click sample. */
+	pairedTimeSec?: number;
 }
 
 /** One hit of the scene's `clickSound` block: programme seconds, the compositor's own clock. */
 export interface ClickHit {
 	timeSec: number;
 	gain: number;
+	/** Existing native selector: false = complete single sample, true = complete double. */
 	release: boolean;
 }
 
@@ -54,64 +59,78 @@ export interface ClickSoundScene {
 }
 
 /**
- * Press/release hits for one take. Releases come from the recorded `mouseup` samples so a held
- * drag gets its let-go sound where the finger actually lifted; right and middle clicks sit a
- * little quieter than the left. The bundled samples are already level-matched and stripped of
- * leading silence, so a cue's own gain is the only volume decision left to make.
+ * Complete single/double samples, rather than separate press/release sounds. Nearby left
+ * presses pair non-overlappingly; native double-click markers are not played a second time.
+ * Mouse-up and move samples never create sounds. Input telemetry is left untouched.
  */
 export function buildClickCues(points: CursorTelemetryPoint[]): ClickCue[] {
-	const sorted = [...points].sort((a, b) => a.timeMs - b.timeMs);
-	const releases = sorted
-		.filter((p) => p.interactionType === "mouseup")
-		.map((p) => p.timeMs)
-		.sort((a, b) => a - b);
-
+	const presses = points
+		.filter(
+			(point) =>
+				Number.isFinite(point.timeMs) &&
+				point.timeMs >= 0 &&
+				["click", "double-click", "right-click", "middle-click"].includes(
+					point.interactionType ?? "",
+				),
+		)
+		.sort((a, b) => a.timeMs - b.timeMs);
 	const cues: ClickCue[] = [];
-	const push = (ms: number, gain: number, release: boolean) => {
-		// The sidecar is disk data. A NaN would serialize as `null` into the scene and cost the
-		// whole export its parse, so a time that is not a number is not a click.
-		if (!Number.isFinite(ms) || ms < 0) return;
-		cues.push({ timeSec: ms / 1000, gain, release });
-	};
-
-	for (const point of sorted) {
-		switch (point.interactionType) {
-			case "click":
-			case "double-click":
-			case "right-click":
-			case "middle-click":
-				break;
-			default:
-				continue;
+	for (let index = 0; index < presses.length; index++) {
+		const first = presses[index];
+		const next = presses[index + 1];
+		const gap = next ? next.timeMs - first.timeMs : Infinity;
+		const nearby =
+			next && Math.hypot(next.cx - first.cx, next.cy - first.cy) <= DOUBLE_CLICK_DISTANCE;
+		// Explicit native markers carry the OS's own configurable double-click interval.
+		const windowMs = next?.interactionType === "double-click" ? 1000 : DOUBLE_CLICK_WINDOW_MS;
+		if (
+			first.interactionType === "click" &&
+			next &&
+			(next.interactionType === "click" || next.interactionType === "double-click") &&
+			gap > 0 &&
+			gap <= windowMs &&
+			nearby
+		) {
+			cues.push({
+				timeSec: first.timeMs / 1000,
+				gain: 1,
+				release: true,
+				pairedTimeSec: next.timeMs / 1000,
+			});
+			index++;
+		} else {
+			cues.push({
+				timeSec: first.timeMs / 1000,
+				gain:
+					first.interactionType === "right-click" || first.interactionType === "middle-click"
+						? 0.85
+						: 1,
+				release: first.interactionType === "double-click",
+			});
 		}
-		const isSide =
-			point.interactionType === "right-click" || point.interactionType === "middle-click";
-		const gain = isSide ? 0.85 : 1;
-		push(point.timeMs, gain, false);
-		if (point.interactionType === "double-click") push(point.timeMs + DOUBLE_TAP_MS, gain, false);
-		// ponytail: a press held past MAX_RELEASE_GAP_MS gets its release early instead of never
-		const release = releases.find(
-			(ms) => ms > point.timeMs && ms <= point.timeMs + MAX_RELEASE_GAP_MS,
-		);
-		push(release ?? point.timeMs + FALLBACK_RELEASE_MS, gain * 0.7, true);
 	}
-	return cues.sort((a, b) => a.timeSec - b.timeSec);
+	return cues;
 }
 
 /** Resolved URLs of the two bundled hits, for the renderer and for staging. */
-export function clickHitUrls(): { down: string; up: string } {
+export function clickHitUrls(preset: ClickSoundPreset = "realistic"): { down: string; up: string } {
 	// Page-relative, like the web-demuxer wasm: Vite copies public/sounds into dist/, which an
 	// installer ships inside the asar. `getAssetPath` resolves against resources/, which only holds
 	// what electron-builder's extraResources copies there.
 	const one = (relative: string) => new URL(relative, window.location.href).href;
-	return { down: one(CLICK_SOUND_DOWN_URL), up: one(CLICK_SOUND_UP_URL) };
+	return {
+		down: one(`sounds/${CLICK_SOUND_FILES[preset].down}`),
+		up: one(`sounds/${CLICK_SOUND_FILES[preset].up}`),
+	};
 }
 
 // Both caches are one-shot: a finished take's sidecar never changes, and the staged samples are
 // the same bytes in every project.
 const cueCache = new Map<string, ClickCue[]>();
-let hitPaths: { down: string; up: string } | null = null;
-let hitPathsPending: Promise<{ down: string; up: string } | null> | null = null;
+type HitPaths = { down: string; up: string };
+const hitPaths = new Map<ClickSoundPreset, HitPaths>();
+const hitPathsPending = new Map<ClickSoundPreset, Promise<HitPaths | null>>();
+let previewPreset: ClickSoundPreset = "realistic";
 
 /**
  * The take's cues, read from disk once per run. A take whose sidecar cannot be read is cached as
@@ -142,24 +161,28 @@ export async function loadClickCues(takePath: string): Promise<ClickCue[]> {
  * and it writes them under userData. `null` outside Electron (the browser shim keeps the URLs,
  * which is all the preview needs).
  */
-export function ensureClickHitPaths(): Promise<{ down: string; up: string } | null> {
-	if (hitPaths) return Promise.resolve(hitPaths);
-	// One staging at a time: the toggle and an export can both ask before the first one lands,
-	// and a second write of the same file could overlap the compositor reading it.
-	hitPathsPending ??= stageClickHits().finally(() => {
-		hitPathsPending = null;
-	});
-	return hitPathsPending;
+export function ensureClickHitPaths(
+	preset: ClickSoundPreset = "realistic",
+): Promise<HitPaths | null> {
+	const cached = hitPaths.get(preset);
+	if (cached) return Promise.resolve(cached);
+	const pending = hitPathsPending.get(preset);
+	if (pending) return pending;
+	const request = stageClickHits(preset).finally(() => hitPathsPending.delete(preset));
+	hitPathsPending.set(preset, request);
+	return request;
 }
 
-async function stageClickHits(): Promise<{ down: string; up: string } | null> {
+async function stageClickHits(
+	preset: ClickSoundPreset,
+): Promise<{ down: string; up: string } | null> {
 	const stage = window.electronAPI?.stageClickSoundHit;
 	if (!stage) return null;
-	const urls = clickHitUrls();
+	const urls = clickHitUrls(preset);
 	const staged: string[] = [];
 	for (const [key, name] of [
-		["down", HIT_FILES.down],
-		["up", HIT_FILES.up],
+		["down", CLICK_SOUND_FILES[preset].down],
+		["up", CLICK_SOUND_FILES[preset].up],
 	] as const) {
 		const response = await fetch(urls[key]);
 		if (!response.ok) return null;
@@ -167,8 +190,9 @@ async function stageClickHits(): Promise<{ down: string; up: string } | null> {
 		if (!saved?.success || !saved.path) return null;
 		staged.push(saved.path);
 	}
-	hitPaths = { down: staged[0], up: staged[1] };
-	return hitPaths;
+	const paths = { down: staged[0], up: staged[1] };
+	hitPaths.set(preset, paths);
+	return paths;
 }
 
 /** The document's primary take — the one whose sidecar the clicks were recorded in. */
@@ -201,13 +225,14 @@ export function levelClickCues(cues: ClickCue[], gainDb: number): ClickCue[] {
  */
 export function clickSoundForDocument(
 	document: AxcutDocument,
-	cursor: { clickSound: boolean; clickSoundGainDb: number },
+	cursor: { clickSound: boolean; clickSoundGainDb: number; clickSoundPreset?: ClickSoundPreset },
 ): ClickSoundScene | null {
 	const take = cursor.clickSound ? clickTakeOf(document) : undefined;
 	const takePath = take?.originalPath;
 	// The level rides along, so a cue read that lands after this (the background one below) is
 	// still stashed at the level the user set, not at unity.
 	previewGainDb = cursor.clickSoundGainDb;
+	previewPreset = cursor.clickSoundPreset ?? "realistic";
 	if (!takePath || !take) {
 		previewEdit = null;
 		previewTake = undefined;
@@ -222,10 +247,11 @@ export function clickSoundForDocument(
 	if (!cueCache.has(takePath) && typeof window !== "undefined") void loadClickCues(takePath);
 	const cues = levelClickCues(cueCache.get(takePath) || [], cursor.clickSoundGainDb);
 	stashPreviewCues(document, take, cues);
-	if (!hitPaths || cues.length === 0) return null;
+	const paths = hitPaths.get(previewPreset);
+	if (!paths || cues.length === 0) return null;
 	return {
-		downPath: hitPaths.down,
-		upPath: hitPaths.up,
+		downPath: paths.down,
+		upPath: paths.up,
 		// The same placement the preview was filtered by, only mapped onto the programme clock.
 		hits: placeClickHits(document, take, cues),
 	};
@@ -289,7 +315,22 @@ export function placedClickHits(
 	const place = clickPlacement(document, take);
 	const placed: Array<{ clipId: string; sec: number; cue: ClickCue }> = [];
 	for (const cue of cues) {
-		for (const at of place(cue)) placed.push({ ...at, cue });
+		if (cue.pairedTimeSec === undefined) {
+			for (const at of place(cue)) placed.push({ ...at, cue });
+			continue;
+		}
+		const first: ClickCue = { timeSec: cue.timeSec, gain: cue.gain, release: false };
+		const second: ClickCue = { ...first, timeSec: cue.pairedTimeSec };
+		const firstPlaces = place(first);
+		const secondPlaces = place(second);
+		for (const at of firstPlaces) {
+			const both = secondPlaces.some((other) => other.clipId === at.clipId);
+			placed.push({ ...at, cue: both ? cue : first });
+		}
+		for (const at of secondPlaces) {
+			if (!firstPlaces.some((other) => other.clipId === at.clipId))
+				placed.push({ ...at, cue: second });
+		}
 	}
 	return placed.sort((a, b) => a.sec - b.sec);
 }
@@ -316,13 +357,14 @@ export function placeClickHits(
 export async function prepareClickSound(document: AxcutDocument): Promise<void> {
 	const settings = getEditorSettings(document);
 	const cursor = settings.cursor;
-	if (!cursor.clickSound || !settings.cursorShow) return;
+	if (!cursor.clickSound) return;
 	const take = clickTakeOf(document);
 	if (!take?.originalPath) return;
 	previewGainDb = cursor.clickSoundGainDb;
+	previewPreset = cursor.clickSoundPreset ?? "realistic";
 	const cues = await loadClickCues(take.originalPath);
 	stashPreviewCues(document, take, levelClickCues(cues, cursor.clickSoundGainDb));
-	await ensureClickHitPaths();
+	await ensureClickHitPaths(cursor.clickSoundPreset ?? "realistic");
 }
 
 // What the preview plays. Building the scene is the one place that has the document, the setting
@@ -352,14 +394,15 @@ function stashPreviewCues(
 	previewByClip.clear();
 	// A cue two clips keep is one recorded click: the clip-less list, crossed on the source clock,
 	// holds it once so a crossing fires it once.
-	const kept = new Set<ClickCue>();
+	const kept = new Map<string, ClickCue>();
 	for (const placed of placedClickHits(document, take, leveledCues)) {
-		kept.add(placed.cue);
+		const key = `${placed.cue.timeSec}:${placed.cue.gain}`;
+		if (!kept.has(key) || placed.cue.release) kept.set(key, placed.cue);
 		const bucket = previewByClip.get(placed.clipId) ?? [];
 		bucket.push(placed.cue);
 		previewByClip.set(placed.clipId, bucket);
 	}
-	previewCues = [...kept].sort((x, y) => x.timeSec - y.timeSec);
+	previewCues = [...kept.values()].sort((x, y) => x.timeSec - y.timeSec);
 }
 
 /** The hits the playhead passed since the last call, measured in the take's own source seconds —
@@ -427,15 +470,23 @@ export function resetClickPlayhead(): void {
 	playheadGeneration += 1;
 }
 
-const hitBuffers = new WeakMap<AudioContext, Promise<AudioBuffer[]>>();
+const hitBuffers = new WeakMap<AudioContext, Map<ClickSoundPreset, Promise<AudioBuffer[]>>>();
 
-/** The two samples as `[press, release]`, decoded once per context. */
-export function clickHitBuffers(context: AudioContext): Promise<AudioBuffer[]> {
-	let pending = hitBuffers.get(context);
+/** Complete `[single, double]` samples; legacy mixer field names stay wire-compatible. */
+export function clickHitBuffers(
+	context: AudioContext,
+	preset: ClickSoundPreset = previewPreset,
+): Promise<AudioBuffer[]> {
+	let cache = hitBuffers.get(context);
+	if (!cache) {
+		cache = new Map();
+		hitBuffers.set(context, cache);
+	}
+	let pending = cache.get(preset);
 	if (!pending) {
-		const urls = clickHitUrls();
+		const urls = clickHitUrls(preset);
 		pending = Promise.all([decodeHit(context, urls.down), decodeHit(context, urls.up)]);
-		hitBuffers.set(context, pending);
+		cache.set(preset, pending);
 	}
 	return pending;
 }
