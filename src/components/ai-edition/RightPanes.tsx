@@ -1,4 +1,5 @@
 import { CameraLayoutPane } from "./CameraLayoutPane";
+
 // Six right-rail panes matching design/openscreen-editor.html. Each control
 // reads from + writes to the project document via `useEditorSettings`, so the
 // design's UI is the canonical surface (no more "more options" link to a
@@ -30,7 +31,6 @@ import {
 	Video,
 	X,
 } from "lucide-react";
-
 import {
 	type ChangeEvent,
 	type CSSProperties,
@@ -59,6 +59,7 @@ import {
 import { useI18n, useScopedT } from "@/contexts/I18nContext";
 import { availableRecordedCaptionSources } from "@/lib/ai-edition/captions/recordedSources";
 import { resolveCaptionLane } from "@/lib/ai-edition/captions/settings";
+import { clickHitUrls } from "@/lib/ai-edition/clickSound";
 import {
 	AUDIO_FADE_MAX_MS,
 	collapseTracksToPills,
@@ -3547,6 +3548,10 @@ function ClickSoundControls() {
 					]}
 					value={settings.cursor.clickSoundPreset}
 					disabled={!hasDocument}
+					onActivate={(preset) => {
+						const sample = new Audio(clickHitUrls(preset).down);
+						void sample.play()?.catch(() => undefined);
+					}}
 					onChange={(clickSoundPreset) => {
 						void set({ cursor: { clickSoundPreset } });
 						if (settings.cursor.clickSound) void clickSound.prepare(clickSoundPreset);
@@ -4181,6 +4186,7 @@ export function ChoiceRow<T extends string | number>({
 	options,
 	value,
 	onChange,
+	onActivate,
 	disabled,
 	columns,
 	tiles,
@@ -4203,6 +4209,8 @@ export function ChoiceRow<T extends string | number>({
 	} | null>;
 	value: T;
 	onChange: (next: T) => void;
+	/** Called on every enabled button press, including the selected option. */
+	onActivate?: (value: T) => void;
 	disabled?: boolean;
 	/** Colonnes de la grille ; par défaut, toutes les options sur une rangée. */
 	columns?: number;
@@ -4274,6 +4282,7 @@ export function ChoiceRow<T extends string | number>({
 							// Re-choisir la valeur en place n'est pas une modification : ni sauvegarde ni
 							// entrée d'annulation.
 							onClick={() => {
+								onActivate?.(option.value);
 								if (!pressed) onChange(option.value);
 							}}
 						>
