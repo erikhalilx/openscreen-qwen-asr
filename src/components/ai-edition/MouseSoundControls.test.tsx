@@ -11,9 +11,11 @@ vi.mock("@/native/client", () => ({ nativeBridgeClient: { cursor: { getTelemetry
 vi.mock("@/contexts/I18nContext", () => ({ useScopedT: () => (key: string) => key }));
 const original = useProjectStore.getState();
 beforeEach(() => {
+	vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
 	telemetry.mockResolvedValue([{ timeMs: 1000, cx: 0.5, cy: 0.5, interactionType: "click" }]);
 });
 afterEach(() => {
+	vi.restoreAllMocks();
 	cleanup();
 	useProjectStore.setState(original, true);
 });
@@ -79,5 +81,35 @@ it("persists the selected sound set independently of its enable switch", async (
 		fireEvent.click(screen.getByRole("button", { name: "audio.mouseBubble" }));
 	});
 	expect(useProjectStore.getState().document?.legacyEditor?.cursorClickSoundPreset).toBe("bubble");
+	expect(useProjectStore.getState().document?.legacyEditor?.cursorClickSound).toBe(false);
+});
+
+it("previews one single click per press, including the selected preset", async () => {
+	const save = open("/media/sound-preview.mp4");
+	const realistic = screen.getByRole("button", { name: "audio.mouseRealistic" });
+	const bubble = screen.getByRole("button", { name: "audio.mouseBubble" });
+	await act(async () => {
+		fireEvent.click(realistic);
+		fireEvent.click(realistic);
+	});
+	expect(save).not.toHaveBeenCalled();
+	await act(async () => {
+		fireEvent.click(bubble);
+	});
+	await act(async () => {
+		fireEvent.click(bubble);
+	});
+	const played = vi
+		.mocked(HTMLMediaElement.prototype.play)
+		.mock.contexts.map((audio) =>
+			audio instanceof HTMLMediaElement ? new URL(audio.src).pathname.split("/").pop() : null,
+		);
+	expect(played).toEqual([
+		"mouse-realistic-single.wav",
+		"mouse-realistic-single.wav",
+		"mouse-bubble-single.wav",
+		"mouse-bubble-single.wav",
+	]);
+	expect(save).toHaveBeenCalledOnce();
 	expect(useProjectStore.getState().document?.legacyEditor?.cursorClickSound).toBe(false);
 });
