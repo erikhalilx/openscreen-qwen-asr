@@ -3550,7 +3550,7 @@ function ClickSoundControls() {
 					disabled={!hasDocument}
 					onActivate={(preset) => {
 						const sample = new Audio(clickHitUrls(preset).down);
-						void sample.play().catch(() => undefined);
+						void sample.play()?.catch(() => undefined);
 					}}
 					onChange={(clickSoundPreset) => {
 						void set({ cursor: { clickSoundPreset } });
