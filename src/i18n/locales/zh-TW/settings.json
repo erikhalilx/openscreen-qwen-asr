@@ -308,7 +308,8 @@
 			"right": "右側",
 			"bottomLeft": "左下",
 			"bottom": "下方",
-			"bottomRight": "右下"
+			"bottomRight": "右下",
+			"center": "置中"
 		},
 		"selectPreset": "選擇預設",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "攝影機背景",
 		"helpNoWebcam": "此專案沒有攝影機，因此版面配置控制項已停用，預設顯示為「無網路攝影機」。你儲存的版面配置會保留，以便新增攝影機後使用。",
 		"title": "攝影機版面",
-		"noWebcam": "無網路攝影機"
+		"noWebcam": "無網路攝影機",
+		"cameraTrack": "攝影機版面",
+		"fullscreenLayout": "攝影機全螢幕",
+		"enableTrack": "啟用攝影機版面軌道",
+		"hideSegment": "隱藏此段攝影機",
+		"segmentHelp": "僅調整目前區段。相鄰區段平滑切換；軌道空白區隱藏攝影機畫面，保留音訊。",
+		"trackHelp": "在下方攝影機軌道編排版面，選取區段可獨立調整。空白區隱藏畫面並保留音訊。",
+		"newSegmentDefaults": "以下為新建攝影機區段的預設樣式",
+		"connectedStart": "與上一攝影機區段相接",
+		"connectedEnd": "與下一攝影機區段相接"
 	},
 	"textAnimation": {
 		"slideLeft": "向左滑動",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "滑鼠音效",
+		"mouseEffectsHint": "依錄製的點擊時間及位置區分單擊、雙擊，播放對應音效；隱藏游標不影響聲音。",
+		"noMouseClicks": "此錄影沒有可用的點擊記錄，無法加入滑鼠音效。",
 		"systemSource": "系統音訊",
 		"microphoneSource": "麥克風",
 		"outputGain": "輸出音量",
 		"help": "人聲會自動統一到標準響度。在此基礎上調整輸出音量；它在預覽與匯出中的效果完全一致。",
 		"reset": "重設音訊",
-		"title": "音訊"
+		"title": "音訊",
+		"mouseSoundPreset": "音效風格",
+		"mouseRealistic": "寫實",
+		"mouseBubble": "氣泡"
 	},
 	"language": {
 		"title": "語言"

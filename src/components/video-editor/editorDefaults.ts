@@ -85,6 +85,7 @@ export const DEFAULT_CURSOR_SETTINGS: CursorVisualSettings & { show: boolean; th
 	asArrow: DEFAULT_PROJECT_APPEARANCE.cursor.asArrow,
 	clickImpact: false,
 	clickSound: false,
+	clickSoundPreset: "realistic",
 	clickSoundGainDb: 0,
 	theme: DEFAULT_CURSOR_THEME_ID,
 };

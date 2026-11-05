@@ -1,3 +1,4 @@
+import { openSourceProject } from "../../src/lib/ai-edition/document/sourceProject";
 // DocumentService — main-process owner of v3 AxcutDocument projects.
 // Persists one .openscreen JSON per project under userData/projects/ (the file
 // carries its own `schemaVersion`, so migration keys off the content, not the
@@ -455,8 +456,8 @@ export class DocumentService {
 		// back, and it is not persisted from here: the renderer saves the document
 		// it was given, as it does for any other load-time repair.
 		const migrated = migrateRawDocumentToCurrent(JSON.parse(raw));
-		const document = documentSchema.parse(
-			await relinkProjectMedia(migrated, this.mediaRegistryDir),
+		const document = openSourceProject(
+			documentSchema.parse(await relinkProjectMedia(migrated, this.mediaRegistryDir)),
 		);
 		// AFTER the relink, so what is granted is the path the renderer will actually ask for.
 		this.onProjectRead?.(document);

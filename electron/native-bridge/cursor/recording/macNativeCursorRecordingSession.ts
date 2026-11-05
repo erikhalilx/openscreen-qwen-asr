@@ -231,6 +231,8 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 	private readyTimer: NodeJS.Timeout | null = null;
 	private previousLeftButtonDown = false;
 	private consecutiveOutsideSamples = 0;
+	private screenPoints: Array<{ x: number; y: number }> = [];
+	private boundsOverride: Rectangle | null = null;
 	// Hide only after this many consecutive out-of-bounds samples (~100ms at 33ms interval).
 	// Fast swipes that briefly exit the display are clipped by clip-path instead of disappearing.
 	private static readonly OUTSIDE_HIDE_THRESHOLD = 3;
@@ -239,6 +241,8 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 
 	async start(): Promise<void> {
 		this.samples = [];
+		this.screenPoints = [];
+		this.boundsOverride = null;
 		this.assets.clear();
 		this.lineBuffer = "";
 		this.startTimeMs = this.options.startTimeMs ?? Date.now();
@@ -325,6 +329,28 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 		};
 	}
 
+	updateCaptureBounds(bounds: Rectangle): void {
+		this.boundsOverride = bounds;
+		const width = Math.max(1, bounds.width);
+		const height = Math.max(1, bounds.height);
+		// Replay the outside streak too, so samples hidden against the old bounds come back.
+		this.consecutiveOutsideSamples = 0;
+		for (let index = 0; index < this.samples.length; index++) {
+			const point = this.screenPoints[index];
+			if (!point) {
+				continue;
+			}
+			const normalizedX = (point.x - bounds.x) / width;
+			const normalizedY = (point.y - bounds.y) / height;
+			const isOutside = normalizedX < 0 || normalizedX > 1 || normalizedY < 0 || normalizedY > 1;
+			this.consecutiveOutsideSamples = isOutside ? this.consecutiveOutsideSamples + 1 : 0;
+			this.samples[index].cx = clamp(normalizedX, 0, 1);
+			this.samples[index].cy = clamp(normalizedY, 0, 1);
+			this.samples[index].visible =
+				this.consecutiveOutsideSamples < MacNativeCursorRecordingSession.OUTSIDE_HIDE_THRESHOLD;
+		}
+	}
+
 	private startPositionOnlyFallback() {
 		this.captureSample(Date.now(), null, null, false, false, false);
 		this.fallbackInterval = setInterval(() => {
@@ -403,7 +429,10 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 		leftButtonReleased: boolean,
 	) {
 		const cursor = screen.getCursorScreenPoint();
-		const bounds = this.options.getDisplayBounds() ?? screen.getDisplayNearestPoint(cursor).bounds;
+		const bounds =
+			this.boundsOverride ??
+			this.options.getDisplayBounds() ??
+			screen.getDisplayNearestPoint(cursor).bounds;
 		const width = Math.max(1, bounds.width);
 		const height = Math.max(1, bounds.height);
 		const normalizedX = (cursor.x - bounds.x) / width;
@@ -437,9 +466,11 @@ export class MacNativeCursorRecordingSession implements CursorRecordingSession {
 			...(assetId ? { assetId } : {}),
 			...(cursorType ? { cursorType } : {}),
 		});
+		this.screenPoints.push({ x: cursor.x, y: cursor.y });
 
 		if (this.samples.length > this.options.maxSamples) {
 			this.samples.shift();
+			this.screenPoints.shift();
 		}
 	}
 

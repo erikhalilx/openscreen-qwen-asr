@@ -1,3 +1,5 @@
+import { layoutCameraSettings } from "@/lib/ai-edition/layoutCamera";
+import type { LayoutCameraSettings } from "@/lib/layoutTypes";
 /**
  * Scene contract — the flat description the app hands the native D3D compositor so it can
  * compute the composed frame itself (preview AND export) with **no POC-fixture logic**.
@@ -11,12 +13,10 @@
  * This replaces the hardcoded fixture `timeline()` (A↔B layout animation + 6s zoom schedule)
  * that used to drive the compositor.
  *
- * NOTE (worker): implement `buildSceneDescription` below. Everything else here is the frozen
- * contract — do not change the exported types.
+ * Contract changes must update the mirrored Rust scene and the shared preview/export tests.
  */
 
 import type {
-	CameraFullscreenRegion,
 	Rotation3DPreset,
 	SpeedRegion,
 	WallpaperMotion,
@@ -26,8 +26,9 @@ import { DEFAULT_CROP_REGION, getZoomScale } from "@/components/video-editor/typ
 import { annotationFontSizeFraction } from "@/lib/ai-edition/annotationScale";
 import { deriveRecordedCaptionRegions } from "@/lib/ai-edition/captions/recordedSources";
 import { clickSoundForDocument } from "@/lib/ai-edition/clickSound";
-import { collapseTracksToPills, trackGroupId } from "@/lib/ai-edition/document/audioTracks";
+import { takesByHeadFragment } from "@/lib/ai-edition/document/audioTracks";
 import { createId } from "@/lib/ai-edition/document/ids";
+import { legacyCameraRegions, materializeLayouts } from "@/lib/ai-edition/document/layout";
 import { isFormatFillActive, pickOutputDims } from "@/lib/ai-edition/document/outputFormat";
 import {
 	type PlaybackSegment,
@@ -53,6 +54,7 @@ import {
 } from "@/lib/ai-edition/timeline/zoom-scale";
 import {
 	computeCompositeLayout,
+	isWebcamBlockLayout,
 	paddedContentSize,
 	type RenderRect,
 	resolveWebcamLayoutPreset,
@@ -61,6 +63,7 @@ import {
 } from "@/lib/compositeLayout";
 import type { CursorKind } from "@/lib/cursor/cursorThemes";
 import { parseCssGradient, resolveLinearGradientAngle } from "@/lib/exporter/gradientParser";
+import { LAYOUT_TRANSITION_SECONDS, type LayoutPreset } from "@/lib/layoutTypes";
 import type { FrameTheme, RecordingFrame, WebcamAnchor } from "@/lib/projectDefaults";
 import { resolveTextFontFamily } from "@/lib/textFonts";
 import { classifyWallpaper } from "@/lib/wallpaper";
@@ -277,7 +280,7 @@ export interface SceneRect {
 
 /** Webcam layout, from the editor settings. */
 export interface SceneLayout {
-	preset: "picture-in-picture" | "dual-frame" | "vertical-stack" | "no-webcam";
+	preset: LayoutPreset;
 	/**
 	 * Webcam size as a fraction (0..1) of the canvas reference dimension, derived from
 	 * `webcamSizeToFraction(settings.webcamSizePreset)`. Matches the web's canonical
@@ -400,6 +403,27 @@ export interface ResolvedClipLayout {
 	screenCover: boolean;
 }
 
+export interface SceneLayoutRegion {
+	/** Index of the clip whose SOURCE clock addresses this passage. */
+	clipIndex: number;
+	/** Source seconds visible after trims; these can be narrower than the original passage. */
+	startSec: number;
+	endSec: number;
+	preset: LayoutPreset;
+	layout: ResolvedClipLayout;
+	webcamReactiveZoom: boolean;
+	/** Previous resolved layout, preset and reactive flag: supplied together or all omitted. */
+	fromLayout?: ResolvedClipLayout;
+	fromPreset?: LayoutPreset;
+	fromWebcamReactiveZoom?: boolean;
+	/** Last contained-layout exit in source seconds. An ongoing zoom keeps that viewport until it settles. */
+	keepScreenClipFromSec?: number;
+	/** Original passage start in source seconds; trimming must not restart its animation. */
+	transitionStartSec: number;
+	/** Duration in source seconds, or 0 without fromLayout (including legacy-camera neighbours). */
+	transitionSec: number;
+}
+
 /** Frame-styling effects, from the editor settings. */
 export interface SceneEffects {
 	/** 0..1 extra inset of the screen (padding). */
@@ -499,6 +523,7 @@ export interface SceneDescription {
 	cameraFullscreenRegions: SceneCameraFullscreenRegion[];
 	/** Agent-written shader effects, omitted when there are none. */
 	shaderEffects?: SceneShaderEffect[];
+	layoutRegions?: SceneLayoutRegion[];
 	/**
 	 * Speed regions projected onto each clip's source time (one entry per
 	 * source-time span after `projectRegionsToSourceTime`). Empty when none set.
@@ -880,25 +905,24 @@ export function buildSceneDescription(
 	// question, and it does not depend on the track.
 	// Placed once: the projection below counts them, so a track after a pause lands where
 	const removed = removedRawSpans(projectedClips, document.timeline.trimRanges);
-	// The take's pills, keyed by group. A voiceover is walked ONCE per pill and never per
-	// stored fragment: the document keeps one fragment per clip a take covers, so walking
-	// them separately would emit overlapping entries and `overlay_track_pcm` sums with `+=`
-	// at an absolute offset — the export would contain the take playing on top of itself.
-	const voiceoverPills = new Map(
-		collapseTracksToPills(document.audioTracks)
-			.filter((pill) => pill.kind === "voiceover" && !pill.loop)
-			.map((pill) => [trackGroupId(pill), pill]),
-	);
+	// Every take is mixed ONCE, from its head fragment, as its whole pill — never per stored
+	// fragment. The document keeps one fragment per clip a take covers: a voiceover walked per
+	// fragment would play on top of itself (`overlay_track_pcm` sums with `+=`), and a bed laid
+	// per fragment, each at its projected head with its ruler-advanced offset, went silent at the
+	// end of a slowed clip and came back late (see `takesByHeadFragment`).
+	const takes = takesByHeadFragment(document.audioTracks);
 	// Click hits for the "mouse clicks" toggle, placed on the programme this export assembles.
 	// Synchronous: the cues were read from the take's sidecar when the sound was switched on.
 	// Its row lives under "Show cursor", like the click impact: a hidden cursor makes no sound.
 	const clickSound = clickSoundForDocument(document, {
-		clickSound: settings.cursorShow && settings.cursor.clickSound,
+		clickSound: settings.cursor.clickSound,
+		clickSoundPreset: settings.cursor.clickSoundPreset,
 		clickSoundGainDb: settings.cursor.clickSoundGainDb,
 	});
 	const audioTracks = document.audioTracks.flatMap<SceneDescription["audioTracks"][number]>(
-		(track) => {
-			if (track.muted) return [];
+		(fragment) => {
+			const track = fragment.recordingSource ? fragment : takes.get(fragment.id);
+			if (!track || track.muted) return [];
 			const asset = assetById.get(track.assetId);
 			if (!asset?.originalPath) return [];
 			const sourceDurationSec = asset.durationSec ?? track.durationSec;
@@ -994,17 +1018,12 @@ export function buildSceneDescription(
 			// #560 refuses that combination outright, and inventing semantics for something
 			// about to be banned would be the worse answer.
 			if (track.kind === "voiceover" && !track.loop) {
-				const groupId = trackGroupId(track);
-				const pill = voiceoverPills.get(groupId);
-				// Emitted from the group's HEAD fragment only — every other fragment of the same
-				// take is already covered by the pill's own walk.
-				if (!pill || pill.id !== track.id) return [];
-				const rawSpanSec = Math.max(0, pill.endMs / 1000 - pill.startMs / 1000);
+				const rawSpanSec = Math.max(0, track.endMs / 1000 - track.startMs / 1000);
 				// Unprobed assets have no real duration to cap with; the RAW span is how much
 				// file the take covers, which is the honest fallback once the cuts are taken out.
 				const voWindowSec =
 					sourceDurationSec > 0 ? Math.max(0, sourceDurationSec - offsetSec) : rawSpanSec;
-				const kept = takeProgramme(pill, removed)
+				const kept = takeProgramme(track, removed)
 					.filter((piece) => piece.kind === "play")
 					.map((piece) => ({
 						...base,
@@ -1019,11 +1038,22 @@ export function buildSceneDescription(
 					}))
 					.filter((entry) => entry.trimEndSec > entry.trimStartSec);
 				// The fades belong to the TAKE's edges, not to every piece a cut left behind.
-				return kept.map((entry, i) => ({
-					...entry,
-					fadeInSec: i === 0 ? base.fadeInSec : 0,
-					fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
-				}));
+				return kept.map((entry, i) => {
+					// A piece plays at 1x, but its head and the next one's are projected through the
+					// speed regions: a sped-up stretch between them leaves the piece longer than the
+					// output gap, so it would still be playing when the next one starts (#1283). It
+					// stops where the next piece begins.
+					const next = kept[i + 1];
+					const trimEndSec = next
+						? Math.min(entry.trimEndSec, entry.trimStartSec + next.startSec - entry.startSec)
+						: entry.trimEndSec;
+					return {
+						...entry,
+						trimEndSec,
+						fadeInSec: i === 0 ? base.fadeInSec : 0,
+						fadeOutSec: i === kept.length - 1 ? base.fadeOutSec : 0,
+					};
+				});
 			}
 			if (!track.loop) {
 				return [
@@ -1157,9 +1187,7 @@ export function buildSceneDescription(
 		() => createId("ann"),
 	);
 	const projectedCameraFullscreenRegions = projectRegionsToSource(
-		((document.legacyEditor as Record<string, unknown> | null)?.cameraFullscreenRegions as
-			| CameraFullscreenRegion[]
-			| undefined) ?? [],
+		legacyCameraRegions(document),
 		visibleClips,
 		document.timeline.clips,
 		() => createId("camfull"),
@@ -1280,7 +1308,7 @@ export function buildSceneDescription(
 	const clipHasCamera = (clip: AxcutClip) =>
 		assetCameraSource(assetById.get(clip.assetId)).path !== "";
 	/**
-	 * The layout preset is GLOBAL — one panel for the whole timeline — but the camera is
+	 * The default layout preset is global, with per-passage overrides; the camera is
 	 * per clip: a project mixes a screen+webcam recording with a plain import that has
 	 * none. A clip with no camera must lay out as if the preset were "no-webcam".
 	 *
@@ -1304,8 +1332,10 @@ export function buildSceneDescription(
 		screenSize: { width: number; height: number },
 		hasCamera: boolean,
 		camSize: { width: number; height: number },
+		requestedPreset: LayoutPreset = settings.webcamLayoutPreset,
+		camera: LayoutCameraSettings = layoutCameraSettings(document),
 	) => {
-		const preset = resolveWebcamLayoutPreset(settings.webcamLayoutPreset, hasCamera);
+		const preset = resolveWebcamLayoutPreset(requestedPreset, hasCamera);
 		return computeCompositeLayout({
 			canvasSize: outputDims,
 			maxContentSize,
@@ -1313,10 +1343,10 @@ export function buildSceneDescription(
 			screenSize: formatFill ? maxContentSize : screenSize,
 			webcamSize: preset === "no-webcam" ? null : camSize,
 			layoutPreset: preset,
-			webcamSizePreset: settings.webcamSizePreset,
-			webcamAnchor: settings.webcamAnchor,
-			webcamMaskShape: settings.webcamMaskShape,
-			webcamRoundness: settings.webcamRoundness,
+			webcamSizePreset: camera.size,
+			webcamAnchor: camera.anchor,
+			webcamMaskShape: camera.shape,
+			webcamRoundness: camera.roundness,
 			frame: settings.frame,
 		});
 	};
@@ -1339,7 +1369,7 @@ export function buildSceneDescription(
 			? {
 					screenRect: toFrameFractions(layout.screenRect),
 					webcamRect: layout.webcamRect ? toFrameFractions(layout.webcamRect) : null,
-					screenRadiusFrac: radiusFractionOf(layout.screenRect, layout.screenBorderRadius),
+					screenRadiusFrac: null,
 					webcamRadiusFrac: radiusFractionOf(layout.webcamRect, layout.webcamRect?.borderRadius),
 					webcamShape: layout.webcamRect?.maskShape ?? settings.webcamMaskShape,
 					screenCover: formatFill || (layout.screenCover ?? false),
@@ -1353,6 +1383,93 @@ export function buildSceneDescription(
 			layoutForClip(screenSourceSizeOf(clip, index), clipHasCamera(clip), webcamSourceSizeOf(clip)),
 		),
 	);
+	const storedLayouts = materializeLayouts(document);
+	const projectedLayouts = document.layoutRegions?.length
+		? projectRegionsToSource(storedLayouts, visibleClips, document.timeline.clips, () =>
+				createId("layout"),
+			)
+		: [];
+	const layoutRegions: SceneLayoutRegion[] = projectedLayouts.flatMap((region) => {
+		if (region.clipIndex === undefined) return [];
+		const clipIndex = region.clipIndex;
+		const clip = visibleClips[clipIndex];
+		if (!clip) return [];
+		const requested = region.legacyCamera?.basePreset ?? region.preset;
+		const hasCamera = clipHasCamera(clip);
+		const preset = resolveWebcamLayoutPreset(requested, hasCamera);
+		const resolve = (p: LayoutPreset, camera = layoutCameraSettings(document, region)) =>
+			resolvedLayoutOf(
+				layoutForClip(
+					screenSourceSizeOf(clip, clipIndex),
+					hasCamera,
+					webcamSourceSizeOf(clip),
+					p,
+					camera,
+				),
+			);
+		const layout = resolve(preset);
+		if (!layout) return [];
+		const previous = storedLayouts.find(
+			(r) =>
+				r.clipId === region.clipId &&
+				r.sourceEndSec !== undefined &&
+				region.sourceStartSec !== undefined &&
+				Math.abs(r.sourceEndSec - region.sourceStartSec) < 0.001,
+		);
+		const fromLayout =
+			!region.legacyCamera && previous && !previous.legacyCamera
+				? resolve(previous.preset, layoutCameraSettings(document, previous))
+				: null;
+		// Carry this history through later free passages and trim projections. Native can
+		// then keep a zoom already in flight inside its viewport, without constraining a new one.
+		const keepScreenClipFromSec = storedLayouts.reduce<number | undefined>((last, candidate) => {
+			if (
+				candidate.clipId !== region.clipId ||
+				candidate.sourceEndSec === undefined ||
+				region.sourceStartSec === undefined ||
+				candidate.sourceEndSec > region.sourceStartSec + 0.0001 ||
+				!(
+					formatFill ||
+					(hasCamera && isWebcamBlockLayout(candidate.legacyCamera?.basePreset ?? candidate.preset))
+				)
+			)
+				return last;
+			return Math.max(last ?? -Infinity, candidate.sourceEndSec);
+		}, undefined);
+		return [
+			{
+				clipIndex: region.clipIndex,
+				startSec: region.startMs / 1000,
+				endSec: region.endMs / 1000,
+				preset,
+				layout,
+				webcamReactiveZoom: resolveWebcamReactiveZoom(
+					preset,
+					layoutCameraSettings(document, region).reactiveZoom,
+				),
+				...(keepScreenClipFromSec === undefined ? {} : { keepScreenClipFromSec }),
+				...(fromLayout && previous
+					? {
+							fromLayout,
+							fromPreset: resolveWebcamLayoutPreset(previous.preset, hasCamera),
+							fromWebcamReactiveZoom: resolveWebcamReactiveZoom(
+								previous.preset,
+								layoutCameraSettings(document, previous).reactiveZoom,
+							),
+						}
+					: {}),
+				transitionStartSec: region.sourceStartSec ?? region.startMs / 1000,
+				transitionSec: fromLayout
+					? Math.min(
+							LAYOUT_TRANSITION_SECONDS,
+							((region.sourceEndSec ?? region.endMs / 1000) -
+								(region.sourceStartSec ?? region.startMs / 1000)) /
+								2,
+						)
+					: 0,
+			},
+		];
+	});
 	// Scalar fields stay the FIRST clip's layout: they are the fallback for a payload
 	// without `layoutByClip`, and the value native starts from before any clip is active.
 	const computedLayout = visibleClips[0]
@@ -1377,6 +1494,7 @@ export function buildSceneDescription(
 
 	return {
 		clips,
+		...(layoutRegions.length ? { layoutRegions } : {}),
 		layout: {
 			preset: settings.webcamLayoutPreset,
 			// web-consistent 0..1 fraction of the canvas reference dimension
@@ -1421,9 +1539,8 @@ export function buildSceneDescription(
 			// see `roundnessFrac`. No padding and no frame: the footage meets the scene's edges,
 			// with no background to round against, so the corners go square and the stored value
 			// waits for the padding to come back. Under a frame the frame meets the edges, and
-			// the footage keeps its corners. A block layout's screen carries its own radius
-			// (`screenRadiusFrac`), so this only ever squares Picture in Picture and camera-less
-			// clips.
+			// the footage keeps its corners. Every screen layout follows this same Composition
+			// value; presets only determine the screen's placement and size.
 			roundnessFrac:
 				settings.padding > 0 || settings.frame !== "none"
 					? settings.borderRadius / ROUNDNESS_REFERENCE_PX

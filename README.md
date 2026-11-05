@@ -1,4 +1,10 @@
-# OpenScreen Qwen3-ASR 0.2
+# OpenScreen Qwen3-ASR 0.3
+
+## Version 0.3 changes / 0.3 版本迭代
+
+This release integrates the OpenScreen v2.2.1 editor and capture updates. The timeline offers five camera layouts, with per-passage camera controls and separate screen and camera roundness. The layout inspector scrolls to reveal every control. macOS prepares recording permissions before the countdown. Opening a project saved before 0.3 rebuilds the timeline from the original sources and resets earlier edits.
+
+本版融合 OpenScreen v2.2.1 的编辑与录制更新。时间线支持五种摄像头布局及逐段参数，屏幕和摄像头圆角分别设置。布局面板支持滚动，macOS 在倒计时前准备录制权限。打开 0.3 之前保存的项目时，工作室从原始素材重建时间线并重置旧编辑。
 
 ## Version 0.2 changes / 0.2 版本迭代
 
@@ -6,7 +12,7 @@ Version 0.1 introduced local Qwen3-ASR transcription and real character/word ali
 
 0.1 提供本地千问识别与真实字词对齐。0.2 新增系统声/麦克风独立录制双音轨、录制前与后期独立音量、两路转录与字幕开关/样式/高度交换；修复字幕边距调节，默认多显示最多一秒且不推迟下一句，行长上限扩至 25，并支持按成片时间轴分别导出两路 SRT。同时改进辅助功能授权处理和开发环境隔离。语义断句规则尚未调整。Fork 版本号为 0.2.0，上游基础版本仍为 OpenScreen 2.1.2。
 
-An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Based on **v2.1.2**, upstream commit `d8889c626f859e0be8f4f87fdffc7362629550bc`.
+An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Integrates upstream **v2.2.1**, commit `c5cd7b9ef8b1ee6e98ea8accd168eefcea6a5ddf`.
 
 这是一个基于 OpenScreen 的独立社区版本，最大的改进是用本地 **Qwen3-ASR** 替换原版 Whisper 语音识别，旨在大幅提升中文语音识别和字幕生成的准确度。同时保留录屏、编辑、时间线、字幕、项目保存、视频导出以及 CLI/MCP 等主要功能，并提供真实的字级/词级时间戳和更适合中文阅读的字幕排版。
 

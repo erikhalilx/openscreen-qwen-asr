@@ -45,6 +45,7 @@ function appearance(overrides: Partial<StylePresetAppearance> = {}): StylePreset
 			asArrow: [],
 			clickImpact: false,
 			clickSound: false,
+			clickSoundPreset: "realistic",
 			clickSoundGainDb: 0,
 		},
 		cursorShow: true,

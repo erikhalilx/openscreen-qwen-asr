@@ -37,7 +37,7 @@ use crate::audio::{
 use crate::audio_jobs::{decode_and_stretch_clip_audio, ClipAudioJobs};
 use crate::compositor::Compositor;
 use crate::d3d::Gpu;
-use crate::export_control::{with_staged_output, ExportControl};
+use crate::export_control::{with_validated_mp4_output, ExportControl};
 use crate::timeline_walk::NextFrameTime;
 use anyhow::{anyhow, bail, Result};
 use std::ffi::{c_void, CString};
@@ -95,14 +95,15 @@ impl Drop for PacketGuard {
 const SEEK_FORWARD_MAX_SEC: f64 = 0.5;
 
 /// Pourquoi ce décodeur est ouvert. La preview et l'export ne demandent pas la même chose
-/// au décodeur, et sur macOS ils ne prennent donc pas le même backend.
+/// au décodeur. Sur macOS ils prennent aujourd'hui le même backend (logiciel pour le H.264
+/// 8 bits, cf. `open_with`), mais l'intention reste journalisée pour les rapports de bug.
 ///
 /// La preview lit au temps réel : il lui suffit de tenir la cadence, et elle scrube, donc la
 /// latence d'un seek pèse plus que le débit. Une marche d'export déroule aussi vite que la
 /// machine le permet — c'est du débit pur, et l'arbitrage n'est pas le même.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum DecodeIntent {
-    /// Lecture temps réel (`live.rs`). Arbitrage historique, inchangé.
+    /// Lecture temps réel (`live.rs`).
     Preview,
     /// Marche d'export (`timeline_walk`, `gif_export`).
     Export,
@@ -286,13 +287,24 @@ impl Decoder {
                 //
                 // RESTE NON MESURÉ : 10 bits. Il garde VideoToolbox, la condition l'écarte
                 // par construction (`format == YUV420P`), et le chemin logiciel le tronquerait
-                // en 8 bits (`CpuFrames` ne rend que du NV12). La preview aussi n'a pas été
-                // mesurée, et la changer sans la mesurer serait exactement l'erreur que ce
-                // commit corrige.
-                _ if intent == DecodeIntent::Export && is_h264_8bit => false,
+                // en 8 bits (`CpuFrames` ne rend que du NV12).
+                //
+                // LA PREVIEW AUSSI, mesurée depuis (#585). Mac mini M1, aperçu 4K60 H.264 :
+                //
+                //     VideoToolbox   50 frames manquées / 1200   seek 254 ms
+                //     logiciel        1 frame  manquée  / 1200   seek 152 ms
+                //
+                // À 120 fps en 4K, VideoToolbox décroche. Le prix : 0,3 à 0,65 cœur et 3 à 5x
+                // plus de mémoire. Batterie non mesurée. Le H.264 8 bits passe donc en
+                // logiciel quelle que soit l'intention ; HEVC et 10 bits restent sur VT.
+                _ if is_h264_8bit => false,
                 _ => true,
             };
-            let r = if want_hw {
+            // A VideoToolbox device can be created even when this codec has no
+            // VideoToolbox decoder (notably VP8). In that case get_format selects
+            // CPU frames, but cpu=None would send them straight to the Metal
+            // compositor without its required NV12/CVPixelBuffer conversion.
+            let r = if want_hw && codec_supports_videotoolbox(dec) {
                 crate::ffi::av_hwdevice_ctx_create(
                     &mut hwdev,
                     crate::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX,
@@ -618,9 +630,18 @@ impl Decoder {
         }
     }
 
-    /// Durée réellement annoncée par le flux vidéo (symétrique de
-    /// `pipeline_windows::Decoder::available_duration_sec`).
+    /// Durée disponible de la source : le plus long du flux vidéo et du conteneur (cf.
+    /// `cover_container_duration`). Symétrique de
+    /// `pipeline_windows::Decoder::available_duration_sec`.
     pub unsafe fn available_duration_sec(&self) -> Option<f64> {
+        crate::timeline_walk::cover_container_duration(
+            self.video_stream_duration_sec(),
+            crate::ffi::sn_fmt_duration(self.fmt),
+        )
+    }
+
+    /// Durée annoncée par le seul flux vidéo, `nb_frames / fps` en repli.
+    unsafe fn video_stream_duration_sec(&self) -> Option<f64> {
         let stream = crate::ffi::sn_fmt_stream(self.fmt, self.vidx);
         let duration = (*stream).duration;
         let tb_sec = self.tb_sec();
@@ -683,6 +704,43 @@ unsafe extern "C" fn get_hw_format_macos(
     }
     // Pas de VideoToolbox offert : prendre le premier format de la liste (système).
     *pix_fmts
+}
+
+unsafe fn codec_supports_videotoolbox(codec: *const crate::ffi::AVCodec) -> bool {
+    if codec.is_null() {
+        return false;
+    }
+    let mut index = 0;
+    loop {
+        let config = crate::ffi::avcodec_get_hw_config(codec, index);
+        if config.is_null() {
+            return false;
+        }
+        if (*config).device_type == crate::ffi::AVHWDeviceType::AV_HWDEVICE_TYPE_VIDEOTOOLBOX
+            && (*config).pix_fmt == crate::ffi::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX
+        {
+            return true;
+        }
+        index += 1;
+    }
+}
+
+#[cfg(test)]
+mod webcam_decode_tests {
+    use super::codec_supports_videotoolbox;
+    use crate::ffi::{avcodec_find_decoder, AVCodecID};
+
+    #[test]
+    fn vp8_uses_cpu_presentation_while_h264_can_use_videotoolbox() {
+        unsafe {
+            let vp8 = avcodec_find_decoder(AVCodecID::AV_CODEC_ID_VP8);
+            let h264 = avcodec_find_decoder(AVCodecID::AV_CODEC_ID_H264);
+            assert!(!vp8.is_null());
+            assert!(!h264.is_null());
+            assert!(!codec_supports_videotoolbox(vp8));
+            assert!(codec_supports_videotoolbox(h264));
+        }
+    }
 }
 
 /// Source clip pour `run_composited_multi`. Mêmes champs que `pipeline_windows::ClipSource`.
@@ -894,6 +952,8 @@ impl VideoEncoder {
         (*ctx).framerate = crate::ffi::AVRational { num: fps, den: 1 };
         (*ctx).bit_rate = bit_rate;
         (*ctx).flags |= crate::ffi::AV_CODEC_FLAG_GLOBAL_HEADER as i32;
+        // `rgb2y` / `rgb2uv` de `shaders.metal` : BT.709 limité.
+        crate::ffi::tag_export_color(ctx, crate::ffi::AVColorSpace::AVCOL_SPC_BT709);
 
         // VT : on attache le hw_frames_ctx. En pratique le call-site (run_composited_multi)
         // nous passera un `hw_frames_ctx` pré-construit lié au même device VideoToolbox
@@ -1185,12 +1245,14 @@ pub fn run_composited_multi_cancellable(
     progress: &mut dyn FnMut(u64),
     control: &ExportControl,
 ) -> Result<Stats> {
-    with_staged_output(Path::new(out), control, |file, staged| {
+    with_validated_mp4_output(Path::new(out), control, |file, staged| {
         drop(file); // ffmpeg le rouvre par son nom
         run_multi_inner(clips, &staged.to_string_lossy(), gpu, comp, cfg, params, progress, control)
     })
 }
 
+/// Encode and close the staged MP4. The caller must validate a displayable
+/// decoded frame before publishing it; returned stats count composed frames.
 fn run_multi_inner(
     clips: &[ClipSource],
     out: &str,
@@ -1391,7 +1453,7 @@ fn run_multi_inner(
             "write_trailer",
         )?;
         // Fichier fermé et contexte libéré par `_output` en fin de portée, avant que
-        // `with_staged_output` ne renomme le MP4.
+        // `with_validated_mp4_output` ne renomme le MP4.
     }
 
     let wall_s = t0.elapsed().as_secs_f64();
@@ -1432,10 +1494,10 @@ unsafe fn drain_encoder(
     }
 }
 
-/// Compte le nombre de frames d'un fichier (utilisé pour la barre de progression).
-/// Le comptage est purement ffmpeg-side, donc portable.
-pub fn probe_frame_count(_path: &str) -> Result<u64> {
-    Err(anyhow!("pipeline_macos::probe_frame_count: non implémenté"))
+/// Count displayable frames by software decoding, including delayed frames at
+/// EOF. No container frame-count metadata or duration estimate is required.
+pub fn probe_frame_count(path: &str) -> Result<u64> {
+    crate::export_control::count_decoded_video_frames(Path::new(path))
 }
 
 // Marqueur pour préserver la signature `fn run_composited(_: &Compositor, ...)`

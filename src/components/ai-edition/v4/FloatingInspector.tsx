@@ -14,8 +14,8 @@ import {
 	EyeOff,
 	FileText,
 	ImageIcon,
+	Layout as LayoutIcon,
 	type LucideIcon,
-	Maximize2,
 	MousePointer2,
 	Pencil,
 	Scissors,
@@ -74,6 +74,7 @@ import { zoomLevelFor } from "@/lib/ai-edition/timeline/zoom-scale";
 import { clampToBound } from "@/lib/projectDefaults";
 import { checkShaderEffectCode } from "@/native/compositorViewClient";
 import { annotationFootageRect, zoomScaleLimit } from "@/native/sceneDescription";
+import { CameraLayoutPane } from "../CameraLayoutPane";
 import { ColorField } from "../ColorField";
 import shell from "../NewEditorShell.module.css";
 import {
@@ -87,9 +88,14 @@ import {
 	TranscriptPane,
 	VideoEffectsPane,
 } from "../RightPanes";
-import { useHasRecordedCursor } from "../recordedCursorTypes";
+import {
+	useHasRecordedCursor,
+	useRecordingsHaveCursor,
+	zoomRecordingPaths,
+} from "../recordedCursorTypes";
 import { TextColorField } from "../TextColorField";
 import styles from "./EditorShellV4.module.css";
+import { LayoutPicker } from "./LayoutPicker";
 
 type TimelineApi = ReturnType<typeof useTimeline>;
 
@@ -759,6 +765,17 @@ function SelectionPane({ tl, onClose }: { tl: TimelineApi; onClose: () => void }
 		() => (doc && zoomId ? zoomScaleLimit(doc, zoomId) : MAX_ZOOM_SCALE),
 		[doc, zoomId],
 	);
+	// The recordings under the selected zoom, one per clip it covers (a region cut at a clip
+	// junction is one fragment per clip), empty for a non-zoom selection.
+	const zoomPaths = useMemo(
+		() =>
+			tl.selection?.kind === "zoom" ? zoomRecordingPaths(tl.zoomRegions, tl.selection.id, doc) : [],
+		[doc, tl.selection, tl.zoomRegions],
+	);
+	// Every take under the zoom must carry a cursor track: the 3D Orbit follows the cursor of
+	// whichever take plays, so one without a track would hold the camera still for its part of the
+	// pill, and the camera is not offered there under Auto focus.
+	const zoomHasCursor = useRecordingsHaveCursor(zoomPaths) === true;
 	// Mise à jour en direct regroupée à une par frame. `updateAnnotationLive` remplace le document
 	// dans le store, donc chaque appel fait reconstruire et re-sérialiser toute la scène avant de
 	// la pousser au natif : c'est le juste prix une fois par image, mais un `<input type="color">`
@@ -852,11 +869,12 @@ function SelectionPane({ tl, onClose }: { tl: TimelineApi; onClose: () => void }
 								tiles
 								options={[
 									"off" as const,
-									// The orbit follows the cursor under auto focus, and a hidden cursor drives
-									// nothing: not offered then, rather than a camera that silently holds still.
-									// Under manual focus the focus point poses it, cursor or not. Still listed
-									// once picked, so the row can show it.
-									...(settings.cursorShow ||
+									// The orbit follows the cursor under auto focus, so it needs one the compositor
+									// can read: a recording made with the system cursor writes no cursor file, and
+									// a hidden cursor drives nothing. Not offered then, rather than a camera that
+									// silently holds still. Under manual focus the focus point poses it, cursor or
+									// not. Still listed once picked, so the row can show it.
+									...((zoomHasCursor && settings.cursorShow) ||
 									(!autoFocusAll && (region.focusMode ?? "manual") === "manual") ||
 									region.rotationPreset === "orbit"
 										? MOVING_ROTATION_3D_PRESETS
@@ -1292,22 +1310,44 @@ function SelectionPane({ tl, onClose }: { tl: TimelineApi; onClose: () => void }
 		);
 	}
 
-	if (selection.kind === "cameraFullscreen") {
-		const region = tl.cameraFullscreenRegions.find((c) => c.id === selection.id);
-		if (!region) return null;
+	if (selection.kind === "layout") {
+		const index = tl.layoutSegments.findIndex((r) => r.ids.includes(selection.id));
+		const run = tl.layoutSegments[index];
+		if (!run) return null;
+		const hasCamera = tl.clips.some(
+			(clip) =>
+				clip.timelineEndSec > run.start &&
+				clip.timelineStartSec < run.end &&
+				tl.assets.some(
+					(asset) =>
+						asset.id === clip.assetId && asset.cameraTrack?.visible && asset.cameraTrack.sourcePath,
+				),
+		);
 		return (
 			<div style={{ display: "flex", flexDirection: "column", minHeight: 0 }}>
-				{paneHeader(
-					<Maximize2 size={16} />,
-					tt("labels.cameraFullscreen"),
-					onClose,
-					tc("actions.close"),
-				)}
+				{paneHeader(<LayoutIcon size={15} />, tt("layouts.title"), onClose, tc("actions.close"))}
 				<div style={bodyStyle}>
-					<button type="button" onClick={deleteAndClose} className={PANE_BUTTON}>
-						<Trash2 size={16} style={{ color: "var(--danger)" }} />
-						{te("inspector.deleteRegion")}
-					</button>
+					<div>
+						{tt("layouts.fromUntil", {
+							start: formatSeconds(run.start),
+							end: formatSeconds(run.end),
+						})}
+					</div>
+					<LayoutPicker
+						value={run.member.preset}
+						hasCamera={hasCamera}
+						onSelect={(preset) => void tl.setLayoutPreset(run.ids[0], preset)}
+					/>
+					{!hasCamera && run.member.preset !== "no-webcam" ? <p>{tt("layouts.noCamera")}</p> : null}
+					{hasCamera && run.member.preset !== "no-webcam" && run.member.preset !== "camera-only" ? (
+						<CameraLayoutPane regionId={run.ids[0]} />
+					) : null}
+					{index > 0 ? (
+						<button type="button" onClick={deleteAndClose} className={PANE_BUTTON}>
+							<Trash2 size={14} />
+							{tt("layouts.removeChange")}
+						</button>
+					) : null}
 				</div>
 			</div>
 		);

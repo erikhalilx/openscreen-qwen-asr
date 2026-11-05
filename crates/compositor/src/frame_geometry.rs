@@ -1906,6 +1906,8 @@ pub struct FrameGeometryInput<'a> {
 /// qui traversent.
 pub struct FrameGeometry {
     pub scene_preset: Option<String>,
+    /// Continuous PiP shadow weight through a layout change.
+    pub webcam_shadow: f32,
     pub mb_taps: f32,
     pub mb_amount: f32,
     pub source_t: f32,
@@ -3034,26 +3036,37 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
     let (wcw, wch) = (input.webcam_visible_px[0], input.webcam_visible_px[1]);
     let (u_max, v_max) = (input.u_max, input.v_max);
     let (frame, cfg) = (input.frame, input.cfg);
-    let lp = input.live;
+    let mut lp = input.live;
     let scene = input.scene;
     let cursor = input.cursor;
+    let layout_time = input.timeline_t_override.unwrap_or(frame / FPS);
+    let sampled_layout = scene.and_then(|s| s.layout_at(layout_time));
+    // A cut has no layout velocity. Keep the previous zoom sample, but never trail
+    // the old layout into a new passage whose transition was intentionally disabled.
+    let previous_layout_time = if sampled_layout.as_ref().is_some_and(|s| s.hard_cut) {
+        layout_time
+    } else { layout_time - 1.0 / FPS };
+    let previous_layout = scene.and_then(|s| s.layout_at(previous_layout_time));
+    if let Some(shape) = sampled_layout.as_ref().and_then(|s| s.layout.webcam_shape.as_ref()) {
+        lp.webcam_shape = webcam_shape_code(shape);
+    }
 
         // Scène de l'app présente → placements du layout preset (ou, mieux, le rect résolu par
         // l'app dans `layout.webcam_rect`) ; sinon planning fixture (bench).
         let scene_preset: Option<String> =
-            scene.map(|s| s.layout.preset.clone());
+            sampled_layout.as_ref().map(|s| s.preset.to_owned()).or_else(|| scene.map(|s| s.layout.preset.clone()));
         // Webcam rect résolu par l'app (= `computeCompositeLayout`, source de vérité unique
         // entre preview et natif) : quand il est présent ET que la scène est posée, on l'utilise
         // COMME placement de base. Sinon, fallback sur `preset_placements` historique (PiP
         // codé en dur à 320 px + 40 px de marge — l'arrangement qui dérivait de la preview).
-        let app_webcam_rect: Option<[f32; 4]> = scene
-            .and_then(|s| s.layout.webcam_rect)
+        let app_webcam_rect: Option<[f32; 4]> = sampled_layout.as_ref().map(|s| s.layout.webcam_rect)
+            .unwrap_or_else(|| scene.and_then(|s| s.layout.webcam_rect))
             .map(|r| [r.x, r.y, r.width, r.height]);
         // Idem pour l'écran. Les deux rects viennent du MÊME appel `computeCompositeLayout`, donc
         // les consommer ensemble est la seule façon de garder le bloc écran+caméra cohérent :
         // n'en prendre qu'un revenait à mélanger la géométrie de l'app et un placement fixture.
-        let app_screen_rect: Option<[f32; 4]> = scene
-            .and_then(|s| s.layout.screen_rect)
+        let app_screen_rect: Option<[f32; 4]> = sampled_layout.as_ref().map(|s| Some(s.layout.screen_rect))
+            .unwrap_or_else(|| scene.and_then(|s| s.layout.screen_rect))
             .map(|r| [r.x, r.y, r.width, r.height]);
         let (mut p, mut pp) = match &scene_preset {
             Some(preset) => {
@@ -3079,6 +3092,15 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
             }
             None => (timeline(frame, cfg), timeline(frame - 1.0, cfg)),
         };
+        if let Some(previous) = previous_layout.as_ref() {
+            let r = previous.layout.screen_rect;
+            pp.screen.dst = [r.x, r.y, r.width, r.height];
+            if let Some(r) = previous.layout.webcam_rect {
+                pp.webcam.dst = [r.x, r.y, r.width, r.height];
+            } else {
+                pp.webcam.dst = [0.0; 4];
+            }
+        }
         // Motion blur écran : quand la scène (contrat de l'app) est posée, c'est elle qui pilote
         // (parité inspector : 1.0 + motion_blur*15 taps), sinon on retombe sur `cfg.mblur_n`
         // (le bench fixture continue d'utiliser ses taps explicites).
@@ -3096,7 +3118,9 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         let zoom_regions = scene.map(|s| &s.zoom_regions).unwrap_or(&empty_zoom);
         let cam_regions =
             scene.map(|s| &s.camera_fullscreen_regions).unwrap_or(&empty_cam);
-        let webcam_reactive = scene.map(|s| s.layout.webcam_reactive_zoom).unwrap_or(false);
+        let webcam_reactive = sampled_layout.as_ref().map(|s| s.webcam_reactive_zoom)
+            .unwrap_or_else(|| scene.map(|s| s.layout.webcam_reactive_zoom as u8 as f32).unwrap_or(0.0));
+        let webcam_reactive_prev = previous_layout.as_ref().map(|s| s.webcam_reactive_zoom).unwrap_or(webcam_reactive);
         let source_t = input.timeline_t_override.unwrap_or(frame / FPS);
         // Les transitions se mesurent à l'écran (`ScreenClock`), la frame précédente aussi : une
         // frame d'écran plus tôt, ce qui donne au flou de mouvement du zoom la même traînée qu'à 1×,
@@ -3190,9 +3214,9 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // avec le ease-in du zoom, tient 0,7 sur le span, remonte avec le ease-out. Une région à
         // échelle 1 ne zoome rien : elle laisse la caméra à sa taille. Ignoré pendant Full Camera
         // (voir ci-dessus).
-        let reactive_scale = |strength: f32, zoom: f32, progress: f32| -> f32 {
-            if webcam_reactive && progress <= 0.0 && zoom > 1.0 && strength.is_finite() {
-                (1.0 - 0.3 * strength.clamp(0.0, 1.0)).clamp(0.7, 1.0)
+        let reactive_scale = |strength: f32, zoom: f32, progress: f32, layout_weight: f32| -> f32 {
+            if layout_weight > 0.0 && progress <= 0.0 && zoom > 1.0 && strength.is_finite() {
+                (1.0 - 0.3 * strength.clamp(0.0, 1.0) * layout_weight).clamp(0.7, 1.0)
             } else {
                 1.0
             }
@@ -3206,9 +3230,9 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // Seul `reactive_scale` (rétrécissement pendant un zoom, une valeur ANIMÉE par frame que
         // le rect statique de l'app ne capture pas) doit encore s'appliquer dans ce cas.
         let base_size_scale = if app_webcam_rect.is_some() { 1.0 } else { lp.webcam_size_scale };
-        let webcam_size_scale = base_size_scale * reactive_scale(zoom_strength, p.zoom, cam_progress);
+        let webcam_size_scale = base_size_scale * reactive_scale(zoom_strength, p.zoom, cam_progress, webcam_reactive);
         let webcam_size_scale_prev =
-            base_size_scale * reactive_scale(zoom_strength_prev, pp.zoom, cam_progress_prev);
+            base_size_scale * reactive_scale(zoom_strength_prev, pp.zoom, cam_progress_prev, webcam_reactive_prev);
 
         // padding : échelle globale du layout autour du centre du cadre (parité web frameRenderer :
         // paddingScale = 1 - padding*0.4 → padding 0 = plein cadre). S'applique à TOUS les presets :
@@ -3342,11 +3366,18 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // ratio de boîte se lit sur `s_base` : `remap_box` met les deux axes à la même
         // échelle, donc la boîte finale a le même ratio et le cover ne dépend pas d'elle
         // (ce qui casserait la circularité coupe → boîte → coupe).
-        let cover_box_ar = scene.and_then(|s| {
-            s.layout
-                .screen_cover
-                .then_some((s_base[2] * rw) / (s_base[3] * rh).max(0.0001))
-        });
+        // A zoom already running inside a block keeps that viewport until it settles.
+        // Releasing its clip halfway into PiP would inflate the frame and then shrink it
+        // during the same zoom-out. This is derived from time, so seeks and exports agree.
+        let keep_screen_clip = zoom_strength > 0.0 && sampled_layout.as_ref()
+            .and_then(|s| s.keep_screen_clip_from_sec)
+            .is_some_and(|from| crate::regions::zoom_continues_since(zoom_regions, from, source_t, &clock));
+        let keep_screen_clip_prev = zoom_strength_prev > 0.0 && previous_layout.as_ref()
+            .and_then(|s| s.keep_screen_clip_from_sec)
+            .is_some_and(|from| crate::regions::zoom_continues_since(zoom_regions, from, source_t_prev, &clock));
+        let screen_cover = keep_screen_clip || sampled_layout.as_ref().map(|s| s.layout.screen_cover)
+            .unwrap_or_else(|| scene.map(|s| s.layout.screen_cover).unwrap_or(false));
+        let cover_box_ar = screen_cover.then_some((s_base[2] * rw) / (s_base[3] * rh).max(0.0001));
         // Remplissage du format (`screen_follow`) : la fenêtre du cover suit le curseur lissé,
         // en UV. Sans piste, elle reste centrée.
         let follow = cover_box_ar.is_some() && scene.is_some_and(|s| s.layout.screen_follow);
@@ -3354,13 +3385,17 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
             let (x, y) = cursor.filter(|_| follow)?.follow_at(t)?;
             Some([x * u_max, y * v_max])
         };
-        let cover = |uv: [f32; 4], at: Option<[f32; 2]>| -> [f32; 4] {
-            match (cover_box_ar, at) {
+        let previous_cover_box_ar = (keep_screen_clip_prev || previous_layout.as_ref()
+            .map(|sample| sample.layout.screen_cover).unwrap_or(screen_cover))
+            .then_some((s_base_prev[2] * rw) / (s_base_prev[3] * rh).max(0.0001));
+        let cover_for = |uv: [f32; 4], at: Option<[f32; 2]>, box_ar: Option<f32>| -> [f32; 4] {
+            match (box_ar, at) {
                 (Some(ar), Some(at)) => follow_cover_uv_rect(uv, [stw as f32, sth as f32], ar, at),
                 (Some(ar), None) => cover_uv_rect(uv, [stw as f32, sth as f32], ar),
                 (None, _) => uv,
             }
         };
+        let cover = |uv, at| cover_for(uv, at, cover_box_ar);
         // La coupe RÉFÉRENCE (zoom entier) est celle qui remplissait la boîte paddée avant
         // ce correctif ; la coupe DESSINÉE ne porte plus que le crop. `remap_box` reporte la
         // seconde à travers le mapping de la première, ce qui conserve le cadrage exact.
@@ -3376,9 +3411,9 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         let focus = if fill_tilt && zoom_camera > 0.0 { zoom_aim } else { p.focus };
         let cut_ref =
             cover(screen_source_rect(u_max, v_max, active_crop, p.zoom, focus), follow_at(source_t));
-        let cut_ref_prev = cover(
+        let cut_ref_prev = cover_for(
             screen_source_rect(u_max, v_max, active_crop, pp.zoom, focus),
-            follow_at(source_t_prev),
+            follow_at(source_t_prev), previous_cover_box_ar,
         );
         // Sous le remplissage, la coupe dessinée est le crop ENTIER : la fenêtre bouge, et une
         // coupe dessinée qui ne la contiendrait plus laisserait un trou dans le slot. Le masque du
@@ -3527,7 +3562,8 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // la boîte, pas suivre le cadre.
         let frame_min_px = rw.min(rh);
         let s_px = [s_dst[2] * rw, s_dst[3] * rh];
-        let app_screen_radius_frac = scene.and_then(|s| s.layout.screen_radius_frac);
+        let app_screen_radius_frac = sampled_layout.as_ref().map(|s| s.layout.screen_radius_frac)
+            .unwrap_or_else(|| scene.and_then(|s| s.layout.screen_radius_frac));
         let scene_roundness_frac = scene.map(|s| s.effects.roundness_frac);
         // ---- Le rayon des coins, en UN seul endroit ----
         //
@@ -3545,19 +3581,27 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // chaque bordure garde son épaisseur tout autour de chaque coin. Sous le chrome de
         // fenêtre, les coins HAUTS du métrage restent carrés, à ras de la barre : l'arrondi du
         // haut se fait une seule fois, par le cadre (`screen_square_top`, `screen_top_lift_px`).
-        let outer_radius_of = |s_px: [f32; 2]| match (cfg.rounded, app_screen_radius_frac, scene_roundness_frac) {
+        let radius_for = |s_px: [f32; 2], app_radius: Option<f32>| match (cfg.rounded, app_radius, scene_roundness_frac) {
             (false, _, _) => 0.0,
             (true, _, _) if frame_kind != crate::scene::SceneFrame::None => {
                 let t = scene.map(roundness_slider_position).unwrap_or(0.0);
                 t * frame_roundness_cap(frame_kind) * frame_unit_px(s_px, [rw, rh])
             }
             // Preset en bloc : le rayon appartient à la boîte écran (parité exacte avec la caméra).
-            (true, Some(f), _) => f * s_px[0].min(s_px[1]),
+            (true, _, Some(f)) => f * screen_unit_px,
+            (true, Some(f), None) => f * s_px[0].min(s_px[1]),
             // Scène sans rayon imposé : slider Roundness, en px d'une référence 1080 rapportée à
             // l'écran (`screen_unit_px`) — ni à la source, ni au cadre.
-            (true, None, Some(f)) => f * screen_unit_px,
+
             // Fixture/bench (pas de scène) : chemin inspector historique, inchangé.
             (true, None, None) => p.screen.radius * lp.radius_scale,
+        };
+        let outer_radius_of = |s_px: [f32; 2]| {
+            let target = radius_for(s_px, app_screen_radius_frac);
+            sampled_layout.as_ref().and_then(|sample| sample.from_layout.map(|from| {
+                let initial = radius_for(s_px, from.screen_radius_frac);
+                initial + (target - initial) * sample.progress
+            })).unwrap_or(target)
         };
         let s_radius = screen_corner_radius_px(outer_radius_of(s_px), s_px);
         // Layouts en bloc : le slot masque l'écran (`ScreenMask`), avec les coins de l'écran AU
@@ -3566,11 +3610,19 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // remplissage du format, qui exclut les cadres (`formatFillAvailability`). Un cadre sous
         // un slot est donc toujours dans un bloc : il y devient le conteneur, au repos autour.
         // Le remplissage incliné n'a pas de masque : sa boîte est le slot, et la carte penche entière.
-        let screen_mask = (scene.is_some_and(|s| s.layout.screen_cover) && !fill_tilt).then(|| {
+        let screen_mask = (screen_cover && !fill_tilt).then(|| {
             let slot_px = [s_base[2] * rw, s_base[3] * rh];
+            let cover_mix = if keep_screen_clip { 1.0 }
+                else { sampled_layout.as_ref().map(|s| s.screen_cover_mix).unwrap_or(1.0) };
+            let slot_radius = screen_corner_radius_px(outer_radius_of(slot_px), slot_px);
             ScreenMask {
-                rect: s_base,
-                radius_px: screen_corner_radius_px(outer_radius_of(slot_px), slot_px),
+                // A free PiP has no clipping; its equivalent mask is the zoomed box.
+                // Morph between that box and the fixed block slot before dropping the mask.
+                // Keep settled geometry bit-exact: a + (b - a) can round away from b.
+                rect: if cover_mix >= 1.0 { s_base } else if cover_mix <= 0.0 { s_dst }
+                    else { lerp4(s_dst, s_base, cover_mix) },
+                radius_px: if cover_mix >= 1.0 { slot_radius } else if cover_mix <= 0.0 { s_radius }
+                    else { lerp(s_radius, slot_radius, cover_mix) },
                 square_top: frame_kind == crate::scene::SceneFrame::Window,
             }
         });
@@ -3603,7 +3655,8 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // l'écran consommant déjà `screen_radius_frac` du même calcul. La table ci-dessous en
         // était une SECONDE, indépendante — fraction différente (0.12 vs 0.06 côté web) et sans
         // bornes — donc écran et caméra ne pouvaient pas s'accorder.
-        let app_webcam_radius_frac = scene.and_then(|s| s.layout.webcam_radius_frac);
+        let app_webcam_radius_frac = sampled_layout.as_ref().map(|s| s.layout.webcam_radius_frac)
+            .unwrap_or_else(|| scene.and_then(|s| s.layout.webcam_radius_frac));
         // Full Camera dissout la forme en prenant le cadre : le rayon fond vers 0, donc le cercle
         // devient un rect à coins de plus en plus francs puis un plein cadre net — aucun masque
         // ne survit au plein écran. Il fond sur sa propre courbe, en retard sur le rect
@@ -3624,6 +3677,8 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
             };
 
     FrameGeometry {
+        webcam_shadow: sampled_layout.as_ref().map(|s| s.webcam_shadow)
+            .unwrap_or_else(|| if matches!(scene_preset.as_deref(), Some("dual-frame") | Some("vertical-stack") | Some("camera-only")) { 0.0 } else { 1.0 }),
         scene_preset,
         mb_taps,
         mb_amount,
@@ -3834,11 +3889,11 @@ impl<'a> CursorPlacer<'a> {
         }
     }
 
-    /// La pointe à `t`. Le curseur modélisé touche le plan à chaque clic : il se pose sur le point
-    /// cliqué brut (`pinned_at`), pas sur la piste lissée qui traîne derrière la souris. Le sprite
-    /// plat garde la piste telle quelle, son rendu est celui d'avant.
+    /// La pointe à `t`, posée sur le point cliqué brut à chaque clic (`pinned_at`), pas sur la piste
+    /// lissée qui traîne derrière la souris. Sprite plat comme modèle 3D : le rebond, l'anneau
+    /// d'impact et `ctx.clicks` se centrent sur ce point brut, la pointe doit s'y trouver.
     fn at(&self, t: f32) -> Option<(f32, f32)> {
-        if self.model3d { self.track.pinned_at(t) } else { self.track.at(t) }
+        self.track.pinned_at(t)
     }
 
     /// `None` hors de la coupe courante (zoom serré, hors écran).
@@ -4801,6 +4856,295 @@ mod tests {
     }
 
     use super::*;
+
+    fn layout_region(preset: &str, start: f32, end: f32, camera: Option<crate::scene::SceneRect>) -> crate::scene::SceneLayoutRegion {
+        crate::scene::SceneLayoutRegion {
+            clip_index: 0, start_sec: start, end_sec: end, preset: preset.to_owned(),
+            layout: crate::scene::ResolvedClipLayout {
+                screen_rect: crate::scene::SceneRect { x: 0.1, y: 0.1, width: 0.8, height: 0.8 },
+                webcam_rect: camera, screen_radius_frac: None, webcam_radius_frac: Some(0.0),
+                webcam_shape: Some("rectangle".to_owned()), screen_cover: false,
+            },
+            webcam_reactive_zoom: false, from_layout: None, from_preset: None, from_webcam_reactive_zoom: None,
+            keep_screen_clip_from_sec: None, transition_start_sec: start, transition_sec: 0.0,
+        }
+    }
+
+    #[test]
+    fn layout_partition_controls_real_frame_geometry() {
+        let mut scene = golden_scene();
+        scene.output.width = 1170;
+        scene.output.height = 658;
+        let full = crate::scene::SceneRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
+        scene.layout_regions = vec![layout_region("camera-only", 0.0, 5.0, Some(full)),
+            layout_region("no-webcam", 5.0, 10.0, None)];
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let mut input = golden_input(&scene, &cfg);
+        input.timeline_t_override = Some(2.0);
+        let camera = plan_frame(&input);
+        assert_eq!(camera.scene_preset.as_deref(), Some("camera-only"));
+        assert!((camera.w_dst[2] - 1.0).abs() < 0.001);
+        assert!((camera.w_dst[3] - 1.0).abs() < 0.001);
+        assert_eq!(camera.w_radius, 0.0);
+        input.timeline_t_override = Some(5.0);
+        let screen = plan_frame(&input);
+        assert_eq!(screen.scene_preset.as_deref(), Some("no-webcam"));
+        assert_eq!(screen.w_dst[2], 0.0);
+        assert_eq!(screen.w_dst[3], 0.0);
+    }
+
+    #[test]
+    fn a_layout_passage_keeps_zoom_inside_its_slot_and_restores_pip_overflow() {
+        for preset in ["dual-frame", "vertical-stack"] {
+            for frame in [crate::scene::SceneFrame::None, crate::scene::SceneFrame::Window,
+                crate::scene::SceneFrame::Laptop, crate::scene::SceneFrame::Phone,
+                crate::scene::SceneFrame::Monitor] {
+                let mut scene = zoomed_golden_scene();
+                scene.effects.frame = frame;
+                let mut block = layout_region(preset, 0.0, 3.0, None);
+                block.layout.screen_cover = true;
+                let pip = layout_region("picture-in-picture", 3.0, 10.0, None);
+                let slot = block.layout.screen_rect;
+                scene.layout_regions = vec![block, pip];
+                let cfg = crate::config::all().pop().expect("compositor config");
+                let mut input = golden_input(&scene, &cfg);
+                input.timeline_t_override = Some(1.5);
+                let inside = plan_frame(&input);
+                let mask = inside.screen_mask.expect("the active block passage owns the mask");
+                assert_eq!(mask.rect, [slot.x, slot.y, slot.width, slot.height]);
+                let pixels = [inside.s_dst[2] * input.render_px[0], inside.s_dst[3] * input.render_px[1]];
+                let (drawn, _, _, _) = inside.mask_flat_screen(inside.s_dst, inside.cut, pixels, inside.s_radius, input.render_px);
+                assert!(contains(mask.rect, drawn, 1e-5), "{preset}: zoom escaped the slot");
+                input.timeline_t_override = Some(3.5);
+                let outside = plan_frame(&input);
+                assert!(outside.screen_mask.is_none(), "PiP must restore zoom overflow");
+            }
+        }
+    }
+
+    #[test]
+    fn layout_transition_is_source_anchored_and_never_crosses_clip_identity() {
+        let mut scene = golden_scene();
+        let full = crate::scene::SceneRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
+        let mut region = layout_region("camera-only", 3.0, 10.0, Some(full));
+        let mut from = region.layout.clone();
+        from.webcam_rect = Some(crate::scene::SceneRect { x: 0.8, y: 0.8, width: 0.2, height: 0.2 });
+        region.from_layout = Some(from);
+        region.transition_start_sec = 3.0;
+        region.transition_sec = 0.2;
+        scene.layout_regions = vec![region];
+        assert!((scene.layout_at(3.1).unwrap().layout.webcam_rect.unwrap().width - 0.6).abs() < 0.001);
+        assert_eq!(scene.layout_at(3.5).unwrap().layout.webcam_rect.unwrap().width, 1.0);
+        assert!(scene.layout_at(10.0).is_none());
+        let other = scene.for_clip_window(1, 0.0, 10.0);
+        assert!(other.layout_at(3.1).is_none());
+        let trimmed = scene.for_clip_window(0, 3.5, 7.0);
+        assert_eq!(trimmed.layout_at(3.5).unwrap().layout.webcam_rect.unwrap().width, 1.0);
+    }
+
+    #[test]
+    fn hard_layout_cuts_do_not_trail_the_previous_layout() {
+        use crate::scene::SceneRect;
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let full = SceneRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
+        for explicit_from in [false, true] {
+            let mut scene = golden_scene();
+            scene.effects.motion_blur = 1.0;
+            let source = layout_region("picture-in-picture", 0.0, 3.0,
+                Some(SceneRect { x: 0.7, y: 0.7, width: 0.2, height: 0.2 }));
+            let mut target = layout_region("camera-only", 3.0, 10.0, Some(full));
+            target.layout.screen_rect = full;
+            target.from_layout = explicit_from.then(|| source.layout.clone());
+            target.transition_sec = 0.0;
+            scene.layout_regions = vec![source, target];
+            assert!(scene.layout_at(3.0).unwrap().hard_cut);
+            let mut input = golden_input(&scene, &cfg);
+            input.timeline_t_override = Some(3.0);
+            let g = plan_frame(&input);
+            assert!(g.mb_amount > 0.0);
+            assert_eq!(g.s_dst, g.s_dst_prev, "a hard cut must not smear the old screen");
+            assert_eq!(g.w_dst, g.w_dst_prev, "a hard cut must not smear the old camera");
+        }
+    }
+
+    #[test]
+    fn animated_layout_changes_keep_the_previous_frame_for_motion_blur() {
+        use crate::scene::SceneRect;
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let mut scene = golden_scene();
+        scene.effects.motion_blur = 1.0;
+        let full = SceneRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 };
+        let source = layout_region("picture-in-picture", 0.0, 3.0,
+            Some(SceneRect { x: 0.7, y: 0.7, width: 0.2, height: 0.2 }));
+        let mut target = layout_region("camera-only", 3.0, 10.0, Some(full));
+        target.layout.screen_rect = full;
+        target.from_layout = Some(source.layout.clone());
+        target.transition_sec = 0.2;
+        scene.layout_regions = vec![source, target];
+        assert!(!scene.layout_at(3.1).unwrap().hard_cut);
+        let mut input = golden_input(&scene, &cfg);
+        input.timeline_t_override = Some(3.1);
+        let g = plan_frame(&input);
+        assert_ne!(g.s_dst, g.s_dst_prev, "an animated screen keeps its motion trail");
+        assert_ne!(g.w_dst, g.w_dst_prev, "an animated camera keeps its motion trail");
+    }
+
+    #[test]
+    fn layout_animation_does_not_puff_the_footage_during_an_existing_zoom() {
+        use crate::scene::SceneRect;
+        let mut scene = golden_scene();
+        scene.effects.frame = crate::scene::SceneFrame::Phone;
+        scene.crop_by_clip = vec![None];
+        let mut zoom = zoomed_golden_scene().zoom_regions.remove(0);
+        zoom.start_sec = 0.963;
+        zoom.end_sec = 1.301;
+        zoom.scale = 1.8;
+        let mut later_zoom = zoom.clone();
+        later_zoom.start_sec = 5.0;
+        later_zoom.end_sec = 6.0;
+        scene.zoom_regions = vec![zoom, later_zoom];
+        let screen = SceneRect { x: 0.114792, y: 0.077604, width: 0.770416, height: 0.292708 };
+        let mut block = layout_region("vertical-stack", 0.0, 1.129, None);
+        block.layout.screen_rect = screen;
+        block.layout.screen_cover = true;
+        let mut pip = layout_region("picture-in-picture", 1.129, 2.163, None);
+        pip.layout.screen_rect = SceneRect { y: 0.353646, ..screen };
+        pip.from_layout = Some(block.layout.clone());
+        pip.transition_sec = 0.2;
+        pip.keep_screen_clip_from_sec = Some(1.129);
+        let mut no_camera = layout_region("no-webcam", 2.163, 10.0, None);
+        no_camera.layout.screen_rect = pip.layout.screen_rect;
+        no_camera.from_layout = Some(pip.layout.clone());
+        no_camera.transition_sec = 0.1345;
+        no_camera.keep_screen_clip_from_sec = Some(1.129);
+        scene.layout_regions = vec![block, pip, no_camera];
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let sample = |t| {
+            let mut input = golden_input(&scene, &cfg);
+            input.render_px = [1298.0, 1920.0];
+            input.timeline_t_override = Some(t);
+            plan_frame(&input)
+        };
+        // Same footage size at both endpoints: moving from top to centre must not inflate it.
+        for frame in 0..=180 {
+            let t = 1.129 + frame as f32 / 120.0;
+            let g = sample(t);
+            assert!((g.frame_box()[2] - screen.width).abs() < 0.0001,
+                "at {t}: the footage grew to {} instead of {}", g.frame_box()[2], screen.width);
+            assert!((g.frame_box()[3] - screen.height).abs() < 0.0001,
+                "at {t}: the footage height pulsed");
+        }
+        assert!(sample(1.25).s_dst[2] > screen.width + 0.1, "the existing zoom still runs inside");
+        let next = sample(5.5);
+        assert!(next.screen_mask.is_none(), "a later independent PiP zoom must stay free");
+        assert!(next.s_dst[2] > screen.width + 0.1);
+    }
+
+    #[test]
+    fn layout_animation_preserves_camera_roundness_while_it_disappears() {
+        use crate::scene::SceneRect;
+        let cfg = crate::config::all().pop().expect("compositor config");
+        for radius in [0.0, 0.06, 0.3, 0.5] {
+            for appearing in [false, true] {
+                let mut scene = golden_scene();
+                let mut camera = layout_region("picture-in-picture", 0.0, 3.0,
+                    Some(SceneRect { x: 0.7, y: 0.6, width: 0.2, height: 0.2 * 16.0 / 9.0 }));
+                camera.layout.webcam_radius_frac = Some(radius);
+                let mut hidden = layout_region("no-webcam", 0.0, 3.0, None);
+                hidden.layout.webcam_radius_frac = None;
+                let (source, mut target) = if appearing { (hidden, camera) } else { (camera, hidden) };
+                target.start_sec = 3.0;
+                target.end_sec = 10.0;
+                target.transition_start_sec = 3.0;
+                target.transition_sec = 0.2;
+                target.from_layout = Some(source.layout.clone());
+                scene.layout_regions = vec![source, target];
+                for progress in [0.05, 0.25, 0.5, 0.75, 0.95] {
+                    let mut input = golden_input(&scene, &cfg);
+                    input.render_px = [1920.0, 1080.0];
+                    input.timeline_t_override = Some(3.0 + 0.2 * progress);
+                    let g = plan_frame(&input);
+                    let side = (g.w_dst[2] * 1920.0).min(g.w_dst[3] * 1080.0);
+                    assert!(side > 0.0);
+                    assert!((g.w_radius / side - radius).abs() < 0.0001,
+                        "roundness {radius}, appearing {appearing}, progress {progress}: got {}", g.w_radius / side);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn every_layout_pair_has_continuous_footage_at_both_transition_edges() {
+        use crate::scene::{SceneFrame, SceneRect};
+        let presets = ["picture-in-picture", "dual-frame", "vertical-stack", "camera-only", "no-webcam"];
+        let resolved = |preset: &str, start: f32, end: f32| {
+            let block = matches!(preset, "dual-frame" | "vertical-stack");
+            let camera = match preset {
+                "no-webcam" => None,
+                "camera-only" => Some(SceneRect { x: 0.0, y: 0.0, width: 1.0, height: 1.0 }),
+                "picture-in-picture" => Some(SceneRect { x: 0.7, y: 0.65, width: 0.15, height: 0.15 * 16.0 / 9.0 }),
+                _ => Some(SceneRect { x: 0.65, y: 0.2, width: 0.25, height: 0.6 }),
+            };
+            let mut region = layout_region(preset, start, end, camera);
+            region.layout.screen_rect = if block {
+                SceneRect { x: 0.1, y: 0.2, width: 0.45, height: 0.6 }
+            } else { SceneRect { x: 0.1, y: 0.1, width: 0.8, height: 0.8 } };
+            region.layout.screen_cover = block;
+            region.layout.screen_radius_frac = block.then_some(0.06);
+            region.layout.webcam_radius_frac = Some(if preset == "picture-in-picture" { 0.5 } else { 0.0 });
+            region.webcam_reactive_zoom = preset == "picture-in-picture";
+            region
+        };
+        let cfg = crate::config::all().pop().expect("compositor config");
+        for from in presets {
+            for to in presets {
+                if from == to { continue; }
+                for frame in [SceneFrame::None, SceneFrame::Window, SceneFrame::Laptop] {
+                    for zoom in [1.0, 2.0] {
+                        let mut scene = zoomed_golden_scene();
+                        scene.effects.frame = frame;
+                        scene.zoom_regions[0].scale = zoom;
+                        let source = resolved(from, 0.0, 3.0);
+                        let mut target = resolved(to, 3.0, 10.0);
+                        target.from_layout = Some(source.layout.clone());
+                        target.from_preset = Some(from.to_owned());
+                        target.from_webcam_reactive_zoom = Some(source.webcam_reactive_zoom);
+                        target.transition_sec = 0.2;
+                        scene.layout_regions = vec![source, target];
+                        let sample = |t| {
+                            let mut input = golden_input(&scene, &cfg);
+                            input.render_px = [1920.0, 1080.0];
+                            input.timeline_t_override = Some(t);
+                            plan_frame(&input)
+                        };
+                        for edge in [3.0, 3.2] {
+                            let a = sample(edge - 0.00001);
+                            let b = sample(edge + 0.00001);
+                            let visible = |g: &FrameGeometry| {
+                                g.mask_flat_screen(g.s_dst, g.cut,
+                                    [g.s_dst[2] * 1920.0, g.s_dst[3] * 1080.0], g.s_radius, [1920.0, 1080.0])
+                            };
+                            let (ad, au, _, ar) = visible(&a);
+                            let (bd, bu, _, br) = visible(&b);
+                            for k in 0..4 {
+                                assert!((ad[k] - bd[k]).abs() < 0.0001,
+                                    "{from} → {to}, {frame:?}, zoom {zoom}, edge {edge}: footage jumped {ad:?} → {bd:?}");
+                                assert!((au[k] - bu[k]).abs() < 0.0001,
+                                    "{from} → {to}, edge {edge}: crop jumped {au:?} → {bu:?}");
+                                if a.w_dst[2].max(b.w_dst[2]) > 0.0001 {
+                                    assert!((a.w_dst[k] - b.w_dst[k]).abs() < 0.0001,
+                                        "{from} → {to}, edge {edge}: camera jumped");
+                                }
+                            }
+                            assert!((ar - br).abs() < 0.1, "{from} → {to}, edge {edge}: corners jumped {ar} → {br}");
+                            assert!((a.webcam_shadow - b.webcam_shadow).abs() < 0.0001,
+                                "{from} → {to}: camera shadow jumped");
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     /// La scène de référence du golden : un cas qui exerce le padding, le crop, le zoom,
     /// une caméra PiP décalée, un rayon et une inclinaison nulle.
@@ -8142,6 +8486,7 @@ mod tests {
     fn full_frame_geometry() -> FrameGeometry {
         FrameGeometry {
             scene_preset: None,
+            webcam_shadow: 1.0,
             mb_taps: 1.0,
             mb_amount: 0.0,
             source_t: 0.0,
@@ -9277,6 +9622,30 @@ mod tests {
         assert_eq!(fx(1.1 + crate::shader_fx::CLICK_WINDOW_S).clicks.len(), 1, "le premier est sorti");
         let drawn = plan_cursor(&fg, &cursor_input(&scene, &cfg, &track, 2.5)).expect("visible");
         assert_eq!(fx(2.5).cursor, Some(drawn.placement.upright_center()), "là où le curseur se dessine");
+    }
+
+    /// Le sprite plat aussi se pose sur le clic brut : à fort lissage, le ressort traîne loin derrière
+    /// une souris qui clique dès l'arrivée, mais la pointe dessinée, `ctx.cursor` et `ctx.clicks`
+    /// tombent sur le même pixel pendant le contact.
+    #[test]
+    fn the_flat_cursor_lands_on_the_click_under_smoothing() {
+        const TC: f32 = 1.5;
+        let scene = model_scene();
+        let cfg = crate::config::all().pop().expect("cfg");
+        let fg = full_frame_geometry();
+        let raw = approach_track([0.08, 0.05], [0.7, 0.6], [0.2, 0.9], 2.0, 0.0, TC);
+        for smoothing in [0.0, 0.3, 0.67, 1.0] {
+            let track = raw.smoothed(smoothing);
+            for ms in [0, 40, 100] {
+                let input = cursor_input(&scene, &cfg, &track, TC + ms as f32 / 1000.0);
+                let fx = effect_pointer(&fg, &input);
+                let (cursor, click) = (fx.cursor.expect("pointe"), fx.clicks[0].0);
+                let drawn = plan_cursor(&fg, &input).expect("visible").placement.upright_center();
+                let off = |a: [f32; 2], b: [f32; 2]| ((a[0] - b[0]) * 1920.0).hypot((a[1] - b[1]) * 1080.0);
+                assert!(off(cursor, click) < 0.5, "lissage {smoothing}, {ms} ms : {} px", off(cursor, click));
+                assert!(off(drawn, click) < 0.5, "lissage {smoothing}, {ms} ms : {} px", off(drawn, click));
+            }
+        }
     }
 
     /// Masqué par l'utilisateur, le curseur n'est plus dessiné, mais les effets gardent la pointe

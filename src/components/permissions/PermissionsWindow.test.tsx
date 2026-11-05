@@ -30,6 +30,7 @@ let api: { [K in keyof PermissionsApi]: ReturnType<typeof vi.fn> };
 beforeEach(() => {
 	current = { ...FIRST_RUN };
 	api = {
+		prepareRecording: vi.fn(async () => ({ ready: true as const })),
 		get: vi.fn(async () => current),
 		request: vi.fn(async () => undefined),
 		openSettings: vi.fn(async () => undefined),

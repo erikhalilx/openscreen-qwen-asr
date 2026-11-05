@@ -308,7 +308,8 @@
 			"right": "Derecha",
 			"bottomLeft": "Abajo a la izquierda",
 			"bottom": "Abajo",
-			"bottomRight": "Abajo a la derecha"
+			"bottomRight": "Abajo a la derecha",
+			"center": "Centro"
 		},
 		"selectPreset": "Seleccionar predefinido",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Fondo de la cámara",
 		"helpNoWebcam": "Este proyecto no tiene cámara, así que los controles de diseño están desactivados y el preajuste muestra «Sin cámara». Tu diseño guardado se conserva para cuando añadas una cámara.",
 		"title": "Disposición de cámara",
-		"noWebcam": "Sin cámara"
+		"noWebcam": "Sin cámara",
+		"cameraTrack": "Diseños de cámara",
+		"fullscreenLayout": "Pantalla completa",
+		"enableTrack": "Activar pista de diseños de cámara",
+		"hideSegment": "Ocultar cámara en este segmento",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Deslizar izquierda",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Efectos del ratón",
+		"mouseEffectsHint": "El tiempo y la posición distinguen clics simples y dobles. Ocultar el cursor no silencia el sonido.",
+		"noMouseClicks": "Esta grabación no contiene clics registrados.",
 		"systemSource": "Audio del sistema",
 		"microphoneSource": "Micrófono",
 		"outputGain": "Ajuste de salida",
 		"help": "Las voces se nivelan automáticamente a una sonoridad estándar. Ajusta el nivel de salida a partir de ahí; se aplica igual en la vista previa y en la exportación.",
 		"reset": "Restablecer audio",
-		"title": "Audio"
+		"title": "Audio",
+		"mouseSoundPreset": "Grupo de sonidos",
+		"mouseRealistic": "Realista",
+		"mouseBubble": "Burbuja"
 	},
 	"language": {
 		"title": "Idioma"

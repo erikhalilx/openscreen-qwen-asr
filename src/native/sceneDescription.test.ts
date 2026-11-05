@@ -1478,10 +1478,9 @@ describe("buildSceneDescription.settings mapping", () => {
 		vi.stubGlobal("fetch", async () => new Response(new Uint8Array([1])));
 		try {
 			await prepareClickSound(doc(true));
-			// A press and its release.
-			expect(buildSceneDescription(doc(true)).clickSound?.hits).toHaveLength(2);
-			// Its row is hidden with the cursor, like the click impact, so it must not keep sounding.
-			expect(buildSceneDescription(doc(false)).clickSound).toBeUndefined();
+			// One complete single sample; audio controls remain independent of cursor visibility.
+			expect(buildSceneDescription(doc(true)).clickSound?.hits).toHaveLength(1);
+			expect(buildSceneDescription(doc(false)).clickSound?.hits).toHaveLength(1);
 		} finally {
 			telemetry.mockRestore();
 			vi.unstubAllGlobals();
@@ -1692,7 +1691,7 @@ describe("buildSceneDescription.settings mapping", () => {
 		expect(cam!.x).toBeGreaterThan(screen!.x + screen!.width);
 		expect(cam!.height).toBeCloseTo(screen!.height, 3);
 		// The block layouts impose their corner radius on the screen too.
-		expect(scene.layout.screenRadiusFrac).toBeGreaterThan(0);
+		expect(scene.layout.screenRadiusFrac).toBeNull();
 	});
 
 	it("leaves screenRadiusFrac null for picture-in-picture, so the Roundness slider still drives it", () => {
@@ -1752,22 +1751,27 @@ describe("buildSceneDescription.settings mapping", () => {
 		expect(scene.layout.webcamRadiusFrac).toBeGreaterThan(0);
 	});
 
-	it("rounds both halves of a block alike — one radius, not two formulas", () => {
-		// The native side used to derive the camera's radius from its own table while the
-		// screen took the app's, so the welded block could never match itself. Both are
-		// fractions of their OWN box, and the block gives the two boxes different shapes,
-		// so equality has to be checked back in output pixels.
-		const scene = buildSceneDescription(
-			docWithCamera({ webcamLayoutPreset: "vertical-stack", webcamMaskShape: "circle" }),
+	it("keeps Composition screen roundness independent of the block camera", () => {
+		const a = buildSceneDescription(
+			docWithCamera({
+				webcamLayoutPreset: "vertical-stack",
+				webcamRoundness: 0.1,
+				borderRadius: 12,
+			}),
 		);
-		const px = (frac: number | null | undefined, box: { width: number; height: number } | null) =>
-			frac != null && box
-				? frac * Math.min(box.width * scene.output.width, box.height * scene.output.height)
-				: null;
-		expect(px(scene.layout.webcamRadiusFrac, scene.layout.webcamRect ?? null)).toBeCloseTo(
-			px(scene.layout.screenRadiusFrac, scene.layout.screenRect ?? null) ?? 0,
-			6,
+		const b = buildSceneDescription(
+			docWithCamera({
+				webcamLayoutPreset: "vertical-stack",
+				webcamRoundness: 0.9,
+				borderRadius: 48,
+			}),
 		);
+		expect(a.layout.screenRadiusFrac).toBeNull();
+		expect(b.layout.screenRadiusFrac).toBeNull();
+		expect(a.effects.roundnessFrac).toBeCloseTo(12 / 1080);
+		expect(b.effects.roundnessFrac).toBeCloseTo(48 / 1080);
+		expect(a.layout.webcamRadiusFrac).toBeCloseTo(0.05);
+		expect(b.layout.webcamRadiusFrac).toBeCloseTo(0.45);
 	});
 
 	it("still honours the shape and roundness under picture-in-picture", () => {
@@ -2845,6 +2849,35 @@ describe("buildSceneDescription.audioTracks", () => {
 		expect(entries[1]).toMatchObject({ startSec: 4, trimStartSec: 6, trimEndSec: 10 });
 	});
 
+	it("stops a piece where the next one starts when a speed region sits before the cut", () => {
+		// Issue #1283. A 2x region over raw 0..2 saves 1s, so the piece after the cut lands at
+		// output 3. Played whole at 1x, raw 0..4 ran to output 4: two pieces at once for 1s.
+		const doc = { ...cutDoc([voice]) };
+		doc.legacyEditor = { speedRegions: [{ id: "s", startMs: 0, endMs: 2000, speed: 2 }] };
+		const entries = buildSceneDescription(doc).audioTracks;
+		expect(entries.map((e) => [e.startSec, e.trimStartSec, e.trimEndSec])).toEqual([
+			[0, 0, 3],
+			[3, 6, 10],
+		]);
+	});
+
+	it("applies cuts added after recording to a plain voiceover track", () => {
+		const afterRecording = cutDoc([voice]);
+		const recordedWithoutCuts = {
+			...afterRecording,
+			timeline: { ...afterRecording.timeline, trimRanges: [] },
+		};
+
+		expect(recordedWithoutCuts.audioTracks[0]).not.toHaveProperty("recordingPlaybackMap");
+		expect(buildSceneDescription(recordedWithoutCuts).audioTracks).toMatchObject([
+			{ startSec: 0, trimStartSec: 0, trimEndSec: 10, kind: "voiceover" },
+		]);
+		expect(buildSceneDescription(afterRecording).audioTracks).toMatchObject([
+			{ startSec: 0, trimStartSec: 0, trimEndSec: 4, kind: "voiceover" },
+			{ startSec: 4, trimStartSec: 6, trimEndSec: 10, kind: "voiceover" },
+		]);
+	});
+
 	it("keeps the fades on the take's outer edges across a split", () => {
 		const entries = buildSceneDescription(
 			cutDoc([{ ...voice, fadeInMs: 500, fadeOutMs: 500 }]),
@@ -3061,6 +3094,52 @@ describe("buildSceneDescription.audioTracks", () => {
 		// Its head still moves onto the compressed clock: raw 4 is 1s into a 2x
 		// stretch that began at raw 2, so output 3.
 		expect(entry.startSec).toBeCloseTo(3, 6);
+	});
+
+	it("plays a bed spanning a slowed clip as one take, on the clock, not on the ruler", () => {
+		// The document stores a track as one fragment per clip it covers, each fragment's offset
+		// advanced by the ruler time before it. Mixed fragment by fragment, the bed under a 0.5x
+		// clip played its 4 ruler seconds of file over 8 output seconds, went silent for the other
+		// 4, then came back 4 seconds behind the music it should have been playing.
+		const screen = makeAsset({ id: "scr", originalPath: "/screen.mp4", durationSec: 20 });
+		const fragment = { ...track, trackId: "trk1", startMs: 0, offsetMs: 0, endMs: 4000 };
+		const doc = makeDoc({
+			assets: [screen, audioAsset],
+			clips: [
+				makeClip({
+					id: "c1",
+					assetId: "scr",
+					sourceStartSec: 0,
+					sourceEndSec: 4,
+					timelineStartSec: 0,
+					timelineEndSec: 4,
+				}),
+				makeClip({
+					id: "c2",
+					assetId: "scr",
+					sourceStartSec: 4,
+					sourceEndSec: 8,
+					timelineStartSec: 4,
+					timelineEndSec: 8,
+				}),
+			],
+			legacyEditor: { speedRegions: [{ id: "s1", startMs: 0, endMs: 4000, speed: 0.5 }] },
+			audioTracks: [
+				{ ...fragment, clipId: "c1", sourceStartSec: 0, sourceEndSec: 4 },
+				{
+					...fragment,
+					id: "trk1-b",
+					clipId: "c2",
+					sourceStartSec: 4,
+					sourceEndSec: 8,
+					startMs: 4000,
+					endMs: 8000,
+					offsetMs: 4000,
+				},
+			],
+		});
+		const entries = buildSceneDescription(doc).audioTracks;
+		expect(entries.map((e) => [e.startSec, e.trimStartSec, e.trimEndSec])).toEqual([[0, 0, 8]]);
 	});
 
 	it("drops a track whose asset has no resolvable path", () => {

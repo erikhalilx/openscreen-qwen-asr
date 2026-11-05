@@ -24,6 +24,15 @@
  * Accessibility has the same bool-only read, and the same note is kept for it.
  */
 
+export interface RecordingPermissionOptions {
+	microphone: boolean;
+	camera: boolean;
+	systemAudio: boolean;
+}
+export type RecordingPermissionResult =
+	| { ready: true }
+	| { ready: false; blocked: PermissionKind; requiresRelaunch?: boolean };
+
 export type PermissionKind = "screen" | "accessibility" | "microphone" | "camera" | "systemAudio";
 
 /**
@@ -285,8 +294,36 @@ export function createMacPermissions(deps: MacPermissionsDeps) {
 		}
 	}
 
+	/** Prepare only the enabled inputs before the timer. Granted media is never re-requested. */
+	async function prepareRecording(
+		options: RecordingPermissionOptions,
+	): Promise<RecordingPermissionResult> {
+		if (deps.platform !== "darwin") return { ready: true };
+		const snapshot = await read();
+		if (
+			snapshot.screenRequired &&
+			(snapshot.screen !== "granted" || snapshot.screenRequiresRelaunch)
+		) {
+			if (snapshot.screen === "not-requested") await request("screen");
+			return { ready: false, blocked: "screen", requiresRelaunch: snapshot.screenRequiresRelaunch };
+		}
+		for (const kind of ["microphone", "camera"] as const) {
+			if (!options[kind] || snapshot[kind] === "granted") continue;
+			if (snapshot[kind] !== "not-requested" || !(await deps.askForMedia(kind)))
+				return { ready: false, blocked: kind };
+		}
+		if (options.systemAudio && !snapshot.screenRequired) {
+			// A stored "requested" flag is not proof of consent. Opening the tap before every
+			// timer lets macOS finish any required consent here; an existing grant does not prompt.
+			deps.store.markRequested("systemAudio");
+			await deps.requestSystemAudio();
+		}
+		return { ready: true };
+	}
+
 	return {
 		read,
+		prepareRecording,
 		request,
 		openSettings,
 		noteRequested,

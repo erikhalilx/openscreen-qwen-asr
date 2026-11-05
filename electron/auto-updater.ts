@@ -8,6 +8,7 @@
 // bundle and come along. What does NOT come along is anything under userData — recordings,
 // projects, and the ~500 MB STT model — which is exactly what we want.
 
+import { spawnSync } from "node:child_process";
 import { app } from "electron";
 import type { InstallChannel } from "./install-channel";
 import { ownsItsUpdates } from "./install-channel";
@@ -22,6 +23,8 @@ export type UpdateOutcome =
  *  all" because these are transient — the answer changes as the user works. */
 export interface InstallReadiness {
 	recording: boolean;
+	/** A Windows handoff cannot wait on the editor's close prompt with input disabled. */
+	editorHasUnsavedChanges?: boolean;
 	/** macOS only. Gatekeeper runs a quarantined app from a read-only image (App Translocation),
 	 *  where Squirrel cannot replace the bundle; worse, an app can BECOME translocated after an
 	 *  update and then never update again. */
@@ -32,6 +35,7 @@ export interface InstallReadiness {
 /** Pure so the veto can be tested without an updater, a Mac, or a recording. */
 export function blockedFromInstalling(state: InstallReadiness): string | null {
 	if (state.recording) return "recording";
+	if (state.platform === "win32" && state.editorHasUnsavedChanges) return "unsaved-changes";
 	if (state.platform === "darwin" && !state.inApplicationsFolder) return "not-in-applications";
 	return null;
 }
@@ -82,11 +86,66 @@ export async function downloadSelfUpdate(): Promise<UpdateOutcome> {
 	}
 }
 
-/** Quit and hand over to the installer. Callers MUST have checked `blockedFromInstalling`. */
-export async function installSelfUpdate(): Promise<void> {
+/** Where electron-builder's NSIS installer records an install: `Software\<UUID v5 of appId>`,
+ *  under HKLM per machine and HKCU per user. auto-updater.test.ts pins it to the appId. */
+export const NSIS_INSTALL_KEY = "Software\\51112729-89fc-578d-88fd-c14841e67096";
+
+function nsisInstallStatus(hive: "HKLM" | "HKCU"): number | null {
+	const key = `${hive}\\${NSIS_INSTALL_KEY}`;
+	const args = ["query", key, "/v", "InstallLocation", "/reg:64"];
+	const { status } = spawnSync("reg", args, { windowsHide: true });
+	if (status !== 1) return status;
+	// reg's exit 1 means any failure, including access denied. Confirm absence by
+	// successfully enumerating the parent, without parsing localized error text.
+	const parent = spawnSync("reg", ["query", `${hive}\\Software`, "/reg:64"], {
+		windowsHide: true,
+		encoding: "utf8",
+		maxBuffer: 16 * 1024 * 1024,
+	});
+	if (parent.status !== 0) return null;
+	const root = hive === "HKLM" ? "HKEY_LOCAL_MACHINE" : "HKEY_CURRENT_USER";
+	const keys = parent.stdout.split(/\r?\n/).map((line) => line.trim().toLowerCase());
+	return keys.includes(`${root}\\${NSIS_INSTALL_KEY}`.toLowerCase()) ? null : 1;
+}
+
+function hasNsisInstall(hive: "HKLM" | "HKCU"): boolean {
+	// Status 1 is returned only after confirming absence. Any uncertain result counts
+	// as present, so this selector never treats an uncertain copy as absent. The installer
+	// coordinator below refuses failed queries rather than quitting with an unknown target.
+	return nsisInstallStatus(hive) !== 1;
+}
+
+/** Whether the installer can run with /S. Without it the assisted NSIS installer shows its whole
+ *  wizard (#1437). A silent upgrade of a per-machine install still elevates itself
+ *  (UAC_RunElevated in electron-builder's installer.nsi), so the user sees only UAC. But /S
+ *  always picks the per-machine copy when one exists, so with both a per-user and a per-machine
+ *  install it could update the copy that is not running: there, let the wizard ask. */
+export function installsSilently(
+	platform: NodeJS.Platform = process.platform,
+	hasInstall: (hive: "HKLM" | "HKCU") => boolean = hasNsisInstall,
+): boolean {
+	return platform !== "win32" || !(hasInstall("HKLM") && hasInstall("HKCU"));
+}
+
+/** Hand over to the installer. Callers MUST have checked `blockedFromInstalling`. */
+export async function installSelfUpdate(canInstall: () => boolean = () => true): Promise<void> {
 	const autoUpdater = await getUpdater();
-	// isSilent=false so a per-machine Windows install can show its elevation prompt: a silent
-	// upgrade of a Program Files install hits UAC and, if the user dismisses it, quits having
-	// done nothing. isForceRunAfter=true so the app comes back up.
-	autoUpdater.quitAndInstall(false, true);
+	let silent = true;
+	if (process.platform === "win32") {
+		const { installWindowsUpdate, assertWindowsUpdateIdle } = await import("./windows-update");
+		// A concurrent check must not fall back to quitting while another UAC is pending.
+		assertWindowsUpdateIdle();
+		const installed = { HKLM: nsisInstallStatus("HKLM"), HKCU: nsisInstallStatus("HKCU") };
+		if (Object.values(installed).some((status) => status !== 0 && status !== 1)) {
+			throw new Error("Could not confirm the Windows installation type. Please retry the update.");
+		}
+		silent = installsSilently("win32", (hive) => installed[hive] === 0);
+		if (silent && installed.HKLM === 0) {
+			await installWindowsUpdate(() => autoUpdater.downloadUpdate(), canInstall);
+			return;
+		}
+	}
+	if (!canInstall()) return;
+	// isForceRunAfter=true so the app comes back up.
+	autoUpdater.quitAndInstall(silent, true);
 }

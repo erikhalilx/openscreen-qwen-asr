@@ -298,6 +298,7 @@ export interface CursorVisualSettings {
 	clickImpact: boolean;
 	/** The same clicks, heard: each recorded click plays a short bundled hit. */
 	clickSound: boolean;
+	clickSoundPreset: "realistic" | "bubble";
 	/** The click sound's level in dB, on the same scale as an imported audio track's gain. */
 	clickSoundGainDb: number;
 	autoHide?: boolean;

@@ -11,6 +11,8 @@ import { ZOOM_DEPTH_SCALES } from "../../src/lib/ai-edition/timeline/zoom-scale"
 import { zoomScaleLimit } from "../../src/native/sceneDescription";
 import {
 	type AgentToolOptions,
+	addZoomArgs,
+	documentSnapshotForModel,
 	executeAgentTool,
 	isMutatingTool,
 	MUTATING_TOOL_NAMES,
@@ -196,6 +198,7 @@ describe("the mutating-tool table", () => {
 				"addAudio",
 				"addCameraFullscreen",
 				"addEffect",
+				"addLayoutChange",
 				"addSpeed",
 				"addTrim",
 				"addTrims",
@@ -205,6 +208,7 @@ describe("the mutating-tool table", () => {
 				"duplicateClip",
 				"insertClip",
 				"moveClip",
+				"moveLayoutBoundary",
 				"removeClip",
 				"removeModifier",
 				"removeTrim",
@@ -218,6 +222,7 @@ describe("the mutating-tool table", () => {
 				"setEffect",
 				"setEffectDefinition",
 				"setEditorSettings",
+				"setLayoutPreset",
 				"setSpeed",
 				"setTrim",
 				"setWordText",
@@ -241,6 +246,109 @@ describe("the mutating-tool table", () => {
 });
 
 describe("executeAgentTool", () => {
+	it("refuses layout edits that would not change the document", () => {
+		const doc = withCameraTrack(fixtureDocument());
+		const unchanged = executeAgentTool(
+			doc,
+			"addLayoutChange",
+			JSON.stringify({
+				timeSec: 0,
+				preset: "picture-in-picture",
+			}),
+		);
+		expect(unchanged.ok).toBe(false);
+		expect(unchanged.document).toBeUndefined();
+		expect(JSON.parse(unchanged.resultJson).error).toMatch(/nothing to change/i);
+
+		const added = executeAgentTool(
+			doc,
+			"addLayoutChange",
+			JSON.stringify({
+				timeSec: 5,
+				preset: "dual-frame",
+			}),
+		);
+		expect(added.ok).toBe(true);
+		const next = added.document as AxcutDocument;
+		const layoutId = next.layoutRegions?.find((r) => r.preset === "dual-frame")?.id;
+		expect(layoutId).toBeDefined();
+		const samePassage = executeAgentTool(
+			next,
+			"setLayoutPreset",
+			JSON.stringify({
+				layoutId,
+				preset: "dual-frame",
+			}),
+		);
+		expect(samePassage.ok).toBe(false);
+		expect(samePassage.document).toBeUndefined();
+		expect(JSON.parse(samePassage.resultJson).error).toMatch(/nothing to change/i);
+		const sameChange = executeAgentTool(
+			next,
+			"addLayoutChange",
+			JSON.stringify({
+				timeSec: 5,
+				preset: "dual-frame",
+			}),
+		);
+		expect(sameChange.ok).toBe(false);
+		expect(sameChange.document).toBeUndefined();
+	});
+
+	it("edits the same continuous layouts as the timeline and protects the first passage", () => {
+		const first = executeAgentTool(
+			withCameraTrack(fixtureDocument()),
+			"addLayoutChange",
+			JSON.stringify({ timeSec: 5, preset: "dual-frame" }),
+		);
+		expect(first.ok).toBe(true);
+		expect(first.document?.legacyEditor?.cameraFullscreenRegions).toBeUndefined();
+		const second = executeAgentTool(
+			first.document as AxcutDocument,
+			"addLayoutChange",
+			JSON.stringify({ timeSec: 10, preset: "no-webcam" }),
+		);
+		const segments = documentSnapshotForModel(second.document as AxcutDocument)
+			.layoutSegments as Array<{ id: string; startSec: number; endSec: number; preset: string }>;
+		expect(segments.slice(0, 2).map((r) => [r.startSec, r.endSec, r.preset])).toEqual([
+			[0, 5, "picture-in-picture"],
+			[5, 10, "dual-frame"],
+		]);
+		const moved = executeAgentTool(
+			second.document as AxcutDocument,
+			"moveLayoutBoundary",
+			JSON.stringify({ layoutId: segments[1].id, timeSec: 8 }),
+		);
+		expect(moved.ok).toBe(true);
+		const changed = executeAgentTool(
+			moved.document as AxcutDocument,
+			"setLayoutPreset",
+			JSON.stringify({ layoutId: segments[1].id, preset: "camera-only" }),
+		);
+		expect(changed.ok).toBe(true);
+		const updated = documentSnapshotForModel(changed.document as AxcutDocument)
+			.layoutSegments as typeof segments;
+		expect(updated[1]).toMatchObject({ startSec: 8, endSec: 10, preset: "camera-only" });
+		expect(
+			executeAgentTool(
+				changed.document as AxcutDocument,
+				"removeModifier",
+				JSON.stringify({ id: updated[0].id }),
+			).ok,
+		).toBe(false);
+		const removed = executeAgentTool(
+			changed.document as AxcutDocument,
+			"removeModifier",
+			JSON.stringify({ id: updated[1].id }),
+		);
+		expect(removed.ok).toBe(true);
+		expect(
+			(
+				documentSnapshotForModel(removed.document as AxcutDocument)
+					.layoutSegments as typeof segments
+			)[0],
+		).toMatchObject({ startSec: 0, endSec: 10, preset: "picture-in-picture" });
+	});
 	it("getCurrentDocument returns a compact snapshot with ids and times", () => {
 		const result = executeAgentTool(fixtureDocument(), "getCurrentDocument", "");
 		expect(result.ok).toBe(true);
@@ -772,6 +880,23 @@ describe("executeAgentTool", () => {
 		expect(() => documentSchema.parse(result.document)).not.toThrow();
 	});
 
+	it("MCP addAnnotation uses the highest saved layer after deletions", () => {
+		const initial = executeAgentTool(
+			fixtureDocument(),
+			"addAnnotation",
+			JSON.stringify({ startSec: 1, endSec: 2, text: "First" }),
+		);
+		const doc = initial.document as AxcutDocument;
+		doc.annotations[0].zIndex = 12;
+		const added = executeAgentTool(
+			doc,
+			"addAnnotation",
+			JSON.stringify({ startSec: 3, endSec: 4, text: "Next" }),
+		);
+		expect(added.ok).toBe(true);
+		expect(added.document?.annotations.map((a) => a.zIndex)).toEqual([12, 13]);
+	});
+
 	it("addAnnotation centres the text on a dark plate by default, and keeps it in frame", () => {
 		const centred = executeAgentTool(
 			fixtureDocument(),
@@ -919,7 +1044,7 @@ describe("executeAgentTool", () => {
 		}
 	});
 
-	it("refuses a set that would run into another region, instead of landing it elsewhere", () => {
+	it("allows overlapping annotations while refusing overlapping modifiers", () => {
 		let document = fixtureDocument();
 		const add = (name: string, args: Record<string, unknown>) => {
 			const result = executeAgentTool(document, name, JSON.stringify(args));
@@ -934,9 +1059,11 @@ describe("executeAgentTool", () => {
 			"setAnnotation",
 			JSON.stringify({ annotationId: firstId, startSec: 7, endSec: 9 }),
 		);
-		expect(blocked.ok).toBe(false);
-		expect(blocked.document).toBeUndefined();
-		expect(blocked.resultJson).toMatch(/NOT changed.*6\.0|NOT changed/);
+		expect(blocked.ok).toBe(true);
+		expect(blocked.document?.annotations.find((a) => a.id === firstId)).toMatchObject({
+			startMs: 7000,
+			endMs: 9000,
+		});
 
 		// The same rule for every kind of effect.
 		const zoom = add("addZoom", { startSec: 1, endSec: 2, depth: 2 });
@@ -999,10 +1126,7 @@ describe("executeAgentTool", () => {
 			JSON.stringify({ startSec: 9, endSec: 5 }),
 		);
 		expect(added.ok).toBe(true);
-		const legacy = added.document?.legacyEditor as Record<string, unknown>;
-		const region = (
-			legacy.cameraFullscreenRegions as Array<{ id: string; startMs: number; endMs: number }>
-		).at(-1);
+		const region = added.document?.layoutRegions?.find((r) => r.preset === "camera-only");
 		// bounds normalised (start ≤ end).
 		expect(region).toMatchObject({ startMs: 5000, endMs: 9000 });
 		expect(() => documentSchema.parse(added.document)).not.toThrow();
@@ -1010,7 +1134,9 @@ describe("executeAgentTool", () => {
 		const snapshot = JSON.parse(
 			executeAgentTool(added.document as AxcutDocument, "getCurrentDocument", "").resultJson,
 		);
-		expect(snapshot.cameraFullscreenRegions[0]).toMatchObject({ startSec: 5, endSec: 9 });
+		expect(
+			snapshot.layoutSegments.find((r: { preset: string }) => r.preset === "camera-only"),
+		).toMatchObject({ startSec: 5, endSec: 9 });
 		expect(snapshot.timeBaseNote).toMatch(/cameraFullscreen/i);
 
 		const moved = executeAgentTool(
@@ -1019,12 +1145,7 @@ describe("executeAgentTool", () => {
 			JSON.stringify({ cameraFullscreenId: region?.id, startSec: 1, endSec: 2 }),
 		);
 		expect(moved.ok).toBe(true);
-		const movedRegion = (
-			(moved.document?.legacyEditor as Record<string, unknown>).cameraFullscreenRegions as Array<{
-				startMs: number;
-				endMs: number;
-			}>
-		)[0];
+		const movedRegion = moved.document?.layoutRegions?.find((r) => r.preset === "camera-only");
 		expect(movedRegion).toMatchObject({ startMs: 1000, endMs: 2000 });
 		expect(
 			executeAgentTool(
@@ -1430,8 +1551,9 @@ describe("a full-camera region needs a camera", () => {
 			JSON.stringify({ startSec: 0, endSec: 5 }),
 		);
 		expect(result.ok).toBe(true);
-		const legacy = result.document?.legacyEditor as Record<string, unknown>;
-		expect(legacy.cameraFullscreenRegions).toHaveLength(1);
+		expect(result.document?.layoutRegions?.filter((r) => r.preset === "camera-only")).toHaveLength(
+			1,
+		);
 	});
 
 	it("refuses to MOVE a region onto footage with no webcam", () => {
@@ -1463,11 +1585,7 @@ describe("a full-camera region needs a camera", () => {
 			JSON.stringify({ startSec: 0, endSec: 5 }),
 		);
 		expect(added.ok).toBe(true);
-		const regionId = (
-			(added.document?.legacyEditor as Record<string, unknown>).cameraFullscreenRegions as Array<{
-				id: string;
-			}>
-		)[0].id;
+		const regionId = added.document?.layoutRegions?.find((r) => r.preset === "camera-only")?.id;
 		const moved = executeAgentTool(
 			added.document as AxcutDocument,
 			"setCameraFullscreen",
@@ -3404,6 +3522,23 @@ describe("region tools reach the inspector's settings (#1180)", () => {
 			customScale: 2,
 		});
 		expect(both.ok).toBe(false);
+	});
+
+	it("takes customScale alone wherever the arguments were parsed first", () => {
+		// The MCP server and the in-app agent hand the tool its arguments through the same schema,
+		// and addZooms hands each region to addZoom parsed. A default depth filled in there read as
+		// "depth and customScale both passed", so a free level could never be set in one call.
+		const zoomOnly = { startSec: 2, endSec: 4, customScale: 1.6 };
+		const parsed = run(fixtureDocument(), "addZoom", addZoomArgs.parse(zoomOnly));
+		expect(parsed.ok).toBe(true);
+		expect(parsed.document?.zoomRanges[0]).toMatchObject({ customScale: 1.6 });
+		const batch = run(fixtureDocument(), "addZooms", { regions: [zoomOnly] });
+		expect(batch.ok).toBe(true);
+		expect(batch.document?.zoomRanges[0]).toMatchObject({ customScale: 1.6 });
+		// Neither level given: the default depth still applies.
+		const plain = run(fixtureDocument(), "addZoom", addZoomArgs.parse({ startSec: 2, endSec: 4 }));
+		expect(plain.document?.zoomRanges[0]).toMatchObject({ depth: 3 });
+		expect(plain.document?.zoomRanges[0]).not.toHaveProperty("customScale");
 	});
 
 	it("reads an annotation back in the terms its writes take", () => {

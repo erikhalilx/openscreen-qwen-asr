@@ -308,7 +308,8 @@
 			"right": "Rechts",
 			"bottomLeft": "Unten links",
 			"bottom": "Unten",
-			"bottomRight": "Unten rechts"
+			"bottomRight": "Unten rechts",
+			"center": "Mitte"
 		},
 		"selectPreset": "Vorgabe auswählen",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Kamera-Hintergrund",
 		"helpNoWebcam": "Dieses Projekt hat keine Kamera, deshalb sind die Layout-Regler aus und die Vorgabe zeigt „Keine Webcam“. Dein gespeichertes Layout bleibt erhalten, falls später eine Kamera dazukommt.",
 		"title": "Kamera-Layout",
-		"noWebcam": "Keine Webcam"
+		"noWebcam": "Keine Webcam",
+		"cameraTrack": "Kamera-Layouts",
+		"fullscreenLayout": "Vollbild",
+		"enableTrack": "Kamera-Layoutspur aktivieren",
+		"hideSegment": "Kamera in diesem Abschnitt ausblenden",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Nach links schieben",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Mausklick-Effekte",
+		"mouseEffectsHint": "Zeit und Position bestimmen Einzel- oder Doppelklick. Ausblenden des Zeigers schaltet den Ton nicht stumm.",
+		"noMouseClicks": "Diese Aufnahme enthält keine erfassten Klicks.",
 		"systemSource": "Systemaudio",
 		"microphoneSource": "Mikrofon",
 		"outputGain": "Ausgangspegel",
 		"help": "Stimmen werden automatisch auf eine Standardlautheit gebracht. Passe den Ausgangspegel davon ausgehend an; er gilt in der Vorschau und im Export identisch.",
 		"reset": "Audio zurücksetzen",
-		"title": "Audio"
+		"title": "Audio",
+		"mouseSoundPreset": "Klangset",
+		"mouseRealistic": "Realistisch",
+		"mouseBubble": "Blase"
 	},
 	"language": {
 		"title": "Sprache"

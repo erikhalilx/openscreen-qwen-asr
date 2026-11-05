@@ -1,10 +1,15 @@
+import { openSourceProject } from "../lib/ai-edition/document/sourceProject";
 // Browser-mode shim: when running in a plain browser (no Electron shell), provide
 // stubs for window.electronAPI + nativeBridgeClient so the renderer renders.
 // The dev server at http://localhost:5173 can be opened in Chrome/Firefox for
 // rapid iteration without the Electron window overhead.
 
 import { PROVIDER_DEFINITIONS } from "../../electron/ai-edition/provider-registry";
-import { axcutSchemaVersion, migrateRawDocumentToCurrent } from "../lib/ai-edition/schema";
+import {
+	axcutSchemaVersion,
+	documentSchema,
+	migrateRawDocumentToCurrent,
+} from "../lib/ai-edition/schema";
 import {
 	compareStylePresets,
 	FACTORY_STYLE_PRESET_ID,
@@ -172,6 +177,9 @@ function createShimElectronAPI() {
 		showAbout: () => Promise.resolve(),
 		// No installer in browser mode, so nothing may ever be checked.
 		canCheckForUpdatesNow: () => Promise.resolve(false),
+		getUpdateBadge: () => Promise.resolve(null),
+		onUpdateBadgeChanged: () => () => undefined,
+		applyUpdate: () => Promise.resolve(),
 		getSources: () => Promise.resolve(SHIM_SOURCES),
 		selectSource: (source: ShimDesktopSource, options?: { persist?: boolean }) => {
 			shimSelectedSource = source;
@@ -185,6 +193,7 @@ function createShimElectronAPI() {
 			return () => shimSelectedSourceListeners.delete(callback);
 		},
 		getRecordingPrefs: () => Promise.resolve(shimRecordingPrefs),
+		setRecordingState: () => Promise.resolve({ success: true as const }),
 		setRecordingPrefs: (patch: Partial<ShimRecordingPrefs>) => {
 			const next = { ...shimRecordingPrefs, ...patch };
 			try {
@@ -490,7 +499,11 @@ function createShimBridgeClient() {
 				// ponytail: load-time migration. Older shims persisted v3 documents
 				// in localStorage; the renderer's `documentSchema.parse` now requires
 				// v5, so upgrade on read (idempotent for v5 inputs).
-				const migrated = doc ? (migrateRawDocumentToCurrent(doc) as ShimDocument) : null;
+				const migrated = doc
+					? (openSourceProject(
+							documentSchema.parse(migrateRawDocumentToCurrent(doc)),
+						) as ShimDocument)
+					: null;
 				return Promise.resolve(
 					migrated
 						? { success: true, document: migrated }
@@ -504,6 +517,7 @@ function createShimBridgeClient() {
 					// the returned document. Must never be a literal: this value has to
 					// track `axcutSchemaVersion` on every schema bump.
 					schemaVersion: axcutSchemaVersion,
+					studioVersion: 3,
 					project: {
 						id: `proj_${Math.random().toString(36).slice(2, 10)}`,
 						title: title || "Untitled Project",
@@ -664,6 +678,8 @@ function createShimBridgeClient() {
 				persistChat();
 				return Promise.resolve({ success: true, assistantMessage });
 			},
+			chatCancel: (_projectId: string, _sessionId: string, _runId: string) =>
+				Promise.resolve({ accepted: false }),
 			chatUndoLastBatch: () =>
 				Promise.resolve({
 					success: false,

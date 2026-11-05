@@ -2,12 +2,12 @@
 	"buttons": {
 		"addZoom": "現在の再生位置にズームを追加",
 		"autoFocusAll": "すべてのズームでオートフォーカス",
-		"autoFocusAllTip": "すべてのズームがカーソルを追従します。オフ：ズームごとにフォーカスを選べます。",
+		"autoFocusAllTip": "すべてのズームがカーソルに追従します。オフ：ズームごとにフォーカスを選べます。",
 		"clearTimeline": "すべてのズーム、トリム、再生速度、注釈、フルスクリーンカメラを削除します。クリップ、音声、字幕は残ります。",
 		"addTrim": "トリムを追加：現在の再生位置で動画の一部を削除します",
 		"addAnnotation": "現在の再生位置にテキスト、矢印、画像、ぼかしを追加",
 		"addSpeed": "現在の再生位置に再生速度の変更を追加",
-		"addCameraFullscreen": "フルスクリーンカメラを追加：現在の再生位置でカメラを全画面表示します"
+		"addCameraFullscreen": "ここでレイアウトを変更"
 	},
 	"hints": {
 		"pressZoom": "{{key}}キーを押してズームを追加",
@@ -79,7 +79,7 @@
 		"arrangeClips": "クリップを配置",
 		"arrangeClipsHint": "下のクリップをドラッグして並べ替えるか、新しいクリップをドロップします",
 		"newAnnotation": "注釈",
-		"dragToReorderHint": "ドラッグで並べ替え。ダブルクリックで開始と終了を変更。",
+		"dragToReorderHint": "ドラッグで並べ替え。ダブルクリックで開始位置と終了位置を変更。",
 		"editInOutPoints": "イン/アウトポイントを編集",
 		"deleteClip": "クリップを削除",
 		"dropToAdd": "ドロップしてタイムラインに追加",
@@ -112,5 +112,24 @@
 		"recordingUnavailable": "ここでは録音できません",
 		"saveFailed": "録音を保存できませんでした",
 		"importFailed": "音声ファイルを読み込めませんでした"
+	},
+	"tracks": {
+		"annotation": "注釈レイヤー {{index}}",
+		"dragHint": "左右にドラッグして時間を移動します。上下にドラッグしてレイヤーを変更します。上のレイヤーが手前に表示されます。"
+	},
+	"layouts": {
+		"title": "レイアウト",
+		"changeHere": "ここでレイアウトを変更",
+		"wholeVideo": "動画全体",
+		"sharedSettings": "ウェブカメラ設定 · 動画全体",
+		"fromUntil": "{{start}} から {{end}} まで",
+		"noCamera": "この区間にウェブカメラはありません。画面のみ表示します。",
+		"removeChange": "この変更を削除",
+		"moveBoundary": "{{time}} の変更位置を移動",
+		"picture-in-picture": "ピクチャーインピクチャ",
+		"dual-frame": "左右に並べる",
+		"vertical-stack": "上下に並べる",
+		"camera-only": "カメラのみ",
+		"no-webcam": "画面のみ"
 	}
 }

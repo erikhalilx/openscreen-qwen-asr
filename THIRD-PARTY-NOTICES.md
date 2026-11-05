@@ -250,18 +250,14 @@ generated at build time and shipped beside this file.
 - **Apache-2.0 OR GPL-2.0-only** (1): self_cell 1.3.0.
 - **(MIT OR Apache-2.0) AND Unicode-3.0** (1): unicode-ident 1.0.24.
 
-## Kenney UI Audio — click sounds
+## Synthesized mouse sounds / 合成鼠标音效
 
-- **Components**: `sounds/click-down.wav` and `sounds/click-up.wav`, inside the
-  application bundle.
-- **Used by**: the editor's "Mouse clicks" option, which plays them on each
-  recorded click, in the preview and in the export.
-- **License**: **CC0 1.0 Universal** —
-  <https://creativecommons.org/publicdomain/zero/1.0/>, as the licence file
-  shipped in the pack states. Credit is not required; it is given here anyway.
-- **Upstream**: "UI Audio" by Kenney, <https://kenney.nl/assets/ui-audio>.
-  `click-down.wav` is its `click3.wav` and `click-up.wav` its `switch12.wav`,
-  both trimmed of leading silence and normalised to a 0.7 peak.
+The four `sounds/mouse-realistic-*.wav` and `sounds/mouse-bubble-*.wav` assets
+were synthesized for this release from decaying oscillators and seeded noise.
+They are covered by the repository's [MIT license](LICENSE).
+
+上述四个鼠标音效由衰减振荡波与固定种子的噪声合成，按本仓库的
+[MIT 许可证](LICENSE) 分发。
 
 ## OpenScreen native helpers
 

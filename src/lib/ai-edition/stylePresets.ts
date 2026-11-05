@@ -345,6 +345,10 @@ export function parseStylePresetAppearance(value: unknown): StylePresetAppearanc
 			// Same for the sound: a preset written before it existed stays silent.
 			clickSound:
 				cursor.clickSound === undefined ? false : readBoolean(cursor, "clickSound", "cursor."),
+			clickSoundPreset:
+				cursor.clickSoundPreset === undefined
+					? "realistic"
+					: readEnum(cursor, "clickSoundPreset", ["realistic", "bubble"] as const),
 			// And one written before the level existed plays at the level the samples were cut for.
 			clickSoundGainDb:
 				cursor.clickSoundGainDb === undefined

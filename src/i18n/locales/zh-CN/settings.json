@@ -308,7 +308,8 @@
 			"right": "右侧",
 			"bottomLeft": "左下",
 			"bottom": "下方",
-			"bottomRight": "右下"
+			"bottomRight": "右下",
+			"center": "居中"
 		},
 		"selectPreset": "选择预设",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "摄像头背景",
 		"helpNoWebcam": "此项目没有摄像头，因此布局控件已禁用，预设显示为“无摄像头”。你保存的布局会保留，以便添加摄像头后使用。",
 		"title": "摄像头布局",
-		"noWebcam": "无摄像头"
+		"noWebcam": "无摄像头",
+		"cameraTrack": "摄像头布局",
+		"fullscreenLayout": "摄像头全屏",
+		"enableTrack": "启用摄像头布局轨道",
+		"hideSegment": "隐藏此段摄像头",
+		"segmentHelp": "仅调整当前段落。相邻段落平滑切换；轨道空白区隐藏摄像头画面，音频保留。",
+		"trackHelp": "在下方摄像头轨道编排布局，选中段落可独立调整。轨道空白区隐藏摄像头画面，音频保留。",
+		"newSegmentDefaults": "以下为新建摄像头段落的默认样式",
+		"connectedStart": "与上一摄像头段落相接",
+		"connectedEnd": "与下一摄像头段落相接"
 	},
 	"textAnimation": {
 		"slideLeft": "向左滑动",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "鼠标音效",
+		"mouseEffectsHint": "按录制中的点击时间和位置区分单击、双击，分别播放对应音效；隐藏光标不影响声音。",
+		"noMouseClicks": "此录屏没有可用的点击记录，无法添加鼠标音效。",
 		"systemSource": "系统音频",
 		"microphoneSource": "麦克风",
 		"outputGain": "输出电平",
 		"help": "人声会自动统一到标准响度。在此基础上调整输出电平；它在预览和导出中的效果完全一致。",
 		"reset": "重置音频",
-		"title": "音频"
+		"title": "音频",
+		"mouseSoundPreset": "音效风格",
+		"mouseRealistic": "写实",
+		"mouseBubble": "气泡"
 	},
 	"language": {
 		"title": "语言"

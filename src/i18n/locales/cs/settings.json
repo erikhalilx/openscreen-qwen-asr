@@ -308,7 +308,8 @@
 			"right": "Vpravo",
 			"bottomLeft": "Vlevo dole",
 			"bottom": "Dole",
-			"bottomRight": "Vpravo dole"
+			"bottomRight": "Vpravo dole",
+			"center": "Střed"
 		},
 		"selectPreset": "Vybrat předvolbu",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Pozadí kamery",
 		"helpNoWebcam": "Tento projekt nemá kameru, takže ovládání rozvržení je vypnuto a předvolba zobrazuje „Bez webkamery”. Vaše uložené rozvržení je zachováno pro případ přidání kamery.",
 		"title": "Rozvržení kamery",
-		"noWebcam": "Bez webkamery"
+		"noWebcam": "Bez webkamery",
+		"cameraTrack": "Rozložení kamery",
+		"fullscreenLayout": "Celá obrazovka",
+		"enableTrack": "Zapnout stopu rozložení kamery",
+		"hideSegment": "Skrýt kameru v tomto úseku",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Posun doleva",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Zvuky myši",
+		"mouseEffectsHint": "Čas a poloha kliknutí určují jednoduchý či dvojitý zvuk. Skrytí kurzoru zvuk nevypne.",
+		"noMouseClicks": "Tento záznam neobsahuje zachycená kliknutí.",
 		"systemSource": "Zvuk systému",
 		"microphoneSource": "Mikrofon",
 		"outputGain": "Výstupní úroveň",
 		"help": "Hlas se automaticky vyrovná na standardní hlasitost. Výstupní úroveň upravte od ní; aplikuje se stejně v náhledu i při exportu.",
 		"reset": "Obnovit zvuk",
-		"title": "Zvuk"
+		"title": "Zvuk",
+		"mouseSoundPreset": "Sada zvuků",
+		"mouseRealistic": "Realistické",
+		"mouseBubble": "Bublina"
 	},
 	"language": {
 		"title": "Jazyk"

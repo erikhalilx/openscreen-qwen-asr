@@ -308,7 +308,8 @@
 			"right": "Direita",
 			"bottomLeft": "Inferior esquerdo",
 			"bottom": "Inferior",
-			"bottomRight": "Inferior direito"
+			"bottomRight": "Inferior direito",
+			"center": "Centro"
 		},
 		"selectPreset": "Selecionar predefinição",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Plano de fundo da câmera",
 		"helpNoWebcam": "Este projeto não tem câmera, então os controles de layout estão desativados e a predefinição mostra “Sem Webcam”. Seu layout salvo é mantido para quando você adicionar uma câmera.",
 		"title": "Layout da câmera",
-		"noWebcam": "Sem Webcam"
+		"noWebcam": "Sem Webcam",
+		"cameraTrack": "Layouts da câmera",
+		"fullscreenLayout": "Tela cheia",
+		"enableTrack": "Ativar faixa de layouts da câmera",
+		"hideSegment": "Ocultar câmera neste segmento",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Deslizar à Esquerda",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Efeitos do mouse",
+		"mouseEffectsHint": "O tempo e a posição distinguem cliques simples e duplos. Ocultar o cursor não silencia o som.",
+		"noMouseClicks": "Esta gravação não contém cliques capturados.",
 		"systemSource": "Áudio do sistema",
 		"microphoneSource": "Microfone",
 		"outputGain": "Nível de saída",
 		"help": "As vozes são niveladas automaticamente a uma loudness padrão. Ajuste o nível de saída a partir daí; ele se aplica da mesma forma na prévia e na exportação.",
 		"reset": "Redefinir áudio",
-		"title": "Áudio"
+		"title": "Áudio",
+		"mouseSoundPreset": "Conjunto de sons",
+		"mouseRealistic": "Realista",
+		"mouseBubble": "Bolha"
 	},
 	"language": {
 		"title": "Idioma"

@@ -29,7 +29,11 @@ vi.mock("@/contexts/I18nContext", () => ({
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { EditorDialogsProvider } from "@/contexts/EditorDialogsContext";
 import { AUDIO_ROW_EXPANSION_PX } from "@/lib/ai-edition/document/audioTracks";
-import { createAudioTrack, createEmptyDocument } from "@/lib/ai-edition/schema";
+import {
+	annotationRegionSchema,
+	createAudioTrack,
+	createEmptyDocument,
+} from "@/lib/ai-edition/schema";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import {
 	DEFAULT_TIMELINE_HEIGHT_PX,
@@ -234,5 +238,99 @@ describe("NewEditorShell timeline height", () => {
 		});
 
 		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${DEFAULT_TIMELINE_HEIGHT_PX}px`);
+	});
+
+	it("expands for overlapping annotation rows, caps the panel height and restores the saved base height", () => {
+		useProjectStore.getState().clear();
+		const { container } = renderShell();
+		const root = container.firstElementChild as HTMLElement;
+		const doc = createEmptyDocument({ projectId: "p", title: "t" });
+		doc.annotations = Array.from({ length: 8 }, (_, i) =>
+			annotationRegionSchema.parse({
+				id: `ann-${i}`,
+				startMs: 0,
+				endMs: 5000,
+				type: "text",
+				content: "Hello",
+				zIndex: i,
+				position: { x: 20, y: 20 },
+				size: { width: 30, height: 20 },
+				style: { color: "#ffffff", fontSize: 32, fontFamily: "Inter" },
+			}),
+		);
+		act(() => {
+			useProjectStore.setState({ document: { ...doc, annotations: doc.annotations.slice(0, 2) } });
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${DEFAULT_TIMELINE_HEIGHT_PX + 27}px`);
+		act(() => {
+			useProjectStore.setState({ document: doc });
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${MAX_TIMELINE_HEIGHT_PX}px`);
+		act(() => {
+			useProjectStore.setState({
+				document: {
+					...doc,
+					annotations: doc.annotations.map((ann, i) => ({
+						...ann,
+						startMs: i * 1000,
+						endMs: (i + 1) * 1000,
+					})),
+				},
+			});
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${DEFAULT_TIMELINE_HEIGHT_PX}px`);
+
+		act(() => {
+			useProjectStore.setState({ document: { ...doc, annotations: [] } });
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${DEFAULT_TIMELINE_HEIGHT_PX}px`);
+	});
+
+	it.each([
+		{ rowCount: 10, deltaY: 0, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 10, deltaY: -1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 10, deltaY: 1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX - 1 },
+		{ rowCount: 16, deltaY: 0, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 16, deltaY: -1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX },
+		{ rowCount: 16, deltaY: 1, expectedBase: DEFAULT_TIMELINE_HEIGHT_PX - 1 },
+	])("preserves the base after a $deltaY px resize with $rowCount capped annotation rows", async ({
+		rowCount,
+		deltaY,
+		expectedBase,
+	}) => {
+		useProjectStore.getState().clear();
+		const doc = createEmptyDocument({ projectId: "p", title: "t" });
+		doc.annotations = Array.from({ length: rowCount }, (_, i) =>
+			annotationRegionSchema.parse({
+				id: `ann-${i}`,
+				startMs: 0,
+				endMs: 5000,
+				type: "text",
+				content: "Hello",
+				zIndex: i,
+				position: { x: 20, y: 20 },
+				size: { width: 30, height: 20 },
+				style: { color: "#ffffff", fontSize: 32, fontFamily: "Inter" },
+			}),
+		);
+		useProjectStore.setState({ document: doc });
+		const { container } = renderShell();
+		const root = container.firstElementChild as HTMLElement;
+		const handle = container.querySelector(
+			'[role="separator"][aria-orientation="horizontal"]',
+		) as HTMLElement;
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${MAX_TIMELINE_HEIGHT_PX}px`);
+
+		await act(async () => {
+			fireEvent.pointerDown(handle, { clientY: 400 });
+			fireEvent.pointerMove(window, { clientY: 400 + deltaY });
+			fireEvent.pointerUp(window);
+		});
+		expect(localStorage.getItem("os-editor-timeline-height")).toBe(String(expectedBase));
+
+		await act(async () => {
+			useProjectStore.setState({ document: { ...doc, annotations: [] } });
+		});
+		expect(root.style.gridTemplateRows).toBe(`58px 1fr ${expectedBase}px`);
 	});
 });

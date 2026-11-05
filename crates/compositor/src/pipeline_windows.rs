@@ -13,7 +13,7 @@ use crate::config::Cfg;
 use crate::cpu_frames::CpuFrames;
 use crate::cursor::CursorTrack;
 use crate::d3d::{Backend, Gpu};
-use crate::export_control::{with_staged_output, ExportControl};
+use crate::export_control::{with_validated_mp4_output, ExportControl};
 use crate::ffi::*;
 use crate::regions::{speed_segments_for_window, SpeedSegment};
 use crate::scene::Scene;
@@ -188,6 +188,7 @@ const AVSEEK_FLAG_BACKWARD: i32 = 1; // seek vers la keyframe <= ts (macro non g
 extern "C" {
     fn sn_fmt_stream(s: *mut AVFormatContext, i: i32) -> *mut AVStream;
     fn sn_fmt_nb_streams(s: *mut AVFormatContext) -> u32;
+    fn sn_fmt_duration(s: *mut AVFormatContext) -> i64;
     fn sn_fmt_get_pb(s: *mut AVFormatContext) -> *mut AVIOContext;
     fn sn_fmt_set_pb(s: *mut AVFormatContext, p: *mut AVIOContext);
 }
@@ -1046,9 +1047,18 @@ impl Decoder {
         if r.den != 0 && r.num != 0 { r.num as f64 / r.den as f64 } else { 30.0 }
     }
 
-    /// Durée réellement annoncée par le flux vidéo. La durée du stream est prioritaire ;
-    /// `nb_frames / fps` sert de repli pour les conteneurs qui omettent `duration`.
+    /// Durée disponible de la source : le plus long du flux vidéo et du conteneur (cf.
+    /// `cover_container_duration`).
     pub(crate) unsafe fn available_duration_sec(&self) -> Option<f64> {
+        crate::timeline_walk::cover_container_duration(
+            self.video_stream_duration_sec(),
+            sn_fmt_duration(self.fmt),
+        )
+    }
+
+    /// Durée annoncée par le seul flux vidéo. La durée du stream est prioritaire ;
+    /// `nb_frames / fps` sert de repli pour les conteneurs qui omettent `duration`.
+    unsafe fn video_stream_duration_sec(&self) -> Option<f64> {
         let stream = sn_fmt_stream(self.fmt, self.vidx);
         let duration = (*stream).duration;
         let tb_sec = self.tb_sec();
@@ -1343,7 +1353,7 @@ pub fn run_composited_multi_cancellable(
     progress: &mut dyn FnMut(u64),
     control: &ExportControl,
 ) -> Result<Stats> {
-    with_staged_output(Path::new(out), control, |file, staged| {
+    with_validated_mp4_output(Path::new(out), control, |file, staged| {
         drop(file); // ffmpeg le rouvre par son nom
         unsafe {
             run_multi_inner(clips, &staged.to_string_lossy(), gpu, comp, cfg, params, progress, control)
@@ -1543,6 +1553,8 @@ impl VideoEncoder {
         // d'ajouter n'émettent pas d'extradata sans ce drapeau, et personne ici n'a de machine
         // pour constater le MP4 bancal qui en sortirait.
         (*ctx).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as i32;
+        // `rgb2y` / `rgb2uv` de `shaders.hlsl` : BT.709 limité.
+        crate::ffi::tag_export_color(ctx, AVColorSpace::AVCOL_SPC_BT709);
         if pix_fmt == AVPixelFormat::AV_PIX_FMT_D3D11 {
             (*ctx).hw_frames_ctx = av_buffer_ref(hw_frames);
         }
@@ -1680,6 +1692,8 @@ impl Default for ExportParams {
 }
 
 
+/// Encode and close the staged MP4. The caller must validate a displayable
+/// decoded frame before publishing it; returned stats count composed frames.
 unsafe fn run_multi_inner(
     clips: &[ClipSource],
     out: &str,
@@ -1875,7 +1889,7 @@ unsafe fn run_multi_inner(
     let wall_s = t0.elapsed().as_secs_f64();
 
     // teardown : les gardes et les Drop (décodeurs, encodeurs) en fin de portée — fichier fermé
-    // avant que `with_staged_output` ne le renomme.
+    // avant que `with_validated_mp4_output` ne le renomme.
     let fps = frames as f64 / wall_s;
     Ok(Stats { frames, wall_s, fps, video_duration_s: frames as f64 / out_fps as f64 })
 }
@@ -1993,6 +2007,40 @@ mod tests {
         match decode_frame_n(path.to_str().expect("utf8 path"), gpu, n) {
             Ok(_) => panic!("decode_frame_n unexpectedly succeeded"),
             Err(error) => error,
+        }
+    }
+
+    /// Le MP4 dit sa matrice : BT.709, celle de `shaders.hlsl`. Sans étiquette ffmpeg
+    /// suppose BT.601 et décale les couleurs saturées. Sans pool D3D11 c'est un candidat
+    /// en mémoire système qui ouvre, par le même `try_open` que l'export.
+    #[test]
+    fn export_encoder_tags_its_colour() {
+        let opened = unsafe {
+            VideoEncoder::open(&ExportCodec::H264, 320, 180, 30, 1_000_000, ptr::null_mut())
+        };
+        let Ok(enc) = opened else {
+            eprintln!("aucun encodeur H.264 en mémoire système ici, test sauté");
+            return;
+        };
+        unsafe {
+            let mut par = avcodec_parameters_alloc();
+            avcodec_parameters_from_context(par, enc.ctx);
+            let color = (
+                (*par).color_primaries,
+                (*par).color_trc,
+                (*par).color_space,
+                (*par).color_range,
+            );
+            avcodec_parameters_free(&mut par);
+            assert_eq!(
+                color,
+                (
+                    AVColorPrimaries::AVCOL_PRI_BT709,
+                    AVColorTransferCharacteristic::AVCOL_TRC_BT709,
+                    AVColorSpace::AVCOL_SPC_BT709,
+                    AVColorRange::AVCOL_RANGE_MPEG,
+                )
+            );
         }
     }
 

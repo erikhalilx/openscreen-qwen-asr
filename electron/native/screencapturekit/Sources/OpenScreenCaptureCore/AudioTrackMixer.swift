@@ -86,6 +86,10 @@ public final class AudioTrackMixer {
 		/// jitter never trips it, and the file is written offline, so the latency it costs at a
 		/// transition into silence costs the recording nothing.
 		static let emissionGraceFrames = sampleRate / 4
+		/// A gap between two passes of the sample queue longer than this means the queue itself
+		/// was blocked, not that the sources went quiet. The ticker fires every 10 ms, so ten
+		/// times that is never ordinary scheduling jitter. See `discountQueueStall(until:)`.
+		static let queueStallFrames = sampleRate / 10
 		/// Longest hole a source may silence-pad across. Past this the source has been dead long
 		/// enough that padding would materialize however long the outage lasted — the cursor
 		/// carries the track across the gap instead.
@@ -122,6 +126,8 @@ public final class AudioTrackMixer {
 	private var deliveredThroughFrame = [Int64?](repeating: nil, count: Source.allCases.count)
 	private var undeliveredFrames = [Int64](repeating: 0, count: Source.allCases.count)
 	private var longestHoleFrames = [Int64](repeating: 0, count: Source.allCases.count)
+	/// Where the clock stood at the previous pass of the sample queue, in absolute frames.
+	private var lastPassFrame: Int64?
 	private var pending: [CMSampleBuffer] = []
 	private var didWarnAboutBacklog = false
 	private var didWarnAboutDecode: Set<Int> = []
@@ -181,6 +187,7 @@ public final class AudioTrackMixer {
 		}
 
 		let now = clock()
+		discountQueueStall(until: now)
 		let startFrame = frameIndex(of: presentationTime, from: anchor)
 		noteDelivery(source, from: startFrame, frameCount: Int64(frames.count / MixFormat.channelCount))
 		sources[source.rawValue].ingest(frames, atFrame: startFrame)
@@ -197,7 +204,40 @@ public final class AudioTrackMixer {
 		guard anchor != nil else {
 			return
 		}
-		drain(upTo: clock(), grace: Int64(MixFormat.emissionGraceFrames))
+		let now = clock()
+		discountQueueStall(until: now)
+		drain(upTo: now, grace: Int64(MixFormat.emissionGraceFrames))
+	}
+
+	/// Keeps a blocked sample queue from reading as silent sources (#1117).
+	///
+	/// The grace is measured on the clock, but the clock keeps running while the queue cannot:
+	/// a writer or a busy queue that holds it past `emissionGraceFrames` would otherwise make
+	/// the first pass after it — a tick, or the first of the buffers waiting behind it — see
+	/// every source as quiet for the whole stall, emit silence up to now, and then drop the
+	/// audio already queued for that span as `droppedFrames`. The sources were delivering the
+	/// whole time; it is the mixer that was not listening. So a pass that comes much later than
+	/// the ticker allows moves each source's last delivery forward by the gap, which measures
+	/// the grace against the time the queue was actually running.
+	///
+	/// Every pass still counts one ticker period as running time, so a queue that is merely
+	/// sluggish — passes always a little over the threshold apart — cannot keep a dead source
+	/// inside the grace forever: it stalls after at most `emissionGraceFrames / chunkFrames`
+	/// passes and the track keeps moving. One period and not the whole threshold, because
+	/// whatever is not credited is grace taken from a live source on every block.
+	private func discountQueueStall(until now: CMTime) {
+		guard let anchor, now.isValid, now.isNumeric else {
+			return
+		}
+		let nowFrame = frameIndex(of: now, from: anchor)
+		if let lastPassFrame, nowFrame - lastPassFrame > Int64(MixFormat.queueStallFrames) {
+			// The ticker period is the chunk size: 10 ms.
+			let stall = nowFrame - lastPassFrame - Int64(MixFormat.chunkFrames)
+			for index in sources.indices {
+				sources[index].lastDeliveryFrame += stall
+			}
+		}
+		lastPassFrame = nowFrame
 	}
 
 	/// Carries the track out to the end of the take and writes out everything still buffered.

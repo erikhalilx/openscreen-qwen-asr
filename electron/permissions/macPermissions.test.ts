@@ -310,3 +310,69 @@ describe("permissionSettingsUrl", () => {
 		);
 	});
 });
+
+describe("recording permission preparation", () => {
+	it("never requests granted media and does not request disabled inputs", async () => {
+		const { permissions, deps } = setup({
+			systemPickerOwnsScreen: () => true,
+			mediaStatus: () => "granted",
+		});
+		expect(
+			await permissions.prepareRecording({ microphone: true, camera: true, systemAudio: false }),
+		).toEqual({ ready: true });
+		expect(deps.askForMedia).not.toHaveBeenCalled();
+		expect(deps.requestSystemAudio).not.toHaveBeenCalled();
+	});
+	it("waits for microphone consent before preparing system audio", async () => {
+		const events: string[] = [];
+		let finish!: (value: boolean) => void;
+		const { permissions } = setup({
+			systemPickerOwnsScreen: () => true,
+			askForMedia: () =>
+				new Promise((resolve) => {
+					events.push("microphone");
+					finish = resolve;
+				}),
+			requestSystemAudio: async () => {
+				events.push("system");
+			},
+		});
+		const pending = permissions.prepareRecording({
+			microphone: true,
+			camera: false,
+			systemAudio: true,
+		});
+		await vi.waitFor(() => expect(events).toEqual(["microphone"]));
+		finish(true);
+		expect(await pending).toEqual({ ready: true });
+		expect(events).toEqual(["microphone", "system"]);
+	});
+	it("blocks a refused enabled microphone without opening another prompt", async () => {
+		const { permissions, deps } = setup({
+			systemPickerOwnsScreen: () => true,
+			mediaStatus: () => "denied",
+		});
+		expect(
+			await permissions.prepareRecording({ microphone: true, camera: false, systemAudio: false }),
+		).toEqual({ ready: false, blocked: "microphone" });
+		expect(deps.askForMedia).not.toHaveBeenCalled();
+	});
+	it("does not start when the legacy picker requires a screen grant or relaunch", async () => {
+		const { permissions, deps } = setup();
+		expect(
+			await permissions.prepareRecording({ microphone: false, camera: false, systemAudio: false }),
+		).toMatchObject({ ready: false, blocked: "screen" });
+		expect(deps.raiseScreenPrompt).toHaveBeenCalledOnce();
+	});
+	it("lets a failed system-audio preparation reject instead of silently continuing", async () => {
+		const { permissions } = setup({
+			systemPickerOwnsScreen: () => true,
+			requestSystemAudio: async () => {
+				throw new Error("helper unavailable");
+			},
+		});
+		await expect(
+			permissions.prepareRecording({ microphone: false, camera: false, systemAudio: true }),
+		).rejects.toThrow("helper unavailable");
+	});
+});

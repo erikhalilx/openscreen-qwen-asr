@@ -16,6 +16,7 @@ import {
 import { usePortalOwnsSource } from "../../hooks/usePortalOwnsSource";
 import { useRememberedSourceName } from "../../hooks/useRememberedSourceName";
 import { useScreenRecorder } from "../../hooks/useScreenRecorder";
+import { useUpdateBadge } from "../../hooks/useUpdateBadge";
 import type { WebcamQualityId } from "../../hooks/webcamCaptureTarget";
 import { requestCameraAccess } from "../../lib/requestCameraAccess";
 import { Toaster } from "../ui/sonner";
@@ -37,6 +38,7 @@ import {
 	HudStudioButton,
 	HudSystemAudioButton,
 	HudTrayLayoutButton,
+	HudUpdateButton,
 	HudWindowControls,
 } from "./HudControls";
 import { HudDeviceSettings, type HudDeviceSettingsLabels } from "./HudDeviceSettings";
@@ -88,7 +90,12 @@ export function LaunchWindow() {
 	const tCommon = useScopedT("common");
 	// The microphone check's toast is worded where the camera check's is: in `editor`.
 	const tEditor = useScopedT("editor");
-	const tSettings = useScopedT("settings");
+	const updateBadge = useUpdateBadge();
+	const applyUpdate = useCallback(() => {
+		void window.electronAPI?.applyUpdate?.().catch(() => {
+			// The main process logs and reports its own failures.
+		});
+	}, []);
 	const {
 		locale,
 		setLocale,
@@ -97,6 +104,7 @@ export function LaunchWindow() {
 		dismissSystemLocaleSuggestion,
 		resolveSystemLocaleSuggestion,
 	} = useI18n();
+	const tSettings = useScopedT("settings");
 	const suggestedLanguageName = systemLocaleSuggestion ? getLocaleName(systemLocaleSuggestion) : "";
 	const activeLanguageLabel = getLocaleName(locale).split(/\s+/)[0] || locale.toUpperCase();
 	// Short code shown on the button itself (matches the design's "EN"/"FR"
@@ -1355,6 +1363,14 @@ export function LaunchWindow() {
 						<div
 							className={`flex items-center gap-[5px] ${isVertical ? "flex-col" : ""} ${styles.electronNoDrag}`}
 						>
+							{/* Hidden mid-take: an update cannot install during one anyway. */}
+							{updateBadge && !recording && (
+								<HudUpdateButton
+									label={tCommon("actions.updateTo", { version: updateBadge.version })}
+									onClick={applyUpdate}
+								/>
+							)}
+
 							<HudLanguageButton
 								buttonRef={languageTriggerRef}
 								vertical={isVertical}
@@ -1452,6 +1468,7 @@ export function LaunchWindow() {
 										})}
 										onDismiss={dismissSystemLocaleSuggestion}
 										onConfirm={acceptSystemLocaleSuggestion}
+										confirmOnEnter={!isPopoverOpen}
 									/>
 								)}
 

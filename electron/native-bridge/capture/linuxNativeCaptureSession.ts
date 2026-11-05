@@ -2,6 +2,10 @@ import { type ChildProcessByStdio, spawn } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import type { CursorRecordingData } from "../../../src/native/contracts";
 import {
+	type CursorPauseRange,
+	compactCursorTelemetryPauseRanges,
+} from "../cursor/recording/cursorPauseRanges";
+import {
 	NdjsonLineReader,
 	PipeWireCursorAccumulator,
 	type PipeWireHelperEvent,
@@ -110,10 +114,14 @@ export class LinuxNativeCaptureSession {
 	private stoppedReject: ((error: Error) => void) | null = null;
 
 	private sourceKind: LinuxCaptureSourceKind | undefined;
+	private negotiatedCursorMode: LinuxCaptureConfig["cursorMode"] | undefined;
 	private videoEncoder: string | undefined;
 	private lastError: string | null = null;
 	private paused = false;
 	private helperOutputText = "";
+	private cursorRecordingStartMs = 0;
+	private cursorPauseStartedAtMs: number | null = null;
+	private cursorPauseRanges: CursorPauseRange[] = [];
 
 	constructor(private readonly config: LinuxCaptureConfig) {
 		this.cursor = new PipeWireCursorAccumulator(config.maxCursorSamples);
@@ -134,6 +142,10 @@ export class LinuxNativeCaptureSession {
 
 		this.cursor.reset(Date.now());
 		this.lines.reset();
+		this.cursorRecordingStartMs = 0;
+		this.cursorPauseStartedAtMs = null;
+		this.cursorPauseRanges = [];
+		this.paused = false;
 
 		const request = {
 			outputPath: this.config.outputPath,
@@ -305,16 +317,27 @@ export class LinuxNativeCaptureSession {
 		if (this.paused) {
 			return;
 		}
-		this.paused = true;
 		this.write("pause");
+		this.paused = true;
+		this.cursorPauseStartedAtMs = Date.now();
 	}
 
 	resume() {
 		if (!this.paused) {
 			return;
 		}
-		this.paused = false;
 		this.write("resume");
+		this.completeCursorPauseRange();
+		this.paused = false;
+	}
+
+	private completeCursorPauseRange(endMs = Date.now()) {
+		if (this.cursorPauseStartedAtMs === null || this.cursorRecordingStartMs <= 0) return;
+		this.cursorPauseRanges.push({
+			startMs: Math.max(0, this.cursorPauseStartedAtMs - this.cursorRecordingStartMs),
+			endMs: Math.max(0, endMs - this.cursorRecordingStartMs),
+		});
+		this.cursorPauseStartedAtMs = null;
 	}
 
 	get isPaused() {
@@ -331,6 +354,15 @@ export class LinuxNativeCaptureSession {
 	 */
 	get grantedSourceKind(): LinuxCaptureSourceKind | undefined {
 		return this.sourceKind;
+	}
+
+	/**
+	 * The cursor mode the helper really negotiates, known once `start()` resolves.
+	 * A portal without EMBEDDED gets METADATA instead (#1357), so the cursor has
+	 * to be drawn by the editor even though the system cursor was asked for.
+	 */
+	get cursorMode(): LinuxCaptureConfig["cursorMode"] {
+		return this.negotiatedCursorMode ?? this.config.cursorMode;
 	}
 
 	/**
@@ -375,6 +407,7 @@ export class LinuxNativeCaptureSession {
 			throw new Error("The Linux capture helper is not running.");
 		}
 
+		this.completeCursorPauseRange();
 		const exited = new Promise<void>((resolve, reject) => {
 			this.stoppedResolve = resolve;
 			this.stoppedReject = reject;
@@ -448,6 +481,9 @@ export class LinuxNativeCaptureSession {
 	private handleEvent(payload: PipeWireHelperEvent) {
 		switch (payload.event) {
 			case "ready":
+				if (payload.cursorMode === "metadata" || payload.cursorMode === "embedded") {
+					this.negotiatedCursorMode = payload.cursorMode;
+				}
 				this.resolveReady();
 				return;
 
@@ -518,6 +554,7 @@ export class LinuxNativeCaptureSession {
 				// telemetry is re-based onto it and anything from during the
 				// picker is dropped rather than left pinned to the start.
 				this.cursor.rebase(payload.timestampMs);
+				this.cursorRecordingStartMs = payload.timestampMs;
 				this.capturing = true;
 				console.info(
 					"[capture-linux] capture started",
@@ -538,7 +575,10 @@ export class LinuxNativeCaptureSession {
 					durationMs: payload.durationMs,
 					frames: payload.frames,
 					droppedFrames: payload.dropped,
-					cursor: this.cursor.toRecordingData(),
+					cursor: compactCursorTelemetryPauseRanges(
+						this.cursor.toRecordingData(),
+						this.cursorPauseRanges,
+					),
 					...(this.sourceKind ? { sourceKind: this.sourceKind } : {}),
 					...(this.videoEncoder ? { videoEncoder: this.videoEncoder } : {}),
 				};

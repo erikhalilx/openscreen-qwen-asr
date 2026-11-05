@@ -43,11 +43,16 @@ import { useTimeline } from "@/lib/ai-edition/store/useTimeline";
 import { isGeneratedAssetId } from "@/lib/ai-edition/timeline/clip-parts";
 import { mergeCloseCuts } from "@/lib/ai-edition/timeline/cut-breath";
 import { newRegionDurationSec } from "@/lib/ai-edition/timeline/newRegionDuration";
+import { REGION_ROW_STEP_PX } from "@/lib/ai-edition/timeline/regionTracks";
 import {
 	dropTrimPillsByIds,
 	trimAppliesToClip,
 	ventilateTimelineSpanToTrims,
 } from "@/lib/ai-edition/timeline/trim-mapping";
+import {
+	locateVirtualPosition,
+	totalVirtualDuration,
+} from "@/lib/ai-edition/timeline/virtual-preview";
 import { firstTimelineBusyView } from "@/lib/ai-edition/transcription/status";
 import { matchesShortcut } from "@/lib/shortcuts";
 import { nativeBridgeClient } from "@/native";
@@ -80,6 +85,7 @@ interface SeekTarget {
 	timeSec: number;
 	isSource?: boolean;
 	requestId: number;
+	preservePlayback?: boolean;
 }
 
 /**
@@ -105,15 +111,22 @@ const NO_AUDIO_TRACKS: AxcutAudioTrack[] = [];
 function NativePlaybackSync({
 	visibleClips,
 	clips,
+	playUneditedTimeline,
 }: {
 	visibleClips: AxcutClip[];
 	clips: AxcutClip[];
+	playUneditedTimeline: boolean;
 }) {
 	const playing = useProjectStore((s) => s.playing);
 	const currentTimeSec = useProjectStore((s) => s.currentTimeSec);
-	// visibleClips = trim-compressed native stream; `clips` = RAW layout currentTimeSec
-	// is measured against. resolveNativePosition needs both (see timelineMap).
-	useNativePlaybackSync(playing, currentTimeSec, visibleClips, clips);
+	// The native stream follows the edited timeline except while a voiceover records.
+	// `currentTimeSec` always stays on the raw ruler, including during playback.
+	useNativePlaybackSync(
+		playing,
+		currentTimeSec,
+		playUneditedTimeline ? clips : visibleClips,
+		clips,
+	);
 	return null;
 }
 
@@ -253,9 +266,12 @@ export function NewEditorShell() {
 		[document?.audioTracks],
 	);
 	const hasEffects = (document?.shaderEffectRanges?.length ?? 0) > 0;
+	const extraAudioHeightPx = Math.max(0, audioRowCount - 1) * AUDIO_ROW_EXPANSION_PX;
+	// The rendered annotation layout reports its live row count, including a drag preview.
+	const [annotationRowCount, setAnnotationRowCount] = useState(1);
+	const extraAnnotationHeightPx = (annotationRowCount - 1) * REGION_ROW_STEP_PX;
 	const extraLaneHeightPx =
-		Math.max(0, audioRowCount - 1) * AUDIO_ROW_EXPANSION_PX +
-		(hasEffects ? EFFECT_LANE_EXPANSION_PX : 0);
+		extraAudioHeightPx + extraAnnotationHeightPx + (hasEffects ? EFFECT_LANE_EXPANSION_PX : 0);
 	const timelineHeightPx = Math.min(
 		MAX_TIMELINE_HEIGHT_PX,
 		Math.max(MIN_TIMELINE_HEIGHT_PX, timelineBaseHeightPx + extraLaneHeightPx),
@@ -526,9 +542,14 @@ export function NewEditorShell() {
 	);
 
 	const handleSeek = useCallback(
-		(timeSec: number) => {
+		(timeSec: number, preservePlayback?: boolean) => {
 			setCurrentTime(timeSec);
-			setSeekTarget({ timeSec, isSource: false, requestId: ++seekSeqRef.current });
+			setSeekTarget({
+				timeSec,
+				isSource: false,
+				requestId: ++seekSeqRef.current,
+				preservePlayback,
+			});
 		},
 		[setCurrentTime],
 	);
@@ -592,8 +613,8 @@ export function NewEditorShell() {
 	useEffect(() => {
 		const el = videoElement;
 		if (!el) return;
-		const onPlay = () => setPlaying(true);
-		const onPause = () => setPlaying(false);
+		const onPlay = () => setPlaying(!el.paused);
+		const onPause = () => setPlaying(!el.paused);
 		// BUG corrigé : ce listener écoutait le même événement DOM natif 'ended' que le
 		// onEnded interne de VirtualPreview.tsx, sans la moindre logique multi-clip — il
 		// mettait TOUJOURS `playing` à false, y compris quand VirtualPreview venait
@@ -604,9 +625,12 @@ export function NewEditorShell() {
 		// suivant ?" que VirtualPreview — seul point de
 		// vérité pour "y a-t-il encore de la timeline à jouer".
 		const onEnded = () => {
+			if (!el.paused) return;
 			const playhead = useProjectStore.getState().currentTimeSec;
+			const duration = totalVirtualDuration(clipsForEndedRef.current);
+			const isAtEnd = duration > 0 && playhead >= duration - 0.1;
 			const hasNextClip = clipsForEndedRef.current.some((c) => c.timelineStartSec > playhead + 0.1);
-			if (!hasNextClip) setPlaying(false);
+			if (isAtEnd && !hasNextClip) setPlaying(false);
 		};
 		el.addEventListener("play", onPlay);
 		el.addEventListener("pause", onPause);
@@ -624,6 +648,27 @@ export function NewEditorShell() {
 	const togglePlay = useCallback(() => {
 		if (!videoElement) return;
 		if (videoElement.paused) {
+			const playhead = useProjectStore.getState().currentTimeSec;
+			const duration = totalVirtualDuration(clipsForEndedRef.current);
+			const endPos = locateVirtualPosition(clipsForEndedRef.current, duration);
+			const currentPos = locateVirtualPosition(clipsForEndedRef.current, playhead);
+			const hasNextClip = clipsForEndedRef.current.some((c) => c.timelineStartSec > playhead + 0.1);
+			const isAtEnd =
+				duration > 0 &&
+				playhead >= duration - 0.05 &&
+				!hasNextClip &&
+				currentPos?.clip.id === endPos?.clip.id;
+			if (isAtEnd) {
+				handleSeek(0, true);
+				const startPos = locateVirtualPosition(clipsForEndedRef.current, 0);
+				if (startPos && startPos.clip.assetId === endPos?.clip.assetId) {
+					try {
+						videoElement.currentTime = startPos.sourceTimeSec;
+					} catch {
+						// media metadata not ready yet
+					}
+				}
+			}
 			// Same catch as VirtualPreview's: `play()` rejects on the autoplay policy
 			// or when a new load interrupts it, and the store's `playing` flag is
 			// driven by the element's own play/pause listeners above — so a rejection
@@ -634,7 +679,7 @@ export function NewEditorShell() {
 		} else {
 			videoElement.pause();
 		}
-	}, [videoElement]);
+	}, [videoElement, handleSeek]);
 
 	// "Transcribe now" from the transcript pane. The run itself belongs to the
 	// transcription store (it owns the queue, the toasts and the failure
@@ -1009,12 +1054,20 @@ export function NewEditorShell() {
 	// where it is passed to the preview.
 	const [voiceoverRecording, setVoiceoverRecording] = useState(false);
 
-	const handleVoiceoverRecordingStart = useCallback(() => {
+	const handleVoiceoverRecordingStart = useCallback(async () => {
 		// Re-capture: the user may have scrubbed between opening the dialog and
 		// hitting Record, and playback starts from wherever the playhead is now.
-		voiceoverStartSecRef.current = useProjectStore.getState().currentTimeSec;
+		const doc = useProjectStore.getState().document;
+		const playhead = useProjectStore.getState().currentTimeSec;
+		voiceoverStartSecRef.current = playhead;
+		if (doc) {
+			const total = doc.timeline.clips.reduce((max, c) => Math.max(max, c.timelineEndSec), 0);
+			setVoiceoverFlow({ maxDurationSec: Math.max(0.5, total - playhead) });
+		}
 		setVoiceoverRecording(true);
-		if (videoElement?.paused) void videoElement.play().catch(() => undefined);
+		if (!videoElement) throw new Error("The preview is not ready.");
+		videoElement.playbackRate = 1;
+		if (videoElement.paused) await videoElement.play();
 	}, [videoElement]);
 
 	const handleVoiceoverRecordingStop = useCallback(() => {
@@ -1025,7 +1078,8 @@ export function NewEditorShell() {
 	const handleVoiceoverReady = useCallback(
 		async (assetId: string, durationSec: number) => {
 			setVoiceoverFlow(null);
-			await tl.addAudioTrack(assetId, voiceoverStartSecRef.current, {
+			const startSec = voiceoverStartSecRef.current;
+			await tl.addAudioTrack(assetId, startSec, {
 				kind: "voiceover",
 				durationSec,
 				spanSec: durationSec,
@@ -1040,6 +1094,20 @@ export function NewEditorShell() {
 		const { pasteClipboard } = await import("@/lib/ai-edition/store/regionClipboard");
 		const snapshot = pasteClipboard();
 		if (!snapshot) return;
+		if (snapshot.kind === "cameraFullscreen") {
+			const { applyLayoutSpan } = await import("@/lib/ai-edition/document/layout");
+			const time = useProjectStore.getState().currentTimeSec;
+			const duration = (Number(snapshot.region.endMs) - Number(snapshot.region.startMs)) / 1000;
+			await saveDocument(applyLayoutSpan(doc, time, time + duration, "camera-only"), {
+				history: true,
+			});
+			return;
+		}
+		if (snapshot.kind === "layout") {
+			const { isLayoutPreset } = await import("@/lib/layoutTypes");
+			if (isLayoutPreset(snapshot.region.preset)) await tl.addLayoutChange(snapshot.region.preset);
+			return;
+		}
 
 		// A copied trim is just a length: recreate one of that length at the
 		// playhead, through the same call the toolbar's cut button uses (which
@@ -1144,8 +1212,7 @@ export function NewEditorShell() {
 			}
 			await saveDocument(next, { history: true });
 		} else {
-			// speed and cameraFullscreen are both plain spans on legacyEditor.
-			const key = snapshot.kind === "speed" ? "speedRegions" : "cameraFullscreenRegions";
+			const key = "speedRegions";
 			const legacy = (doc.legacyEditor as Record<string, unknown>) ?? {};
 			const prev = (legacy[key] as unknown[]) ?? [];
 			await saveDocument(
@@ -1170,6 +1237,14 @@ export function NewEditorShell() {
 		const sel = tl.selection;
 		if (!sel) return;
 		const { copyRegion } = await import("@/lib/ai-edition/store/regionClipboard");
+		if (sel.kind === "layout") {
+			const run = tl.layoutSegments.find((r) => r.ids.includes(sel.id));
+			if (run) {
+				copyRegion({ kind: "layout", region: { preset: run.member.preset } });
+				setCopiedClipId(null);
+			}
+			return;
+		}
 
 		// A trim is stored in SOURCE time against a clip anchor, so there is no
 		// row to clone — but there is nothing to clone either: what the user means
@@ -1232,6 +1307,7 @@ export function NewEditorShell() {
 		const region = wholePillOf(
 			source as Array<{ id: string; startMs: number; endMs: number }>,
 			sel.id,
+			{ annotations: sel.kind === "annotation" },
 		);
 		if (!region) return;
 		copyRegion({ kind: sel.kind, region: region as unknown as Record<string, unknown> });
@@ -1413,7 +1489,7 @@ export function NewEditorShell() {
 			}
 			if (matchesShortcut(e, shortcuts.addCameraFullscreen, isMac)) {
 				e.preventDefault();
-				void tl.addCameraFullscreen(newRegionDurationSec());
+				window.dispatchEvent(new Event("openscreen:change-layout"));
 				return;
 			}
 
@@ -1460,6 +1536,7 @@ export function NewEditorShell() {
 		isMac,
 		togglePlay,
 		handleSeek,
+		openVoiceoverFlow,
 	]);
 
 	const showTimeline = mode !== "rec";
@@ -1498,15 +1575,20 @@ export function NewEditorShell() {
 			e.preventDefault();
 			const startY = e.clientY;
 			const startBase = timelineBaseHeightPx;
+			const startRendered = timelineHeightPx;
 			let latestBase = startBase;
 			const move = (ev: PointerEvent) => {
 				// Dragging the handle up (negative clientY delta) enlarges the
 				// timeline, since it sits below the handle.
 				const renderedTarget = Math.min(
 					MAX_TIMELINE_HEIGHT_PX,
-					Math.max(MIN_TIMELINE_HEIGHT_PX, startBase + extraLaneHeightPx - (ev.clientY - startY)),
+					Math.max(MIN_TIMELINE_HEIGHT_PX, startRendered - (ev.clientY - startY)),
 				);
-				latestBase = Math.max(MIN_TIMELINE_HEIGHT_PX, renderedTarget - extraLaneHeightPx);
+				// Apply only the rendered-height delta, preserving the base when expansion hits the cap.
+				latestBase = Math.min(
+					MAX_TIMELINE_HEIGHT_PX,
+					Math.max(MIN_TIMELINE_HEIGHT_PX, startBase + (renderedTarget - startRendered)),
+				);
 				setTimelineBaseHeightPx(latestBase);
 			};
 			const up = () => {
@@ -1517,7 +1599,7 @@ export function NewEditorShell() {
 			window.addEventListener("pointermove", move);
 			window.addEventListener("pointerup", up);
 		},
-		[timelineBaseHeightPx, extraLaneHeightPx],
+		[timelineBaseHeightPx, timelineHeightPx],
 	);
 
 	const transcriptProps = {
@@ -1549,7 +1631,11 @@ export function NewEditorShell() {
 			className={v4.app}
 			style={{ gridTemplateRows: `58px 1fr ${showTimeline ? timelineRow : "0px"}` }}
 		>
-			<NativePlaybackSync visibleClips={visibleClips} clips={clips} />
+			<NativePlaybackSync
+				visibleClips={visibleClips}
+				clips={clips}
+				playUneditedTimeline={voiceoverRecording}
+			/>
 			<EditorTopBar
 				mode={mode}
 				onModeChange={setMode}
@@ -1644,6 +1730,7 @@ export function NewEditorShell() {
 									clips={clips}
 									zoomRegions={tl.zoomRegions}
 									speedRegions={tl.speedRegions}
+									playUneditedTimeline={voiceoverRecording}
 									cameraFullscreenRegions={tl.cameraFullscreenRegions}
 									trimRanges={tl.trimRanges}
 									selectedZoomRegionId={tl.selection?.kind === "zoom" ? tl.selection.id : null}
@@ -1716,6 +1803,7 @@ export function NewEditorShell() {
 						/>
 					) : null}
 					<V4Timeline
+						onAnnotationRowCountChange={setAnnotationRowCount}
 						tl={tl}
 						setCurrentTime={handleSeek}
 						variant={mode === "media" ? "media" : "edit"}

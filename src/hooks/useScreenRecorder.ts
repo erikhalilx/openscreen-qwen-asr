@@ -26,12 +26,12 @@ import {
 	DEFAULT_WEBCAM_QUALITY,
 	WEBCAM_TARGET_FRAME_RATE,
 	type WebcamQualityId,
-	webcamBitrateForStream,
 	webcamPresetFor,
 	webcamQualityFrom,
 	webcamVideoConstraints,
 } from "./webcamCaptureTarget";
 import { webcamDeviceIdentityFrom } from "./webcamDeviceIdentity";
+import { webcamRecorderOptions as cameraRecorderOptions } from "./webcamRecorderOptions";
 
 const TARGET_FRAME_RATE = 60;
 const MIN_FRAME_RATE = 30;
@@ -368,6 +368,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const discardRecordingId = useRef<number | null>(null);
 	const restarting = useRef(false);
 	const countdownRunId = useRef(0);
+	/**
+	 * Held from the press until the countdown shows. Neither `countdownActive` nor
+	 * `recording` is set before then, and on Linux the portal's picker is up for that
+	 * whole wait: a second press raised a second picker, whose prepare threw away the
+	 * grant the user had just given the first (#1340).
+	 */
+	const countdownStarting = useRef<object | null>(null);
 	const cursorAccessibilityWarningShown = useRef(false);
 	const [countdownActive, setCountdownActive] = useState(false);
 	const webcamReady = useRef(false);
@@ -395,10 +402,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	 * three and left the browser pipeline encoding a 2160p camera at the
 	 * monitor's rate, capped well below what the frame needs.
 	 */
-	const webcamRecorderOptions = (stream: MediaStream | null): MediaRecorderOptions => ({
-		mimeType: selectMimeType(),
-		videoBitsPerSecond: webcamBitrateForStream(stream),
-	});
+	const webcamRecorderOptions = (stream: MediaStream | null): MediaRecorderOptions =>
+		cameraRecorderOptions(stream, window.electronAPI.getPlatform());
 
 	const selectMimeType = () => {
 		// H.264 first: hardware-accelerated, so sharp real-time output. AV1/VP9 are
@@ -967,7 +972,11 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 						screenVideoPath: result.path,
 						recordingId: activeNativeRecording.recordingId,
 						webcam: webcamResult.asset,
-						cursorCaptureMode,
+						// The mode main stored for the take, not the one asked for: a portal
+						// without EMBEDDED turns "system" into "editable-overlay" (#1357).
+						// This callback is also reached through the first render's
+						// stopRecording closure, so its own cursorCaptureMode is stale.
+						cursorCaptureMode: result.session?.cursorCaptureMode ?? cursorCaptureMode,
 						durationMs: webcamDurationMs,
 						...(typeof activeNativeRecording.webcamOffsetMs === "number"
 							? { webcamOffsetMs: activeNativeRecording.webcamOffsetMs }
@@ -1638,11 +1647,52 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		}
 	};
 
+	const prepareRecordingPermissions = async () => {
+		if (
+			window.electronAPI.getPlatform() !== "darwin" ||
+			!window.electronAPI.permissions?.prepareRecording
+		)
+			return true;
+		try {
+			const result = await window.electronAPI.permissions.prepareRecording({
+				microphone: await shouldRecordMicrophone(microphoneEnabled),
+				camera: webcamEnabled,
+				systemAudio: systemAudioEnabled,
+			});
+			if (result.ready) return true;
+			toast.error(t("recording.permissionDenied"), {
+				duration: 10000,
+				action: {
+					label: tLaunch("permissions.actions.openSettings"),
+					onClick: () => {
+						void window.electronAPI.permissions.openSettings(result.blocked);
+					},
+				},
+			});
+			return false;
+		} catch (error) {
+			console.warn("Recording permissions could not be prepared", error);
+			toast.error(t("recording.permissionDenied"));
+			return false;
+		}
+	};
+
 	const startRecordCountdown = async () => {
-		if (countdownActive || recording) {
+		if (countdownActive || recording || countdownStarting.current) {
 			return;
 		}
+		const starting = {};
+		countdownStarting.current = starting;
+		try {
+			await runRecordCountdown();
+		} finally {
+			if (countdownStarting.current === starting) {
+				countdownStarting.current = null;
+			}
+		}
+	};
 
+	const runRecordCountdown = async () => {
 		const runId = countdownRunId.current + 1;
 		countdownRunId.current = runId;
 
@@ -1701,6 +1751,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			console.warn("Failed to preflight macOS cursor accessibility before countdown:", error);
 		}
 
+		if (!(await prepareRecordingPermissions()) || !isCountdownRunActive(runId)) return;
+
 		// THE PICKER GOES BEFORE THE COUNTDOWN. On Wayland the compositor's dialog
 		// is the source chooser, and it only appears once the portal session is
 		// started — so counting down first meant counting down before the user had
@@ -1737,6 +1789,8 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			return;
 		}
 
+		// From here `countdownActive` takes over, and a press cancels the countdown.
+		countdownStarting.current = null;
 		setCountdownActive(true);
 
 		let overlayHiddenBeforeStart = false;
@@ -1776,7 +1830,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				return;
 			}
 
-			await startRecording(runId, preparedRecordingId);
+			await startRecording(runId, preparedRecordingId, true);
 		} finally {
 			if (!overlayHiddenBeforeStart && countdownRunId.current === runId) {
 				setCountdownActive(false);
@@ -1796,9 +1850,13 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const startRecording = async (
 		countdownRunToken?: number,
 		preparedRecordingId?: number | null,
+		permissionsPrepared = false,
 	) => {
 		const platform = window.electronAPI.getPlatform();
 		const browserCursorCaptureMode = effectiveBrowserCursorMode(platform, cursorCaptureMode);
+		if (!permissionsPrepared && !(await prepareRecordingPermissions())) return;
+		let browserStartClaimed = false;
+		let browserRecorderStarted = false;
 
 		try {
 			if (!isCountdownRunActive(countdownRunToken)) {
@@ -2058,6 +2116,20 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				return;
 			}
 
+			// Reserve the take before constructing MediaRecorder. Start cursor sampling below
+			// as before, so this handshake does not shift the cursor/video time origin.
+			const claim = await window.electronAPI.setRecordingState(
+				true,
+				undefined,
+				browserCursorCaptureMode,
+				true,
+			);
+			if (!claim.success) throw new Error(claim.error ?? "The recording could not start.");
+			browserStartClaimed = true;
+			if (!isCountdownRunActive(countdownRunToken)) {
+				teardownMedia();
+				return;
+			}
 			recordingId.current = Date.now();
 			const activeRecordingId = recordingId.current;
 			screenRecorder.current = createRecorderHandle(
@@ -2096,6 +2168,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			setRecording(true);
 			setPaused(false);
 			setElapsedSeconds(0);
+			browserRecorderStarted = true;
 			window.electronAPI?.setRecordingState(true, recordingId.current, browserCursorCaptureMode);
 
 			const activeScreenRecorder = screenRecorder.current;
@@ -2130,9 +2203,31 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			setElapsedSeconds(0);
 			accumulatedDurationMs.current = 0;
 			segmentStartedAt.current = null;
+			const failedRecorders = [screenRecorder.current, webcamRecorder.current];
 			screenRecorder.current = null;
 			webcamRecorder.current = null;
+			allowAutoFinalize.current = false;
+			for (const failed of failedRecorders) {
+				if (!failed) continue;
+				try {
+					if (failed.recorder.state !== "inactive") failed.recorder.stop();
+				} catch (stopError) {
+					console.warn("Failed to stop the incomplete recording:", stopError);
+				}
+				void failed.recordedBlobPromise
+					.catch(() => undefined)
+					.then(() => failed.discard())
+					.catch((discardError) =>
+						console.warn("Failed to discard the incomplete recording:", discardError),
+					);
+			}
 			teardownMedia();
+		} finally {
+			if (browserStartClaimed && !browserRecorderStarted) {
+				await window.electronAPI.setRecordingState(false).catch((error) => {
+					console.warn("Failed to release the recording start:", error);
+				});
+			}
 		}
 	};
 

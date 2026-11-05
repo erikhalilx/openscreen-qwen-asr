@@ -5,8 +5,16 @@
 // No `electron` import: the IPC surface and the window factory are handed in,
 // so the routing stays unit-testable.
 
+import { rm } from "node:fs/promises";
 import type { IpcMain } from "electron";
-import type { CliDoneResult, CliProgressEvent, CliRequest } from "../../src/lib/cliContracts";
+import {
+	audioRenderPath,
+	type CliDoneResult,
+	type CliProgressEvent,
+	type CliRequest,
+	defaultExportPath,
+	isAudioExportFormat,
+} from "../../src/lib/cliContracts";
 
 /** The slice of a BrowserWindow this needs. */
 export interface RunnerWindow {
@@ -98,9 +106,22 @@ export function createRunnerHost<W extends RunnerWindow>(
 			const id = window.webContents.id;
 			// Registered in the same tick the load starts in: the renderer cannot ask
 			// for its request before this line has run.
-			const done = new Promise<CliDoneResult>((resolve) => {
+			const reported = new Promise<CliDoneResult>((resolve) => {
 				runs.set(id, { request, handlers, resolve });
 			});
+			// An audio export renders an MP4 beside its output that the runner cannot delete.
+			const audioFormat =
+				request.kind === "export" && isAudioExportFormat(request.format) ? request.format : null;
+			const done =
+				request.kind === "export" && audioFormat
+					? reported.then(async (result) => {
+							// Derived as the runner derives it: a failed run reports no outputPath.
+							const outPath =
+								request.outPath ?? defaultExportPath(request.projectPath, audioFormat);
+							await rm(audioRenderPath(outPath), { force: true }).catch(() => undefined);
+							return result;
+						})
+					: reported;
 			// A runner that never reports would otherwise hold its caller forever.
 			const fail = (error: string) => {
 				const run = runs.get(id);

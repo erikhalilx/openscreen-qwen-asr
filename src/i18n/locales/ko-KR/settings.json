@@ -308,7 +308,8 @@
 			"right": "오른쪽",
 			"bottomLeft": "왼쪽 아래",
 			"bottom": "아래",
-			"bottomRight": "오른쪽 아래"
+			"bottomRight": "오른쪽 아래",
+			"center": "가운데"
 		},
 		"selectPreset": "프리셋 선택",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "카메라 배경",
 		"helpNoWebcam": "이 프로젝트에는 카메라가 없어 레이아웃 설정이 비활성화되고 프리셋이 “웹캠 없음”으로 표시됩니다. 저장된 레이아웃은 카메라를 추가할 때를 위해 유지됩니다.",
 		"title": "카메라 레이아웃",
-		"noWebcam": "웹캠 없음"
+		"noWebcam": "웹캠 없음",
+		"cameraTrack": "카메라 레이아웃",
+		"fullscreenLayout": "전체 화면",
+		"enableTrack": "카메라 레이아웃 트랙 활성화",
+		"hideSegment": "이 구간의 카메라 숨기기",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "왼쪽 슬라이드",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "마우스 효과음",
+		"mouseEffectsHint": "클릭 간격과 위치로 한 번 클릭과 두 번 클릭을 구분합니다. 커서를 숨겨도 소리는 유지됩니다.",
+		"noMouseClicks": "이 녹화에는 기록된 클릭이 없습니다.",
 		"systemSource": "시스템 오디오",
 		"microphoneSource": "마이크",
 		"outputGain": "출력 레벨",
 		"help": "음성은 표준 라우드니스로 자동 조정됩니다. 거기서부터 출력 레벨을 조정하세요. 미리보기와 내보내기에 동일하게 적용됩니다.",
 		"reset": "오디오 재설정",
-		"title": "오디오"
+		"title": "오디오",
+		"mouseSoundPreset": "효과음 세트",
+		"mouseRealistic": "사실적",
+		"mouseBubble": "버블"
 	},
 	"language": {
 		"title": "언어"

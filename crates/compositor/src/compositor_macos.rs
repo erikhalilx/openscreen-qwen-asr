@@ -29,7 +29,7 @@
 
 use crate::config::Cfg;
 use crate::d3d::Gpu;
-use crate::ffi::AVFrame;
+use crate::ffi::{AVColorSpace, AVFrame};
 // Le constant buffer est le MÊME struct des deux côtés — cf. `frame_geometry`.
 // Constant buffer, params runtime et constantes de sortie : une seule définition pour
 // les deux backends — cf. `frame_geometry`, qui documente les divergences que
@@ -99,7 +99,14 @@ extern "C" {
     fn CVPixelBufferGetHeightOfPlane(p: *mut std::ffi::c_void, plane_index: usize) -> usize;
     fn CVPixelBufferGetWidth(p: *mut std::ffi::c_void) -> usize;
     fn CVPixelBufferGetHeight(p: *mut std::ffi::c_void) -> usize;
+    fn CVPixelBufferGetPixelFormatType(p: *mut std::ffi::c_void) -> u32;
 }
+
+/// `kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange` ('x420') et sa variante pleine
+/// excursion ('xf20') : le P010 que VideoToolbox sort pour un flux 10 bits (HEVC Main 10).
+const CV_420_10_BIPLANAR_VIDEO: u32 = u32::from_be_bytes(*b"x420");
+const CV_420_10_BIPLANAR_FULL: u32 = u32::from_be_bytes(*b"xf20");
+const CV_420_8_BIPLANAR_FULL: u32 = u32::from_be_bytes(*b"420f");
 
 /// `retain` ObjC sur un `id`. `CVMetalTextureGetTexture` rend une référence
 /// *empruntée* au `CVMetalTextureRef` qui la porte : relâcher ce dernier sans
@@ -195,6 +202,50 @@ impl CVMetalTextureCache {
     /// alors sur l'IOSurface précédent).
     pub(crate) fn flush(&self) {
         unsafe { CVMetalTextureCacheFlush(self.0.as_ptr(), 0) };
+    }
+}
+
+// `MTLTextureSwizzle` ; absent des bindings `metal` 0.29.
+const SWZ_ZERO: u8 = 0;
+const SWZ_ONE: u8 = 1;
+const SWZ_RED: u8 = 2;
+const SWZ_GREEN: u8 = 3;
+const SWZ_ALPHA: u8 = 5;
+
+/// Vue de `tex` qui rend `swizzle` (rouge, vert, bleu, alpha). C'est ainsi que `sample_yuv`
+/// (`shaders.metal`) lit le format d'une frame sans rien lier de plus à chaque draw :
+/// - bleu à 1 sur le plan CbCr : pleine plage (`420f`, `xf20`) ;
+/// - vert ou bleu à 1 sur le plan Y : matrice BT.601 ou BT.2020.
+///
+/// Sans vue, `R` et `RG` rendent 0 sur les canaux libres : plage limitée et BT.709 par défaut.
+fn swizzled_view(tex: &metal::TextureRef, swizzle: [u8; 4]) -> metal::Texture {
+    use objc::{msg_send, sel, sel_impl};
+    #[repr(C)]
+    struct Swizzle([u8; 4]);
+    let one = metal::NSRange::new(0, 1);
+    unsafe {
+        msg_send![tex, newTextureViewWithPixelFormat:tex.pixel_format()
+                                         textureType:tex.texture_type()
+                                              levels:one
+                                               slices:one
+                                             swizzle:Swizzle(swizzle)]
+    }
+}
+
+/// Le swizzle du plan Y qui porte la matrice de la frame, ou `None` pour BT.709 (aussi le
+/// défaut d'un flux non tagué). La matrice vient de `AVFrame::colorspace`, que libavcodec lit
+/// dans le VUI : VideoToolbox ne pose pas `kCVImageBufferYCbCrMatrixKey` sur ses buffers.
+/// BT.2020 CL n'est pas une simple matrice : il garde le défaut plutôt qu'un rendu NCL faux.
+///
+/// Alpha à 0 : échantillons 10 bits (P010), que `yuv_matrix` convertit avec les bornes 10 bits.
+fn matrix_swizzle(colorspace: AVColorSpace::Type, ten_bit: bool) -> Option<[u8; 4]> {
+    let depth = if ten_bit { SWZ_ZERO } else { SWZ_ONE };
+    match colorspace {
+        AVColorSpace::AVCOL_SPC_BT470BG | AVColorSpace::AVCOL_SPC_SMPTE170M => {
+            Some([SWZ_RED, SWZ_ONE, SWZ_ZERO, depth])
+        }
+        AVColorSpace::AVCOL_SPC_BT2020_NCL => Some([SWZ_RED, SWZ_ZERO, SWZ_ONE, depth]),
+        _ => None,
     }
 }
 
@@ -353,8 +404,12 @@ pub struct Compositor {
     ann_copy: metal::Texture,
     /// Pyramide de profondeur de champ (mode 8) : la vidéo en RGBA8 à demi-résolution de la
     /// texture DÉCODEUR, mips compris. Allouée au premier écran incliné, recréée quand la
-    /// texture décodeur change de taille. Cf. `compositor_windows::DofPyramid`.
+    /// texture décodeur change de taille. Cf. `compositor_windows::RgbaTarget`.
     dof_pyramid: RefCell<Option<metal::Texture>>,
+    /// L'enregistrement à sa résolution, pour les effets qui lisent `footage()` : alloué au premier
+    /// d'entre eux, recréé quand la coupe change de taille, peint seulement aux frames où un tel
+    /// effet est actif. Cf. `compositor_windows::fill_footage_copy`.
+    footage_copy: RefCell<Option<metal::Texture>>,
     /// Images d'annotation, indexées par ID d'annotation (pas par data-URL : celle-ci pèse
     /// souvent des mégaoctets et la hacher à chaque frame coûterait plus que le décodage).
     /// La longueur sert de garde-fou quand l'utilisateur change l'image.
@@ -845,6 +900,7 @@ impl Compositor {
             pipeline_kup,
             ann_copy,
             dof_pyramid: RefCell::new(None),
+            footage_copy: RefCell::new(None),
             ann_img_cache: RefCell::new(std::collections::HashMap::new()),
             text_cache: RefCell::new(std::collections::HashMap::new()),
             text_raster: crate::text::TextRasterizer::new().ok(),
@@ -1033,6 +1089,7 @@ impl Compositor {
         effect: &SceneShaderEffect,
         dst: &metal::Texture,
         ctx: &crate::shader_fx::FxContext,
+        footage: Option<&metal::Texture>,
     ) -> Result<()> {
         let Some(pipeline) = self.shader_fx_ready(effect) else { return Ok(()) };
         // On ne lit pas la cible sur laquelle on dessine : copie dans `ann_copy` (les flous
@@ -1041,6 +1098,10 @@ impl Compositor {
         let params = crate::shader_fx::pack_params(effect);
         let e = self.begin_pass(cmd, dst, None, &pipeline)?;
         e.set_fragment_texture(0, Some(&self.ann_copy));
+        // `footage()`, liée seulement pour un effet qui la lit : les autres ne la déclarent pas.
+        if let Some(footage) = footage {
+            e.set_fragment_texture(crate::shader_fx::MSL_FOOTAGE_TEXTURE, Some(footage));
+        }
         e.set_fragment_bytes(
             crate::shader_fx::MSL_CTX_BUFFER,
             std::mem::size_of::<crate::shader_fx::FxContext>() as u64,
@@ -1146,6 +1207,11 @@ impl Compositor {
     /// Crée les `MTLTexture` Y (`R8Unorm`) et UV (`RG8Unorm`) de la frame. Zéro copie :
     /// les textures Metal partagent l'IOSurface du `CVPixelBuffer`. API symétrique de
     /// `compositor_windows::nv12_srvs`.
+    ///
+    /// Un flux 10 bits arrive en P010 : 16 bits par échantillon, valeur dans les bits de
+    /// poids fort. En `R16Unorm`/`RG16Unorm` le shader lit la même valeur normalisée qu'en
+    /// NV12 ; en `R8Unorm` chaque échantillon devenait deux texels, d'où l'image en bandes
+    /// d'une vidéo iPhone (#1390).
     pub unsafe fn nv12_srvs(
         &self,
         frame: *const AVFrame,
@@ -1157,8 +1223,22 @@ impl Compositor {
             )
         })?;
         let cache = &self.metal_texture_cache;
-        let y = cache.make_texture_from_pixel_buffer(pb, 0, metal::MTLPixelFormat::R8Unorm)?;
-        let uv = cache.make_texture_from_pixel_buffer(pb, 1, metal::MTLPixelFormat::RG8Unorm)?;
+        let pixel_format = CVPixelBufferGetPixelFormatType(pb);
+        let (y_fmt, uv_fmt) = match pixel_format {
+            CV_420_10_BIPLANAR_VIDEO | CV_420_10_BIPLANAR_FULL => {
+                (metal::MTLPixelFormat::R16Unorm, metal::MTLPixelFormat::RG16Unorm)
+            }
+            _ => (metal::MTLPixelFormat::R8Unorm, metal::MTLPixelFormat::RG8Unorm),
+        };
+        let mut y = cache.make_texture_from_pixel_buffer(pb, 0, y_fmt)?;
+        let mut uv = cache.make_texture_from_pixel_buffer(pb, 1, uv_fmt)?;
+        let ten_bit = matches!(pixel_format, CV_420_10_BIPLANAR_VIDEO | CV_420_10_BIPLANAR_FULL);
+        if let Some(swizzle) = matrix_swizzle((*frame).colorspace, ten_bit) {
+            y = swizzled_view(&y, swizzle);
+        }
+        if matches!(pixel_format, CV_420_8_BIPLANAR_FULL | CV_420_10_BIPLANAR_FULL) {
+            uv = swizzled_view(&uv, [SWZ_RED, SWZ_GREEN, SWZ_ONE, SWZ_ALPHA]);
+        }
         Ok((y, uv))
     }
 
@@ -1614,6 +1694,62 @@ impl Compositor {
         blit.generate_mipmaps(&pyr);
         blit.end_encoding();
         Ok(pyr)
+    }
+
+    /// Peint l'enregistrement à sa résolution pour `footage()` (`docs/shader-effects.md`, C.2). Port
+    /// de `compositor_windows::fill_footage_copy` : la coupe du métrage (`content_cut`, le repère de
+    /// `fx_to_footage`) en UN draw du mode 0, par la même conversion que l'écran dessiné.
+    unsafe fn fill_footage_copy(
+        &self,
+        cmd: &metal::CommandBufferRef,
+        y: &metal::Texture,
+        uv: &metal::Texture,
+        cut: [f32; 4],
+        tex_w: u32,
+        tex_h: u32,
+    ) -> Result<metal::Texture> {
+        let (w, h) = crate::shader_fx::footage_copy_px(cut, [tex_w as f32, tex_h as f32]);
+        let stale = self
+            .footage_copy
+            .borrow()
+            .as_ref()
+            .is_none_or(|c| (c.width(), c.height()) != (w as u64, h as u64));
+        if stale {
+            *self.footage_copy.borrow_mut() = Some(make_texture(
+                &self.gpu.device,
+                metal::MTLPixelFormat::RGBA8Unorm,
+                w,
+                h,
+                metal::MTLStorageMode::Private,
+                metal::MTLTextureUsage::RenderTarget | metal::MTLTextureUsage::ShaderRead,
+            ));
+        }
+        let copy = self.footage_copy.borrow().clone().expect("copie allouée ci-dessus");
+        let enc = self.begin_pass(
+            cmd,
+            &copy,
+            Some(metal::MTLClearColor::new(0.0, 0.0, 0.0, 0.0)),
+            &self.pipeline_main,
+        )?;
+        let full = [0.0, 0.0, 1.0, 1.0];
+        self.draw_video(
+            enc,
+            &LayerCB {
+                dst: full,
+                src: cut,
+                quad_px: [w as f32, h as f32],
+                mode: 0.0,
+                color: [1.0, 1.0, 1.0, 1.0],
+                src_prev: cut,
+                dst_prev: full,
+                mb: [1.0, 0.0, 1.0, 0.0],
+                ..Default::default()
+            },
+            y,
+            uv,
+        );
+        enc.end_encoding();
+        Ok(copy)
     }
 
     /// Ombre d'un écran incliné en 3D : la pénombre suit le QUADRILATÈRE projeté (mode 12),
@@ -2920,10 +3056,6 @@ impl Compositor {
                 g.w_px[0] / g.w_px[1].max(0.0001),
             );
             let (u0, u1) = if lp.webcam_mirror { (cu1, cu0) } else { (cu0, cu1) };
-            let webcam_is_block = matches!(
-                g.scene_preset.as_deref(),
-                Some("dual-frame") | Some("vertical-stack")
-            );
             // Effet d'arrière-plan : le mode vient de la scène, le masque par pixel de
             // l'inférence. Les DEUX sont requis — un mode sans masque rendrait la webcam
             // invisible en détourage, donc tant que rien n'a été segmenté on dessine la
@@ -2942,7 +3074,7 @@ impl Compositor {
             // part lui aussi en détourage ci-dessous, mais sa bulle, elle, est bien peinte et
             // garde donc son ombre.
             let is_cutout = matches!(effect, Some((code, _)) if code == 1.0);
-            if cfg.shadow && !webcam_is_block && !is_cutout && g.shape_fade > 0.0 {
+            if cfg.shadow && g.webcam_shadow > 0.0 && !is_cutout && g.shape_fade > 0.0 {
                 self.draw_shadow(
                     enc,
                     g.w_dst,
@@ -2950,7 +3082,7 @@ impl Compositor {
                     g.w_radius,
                     WEBCAM_SHADOW_SPREAD_FRAC * g.frame_min_px,
                     [0.0, WEBCAM_SHADOW_OFFSET_FRAC * g.frame_min_px],
-                    WEBCAM_SHADOW_OPACITY * g.shape_fade,
+                    WEBCAM_SHADOW_OPACITY * g.shape_fade * g.webcam_shadow,
                 );
             }
 
@@ -3026,8 +3158,14 @@ impl Compositor {
         let with_target = |target: ShaderEffectTarget| -> Vec<&SceneShaderEffect> {
             effects.iter().copied().filter(|e| e.target == target).collect()
         };
+        // L'enregistrement à sa résolution, peint une fois pour la frame si un effet le lit.
+        let footage = if effects.iter().any(|e| crate::shader_fx::reads_footage(e)) {
+            Some(self.fill_footage_copy(cmd_buf, &sy, &suv, g.content_cut, stw, sth)?)
+        } else {
+            None
+        };
         for e in with_target(ShaderEffectTarget::Image) {
-            self.apply_shader_effect(cmd_buf, e, &self.rt, &fx_context(e))?;
+            self.apply_shader_effect(cmd_buf, e, &self.rt, &fx_context(e), footage.as_ref())?;
         }
 
         // --- annotations : calque le plus haut, ancré sur le rect ÉCRAN SANS ZOOM ---
@@ -3053,7 +3191,7 @@ impl Compositor {
             .end_encoding();
             self.draw_annotations(cmd_buf, &layer, scene_ref.as_ref(), g.source_t, g.s_ann, &g, false)?;
             for e in text_effects {
-                self.apply_shader_effect(cmd_buf, e, &layer, &fx_context(e))?;
+                self.apply_shader_effect(cmd_buf, e, &layer, &fx_context(e), footage.as_ref())?;
             }
             let c = self.begin_pass(cmd_buf, &self.rt, None, &self.pipeline_fs_tex)?;
             c.set_fragment_texture(0, Some(&layer));
@@ -3062,7 +3200,7 @@ impl Compositor {
         }
 
         for e in with_target(ShaderEffectTarget::Both) {
-            self.apply_shader_effect(cmd_buf, e, &self.rt, &fx_context(e))?;
+            self.apply_shader_effect(cmd_buf, e, &self.rt, &fx_context(e), footage.as_ref())?;
         }
 
         // Ni miroir RGBA ni attente ici : le miroir ne sert qu'à `readback_direct` (la
@@ -3469,6 +3607,30 @@ mod tests {
         assert_eq!(cpu_storage_for(false), metal::MTLStorageMode::Managed);
     }
 
+    /// Pas une assertion : le relevé du device que le job Intel de la CI imprime
+    /// (`-- --nocapture`), pour qu'un run dise lequel des deux chemins de `cpu_storage` il a
+    /// pris (#1238). Le GPU d'une VM GitHub est paravirtuel : `apple1` y dit ce que Metal
+    /// annonce, pas ce que ferait l'UHD 630 ou la Radeon Pro d'un vrai Mac Intel.
+    #[test]
+    fn report_the_metal_device_and_its_cpu_storage() {
+        let Some(device) = metal::Device::system_default() else {
+            println!("[metal-device] arch={} aucun MTLDevice", std::env::consts::ARCH);
+            return;
+        };
+        println!(
+            "[metal-device] arch={} name={:?} apple1={} mac2={} unified_memory={} low_power={} \
+             headless={} cpu_storage={:?}",
+            std::env::consts::ARCH,
+            device.name(),
+            device.supports_family(metal::MTLGPUFamily::Apple1),
+            device.supports_family(metal::MTLGPUFamily::Mac2),
+            device.has_unified_memory(),
+            device.is_low_power(),
+            device.is_headless(),
+            cpu_storage(&device),
+        );
+    }
+
     /// Le chemin d'un Mac Intel (#1238), joué sur le GPU qu'on a : un GPU Apple accepte aussi
     /// les textures `Managed`. Deux couleurs à la suite, parce que le défaut rapporté est une
     /// preview vide puis figée : une seule lecture ne verrait pas la seconde moitié.
@@ -3724,6 +3886,10 @@ mod tests {
         fn from_planes(w: u32, h: u32, y: &[u8], uv: &[u8]) -> FakeFrame {
             let pb = crate::mac_frames::nv12_pixel_buffer_from_planes(w, h, y, uv)
                 .expect("CVPixelBuffer NV12");
+            FakeFrame::from_pixel_buffer(w, h, pb)
+        }
+
+        fn from_pixel_buffer(w: u32, h: u32, pb: crate::mac_frames::CVPixelBufferRef) -> FakeFrame {
             let mut frame: Box<AVFrame> = Box::new(unsafe { std::mem::zeroed() });
             frame.format = crate::ffi::AVPixelFormat::AV_PIX_FMT_VIDEOTOOLBOX as i32;
             frame.data[3] = pb.as_ptr() as *mut u8;
@@ -3734,6 +3900,44 @@ mod tests {
 
         fn as_ptr(&self) -> *const AVFrame {
             &*self.frame as *const AVFrame
+        }
+    }
+
+    /// Les vues que `nv12_srvs` tire de chaque format biplanaire de VideoToolbox, sans
+    /// décoder ni fichier média. Un flux 10 bits (`x420`, `xf20`) se lit en plans 16 bits,
+    /// sinon l'image part en bandes (#1390). Une frame pleine plage (`420f`, `xf20`) porte un
+    /// 1 dans le bleu de sa vue CbCr : c'est le drapeau que `sample_yuv` lit.
+    #[test]
+    fn nv12_srvs_reads_bit_depth_and_range_from_the_pixel_format() {
+        use metal::MTLPixelFormat::{R16Unorm, R8Unorm, RG16Unorm, RG8Unorm};
+        use objc::{msg_send, sel, sel_impl};
+        #[repr(C)]
+        struct Swizzle([u8; 4]);
+        const SWIZZLE_ONE: u8 = 1;
+
+        let Ok(gpu) = crate::d3d::Gpu::create(false) else {
+            eprintln!("pas de device Metal — test sauté");
+            return;
+        };
+        let comp = super::Compositor::new_sized(&gpu, 64, 64).expect("Compositor::new_sized");
+        for (fourcc, y_fmt, uv_fmt, full_range) in [
+            (b"420v", R8Unorm, RG8Unorm, false),
+            (b"420f", R8Unorm, RG8Unorm, true),
+            (b"x420", R16Unorm, RG16Unorm, false),
+            (b"xf20", R16Unorm, RG16Unorm, true),
+        ] {
+            let name = std::str::from_utf8(fourcc).unwrap();
+            let pb = unsafe {
+                crate::mac_frames::create_nv12_pixel_buffer(64, 64, u32::from_be_bytes(*fourcc))
+            }
+            .unwrap_or_else(|e| panic!("{name} : {e}"));
+            let frame = FakeFrame::from_pixel_buffer(64, 64, pb);
+            let (y, uv) = unsafe { comp.nv12_srvs(frame.as_ptr()) }
+                .unwrap_or_else(|e| panic!("{name} : {e}"));
+            assert_eq!(y.pixel_format(), y_fmt, "{name} : plan Y");
+            assert_eq!(uv.pixel_format(), uv_fmt, "{name} : plan CbCr");
+            let swizzle: Swizzle = unsafe { msg_send![uv, swizzle] };
+            assert_eq!(swizzle.0[2] == SWIZZLE_ONE, full_range, "{name} : drapeau pleine plage");
         }
     }
 
@@ -4926,6 +5130,53 @@ mod tests {
         Some(corner_at(&comp, 2.0))
     }
 
+    /// `footage()` lit l'enregistrement à sa résolution, pas l'image composée : la source de 512 px
+    /// en colonnes d'un pixel est réduite à ~90 px sous le padding, où l'image composée ne les sépare
+    /// plus, mais chacune se lit blanche ou noire. Hors de 0..1, rien. Cf. compositor_windows.
+    #[test]
+    fn footage_reads_the_recording_at_its_own_resolution() {
+        let Ok(gpu) = crate::d3d::Gpu::create(false) else {
+            eprintln!("pas de device Metal — test sauté");
+            return;
+        };
+        let pixel = |code: &str| {
+            let comp = super::Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
+            comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(code, "image")]))));
+            let screen = FakeFrame::new(512, 512, |x, _| if x % 2 == 0 { 235 } else { 16 });
+            comp.set_timeline_time(Some(2.0));
+            comp.set_programme_time(Some(2.0));
+            unsafe { comp.compose_frame(screen.as_ptr(), screen.as_ptr(), 0.0, &fx_cfg()) }.expect("compose");
+            let (_, _, rgba) = unsafe { comp.readback_direct() }.expect("readback");
+            [rgba[0], rgba[1], rgba[2], rgba[3]]
+        };
+        let at = |x: &str| format!("fn effect(uv: vec2<f32>) -> vec4<f32> {{ return footage(vec2<f32>({x}, 0.5)); }}");
+        let near = |got: [u8; 4], want: [u8; 4]| got.iter().zip(want).all(|(g, w)| g.abs_diff(w) <= 2);
+        let white = pixel(&at("10.5 / 512.0"));
+        let black = pixel(&at("11.5 / 512.0"));
+        assert!(near(white, [255, 255, 255, 255]), "colonne 10 : {white:?}");
+        assert!(near(black, [0, 0, 0, 255]), "colonne 11 : {black:?}");
+        assert_eq!(pixel(&at("1.5")), [0, 0, 0, 0], "hors de l'enregistrement");
+        let composed = |x: &str| {
+            pixel(&format!("fn effect(uv: vec2<f32>) -> vec4<f32> {{ return frame(fx_from_footage(vec2<f32>({x}, 0.5))); }}"))
+        };
+        let (left, right) = (composed("10.5 / 512.0"), composed("11.5 / 512.0"));
+        assert!(left[0].abs_diff(right[0]) < 128, "l'image composée sépare les colonnes : {left:?} {right:?}");
+    }
+
+    /// La copie de l'enregistrement coûte une passe : un effet qui ne lit pas `footage()` ne la
+    /// fait jamais faire.
+    #[test]
+    fn an_effect_that_does_not_read_the_footage_never_paints_it() {
+        let Ok(gpu) = crate::d3d::Gpu::create(false) else {
+            eprintln!("pas de device Metal — test sauté");
+            return;
+        };
+        let comp = super::Compositor::new_sized(&gpu, 320, 180).expect("compositeur");
+        comp.set_scene(Some(shader_fx_scene(serde_json::json!([fx(INVERT, "image")]))));
+        corner_at(&comp, 2.0);
+        assert!(comp.footage_copy.borrow().is_none());
+    }
+
     /// La passe de l'agent repeint l'image composée, dans sa région et nulle part ailleurs. Le
     /// compositeur par défaut est celui de l'export : il attend la pipeline, jamais de frame sans.
     #[test]
@@ -5202,5 +5453,20 @@ mod tests {
         let t0 = std::time::Instant::now();
         crate::shader_fx::compile_metal(&gpu.device, &code, &params).expect("compile");
         eprintln!("recompilation d'une source déjà vue : {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
+    }
+
+    #[test]
+    fn matrix_swizzle_marks_matrix_and_depth() {
+        use AVColorSpace::*;
+        assert_eq!(
+            matrix_swizzle(AVCOL_SPC_SMPTE170M, false),
+            Some([SWZ_RED, SWZ_ONE, SWZ_ZERO, SWZ_ONE])
+        );
+        assert_eq!(
+            matrix_swizzle(AVCOL_SPC_BT2020_NCL, true),
+            Some([SWZ_RED, SWZ_ZERO, SWZ_ONE, SWZ_ZERO])
+        );
+        assert_eq!(matrix_swizzle(AVCOL_SPC_BT709, false), None);
+        assert_eq!(matrix_swizzle(AVCOL_SPC_BT2020_CL, true), None);
     }
 }

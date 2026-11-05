@@ -308,7 +308,8 @@
 			"right": "A destra",
 			"bottomLeft": "In basso a sinistra",
 			"bottom": "In basso",
-			"bottomRight": "In basso a destra"
+			"bottomRight": "In basso a destra",
+			"center": "Centro"
 		},
 		"selectPreset": "Seleziona predefinito",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Sfondo della fotocamera",
 		"helpNoWebcam": "Questo progetto non ha una webcam, quindi i controlli di layout sono disattivati e il preset mostra «Nessuna webcam». Il layout salvato viene conservato per quando aggiungerai una webcam.",
 		"title": "Disposizione camera",
-		"noWebcam": "Nessuna webcam"
+		"noWebcam": "Nessuna webcam",
+		"cameraTrack": "Layout fotocamera",
+		"fullscreenLayout": "Schermo intero",
+		"enableTrack": "Attiva traccia layout fotocamera",
+		"hideSegment": "Nascondi fotocamera in questo segmento",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Scivola a sinistra",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Effetti del mouse",
+		"mouseEffectsHint": "Tempi e posizione distinguono clic singoli e doppi. Nascondere il cursore non disattiva il suono.",
+		"noMouseClicks": "Questa registrazione non contiene clic acquisiti.",
 		"systemSource": "Audio di sistema",
 		"microphoneSource": "Microfono",
 		"outputGain": "Livello di uscita",
 		"help": "Le voci vengono livellate automaticamente a un volume percepito standard. Regola il livello di uscita a partire da lì; si applica allo stesso modo nell’anteprima e nell’esportazione.",
 		"reset": "Reimposta audio",
-		"title": "Audio"
+		"title": "Audio",
+		"mouseSoundPreset": "Set di suoni",
+		"mouseRealistic": "Realistico",
+		"mouseBubble": "Bolla"
 	},
 	"language": {
 		"title": "Lingua"

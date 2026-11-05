@@ -60,6 +60,7 @@ function styledSettings(): EditorSettingsSnapshot {
 			asArrow: ["text"],
 			clickImpact: true,
 			clickSound: true,
+			clickSoundPreset: "realistic",
 			clickSoundGainDb: 0,
 		},
 		cursorShow: false,

@@ -177,6 +177,9 @@ export interface McpToolDeps extends ImportMediaDeps {
 	/** The main process's on-device Qwen ASR (`SttManager.transcribe`). Absent: no transcribe tool. */
 	transcribe?(request: SttTranscribeRequest): Promise<SttTranscribeResponse>;
 	version: string;
+	/** `openscreen mcp` only: a newer OpenScreen to tell the user about, for the user who never
+	 *  opens the app and so never sees its update button. */
+	updateNotice?: string;
 }
 
 export const LIST_PROJECTS_TOOL = "listProjects";
@@ -287,15 +290,19 @@ export function mcpInstructions(options: {
 	media?: string;
 	/** The transcribe tool is served. */
 	transcribe?: boolean;
+	/** A newer OpenScreen to tell the user about (update-notice.ts). First, so it is not lost
+	 *  under the editing guidance. */
+	updateNotice?: string;
 }): string {
 	const { transport, editsAllowed, media } = options;
 	const preamble = [
+		...(options.updateNotice ? [options.updateNotice] : []),
 		...(media ? [media] : []),
 		...CORE_PREAMBLES[transport],
 		CHECKPOINT_LIFETIMES[transport],
 		...(media && !editsAllowed
 			? [
-					`startRecording, exportVideo and createProject are refused too while ${MCP_EDITS_SETTING} is off.`,
+					`startRecording, exportVideo, exportAudio and createProject are refused too while ${MCP_EDITS_SETTING} is off.`,
 				]
 			: []),
 		...(options.transcribe ? [TRANSCRIBE_NOTE] : []),
@@ -880,6 +887,7 @@ export function createOpenScreenMcpServer(
 				editsAllowed: deps.editsAllowed(),
 				media: media?.preamble,
 				transcribe: deps.transcribe !== undefined,
+				updateNotice: deps.updateNotice,
 			}),
 		},
 	);
