@@ -165,6 +165,7 @@ import { CaptionsPane } from "./CaptionsPane";
 import { ColorField } from "./ColorField";
 import { insertionsEnabled } from "./insertionsEnabled";
 import styles from "./NewEditorShell.module.css";
+import { QwenRuntimeNotice } from "./QwenRuntimeNotice";
 import { useRecordedCursorTypes } from "./recordedCursorTypes";
 import { useTranscriptionLabel } from "./TranscriptionStatus";
 import { transcriptionBusyLabel } from "./transcriptionBusyLabel";
@@ -1003,6 +1004,7 @@ export function TranscriptPane({
 				helpText={helpText}
 				actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
 			>
+				<QwenRuntimeNotice />
 				<div className={styles.transcriptExportRow}>
 					<CaptionSrtExport />
 				</div>
@@ -1057,6 +1059,7 @@ export function TranscriptPane({
 			helpText={helpText}
 			actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
 		>
+			<QwenRuntimeNotice />
 			<div className={styles.transcriptExportRow}>
 				<CaptionSrtExport />
 			</div>

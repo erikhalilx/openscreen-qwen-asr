@@ -108,13 +108,21 @@ def prepare(args):
     collect_licenses(runtime / "PYTHON-THIRD-PARTY-LICENSES.txt")
     values = {"python": str(Path(sys.executable).absolute()), "model": str(asr),
               "aligner": str(aligner), "vad": str(vad / "silero_vad.onnx")}
-    # A network-free import/inference check catches incompatible runtime wheels before config changes.
+    # Test that native extensions can load before publishing this device's configuration.
+    subprocess.run([sys.executable, "-I", "-c",
+                    "import mlx.core, mlx_qwen3_asr, numpy, onnxruntime"],
+                   check=True)
+    # Optional inference checks the full model path and alignment.
     if args.smoke_audio:
         request = {"version": 1, "wavPath": str(args.smoke_audio.resolve()),
                    "language": "zh", **{k: values[k] for k in ("model", "aligner", "vad")}}
         env = {**os.environ, "HF_HUB_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1"}
-        subprocess.run([sys.executable, "-I", str(HERE / "worker.py")],
-                       input=json.dumps(request), text=True, env=env, check=True)
+        result = subprocess.run([sys.executable, "-I", str(HERE / "worker.py")],
+                                input=json.dumps(request), text=True, env=env,
+                                stdout=subprocess.PIPE, check=True)
+        print(result.stdout, end="")
+        if not any(json.loads(line).get("type") == "result" for line in result.stdout.splitlines()):
+            raise ValueError("Qwen offline verification did not produce a result.")
     write_config(args.data_dir / "qwen.local.json", values)
     print("Qwen runtime and models verified. Device-local configuration saved outside the app.")
 
@@ -148,7 +156,7 @@ def main():
         python = runtime / "venv/bin/python"
         if not python.exists():
             subprocess.run(["uv", "venv", "--python", "3.12", str(runtime / "venv")], check=True)
-        subprocess.run(["uv", "pip", "sync", "--python", str(python),
+        subprocess.run(["uv", "pip", "sync", "--only-binary", ":all:", "--python", str(python),
                         str(HERE / "requirements.lock.txt")], check=True)
         # The subprocess imports only this new environment, with no shell/parent Python paths.
         command = [str(python), "-I", str(Path(__file__).resolve()), "--prepare-models",

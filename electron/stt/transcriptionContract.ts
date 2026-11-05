@@ -169,3 +169,5 @@ export interface SttVadSegment {
 	startSec: number;
 	endSec: number;
 }
+
+export type QwenRuntimeSetup = { kind: "ready" } | { kind: "unsupported" } | { kind: "missing" };

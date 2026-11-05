@@ -2672,6 +2672,21 @@ textarea.control {
   opacity: 0.8;
 }
 
+.qwenRuntimeNotice {
+	display: grid;
+	gap: 8px;
+	margin: 8px 16px 12px;
+	padding: 12px;
+	border: 1px solid var(--border);
+	border-radius: var(--r-md, 8px);
+	background: var(--surface-2);
+	font: 400 13px/1.5 var(--font-body);
+}
+.qwenRuntimeNotice ol {
+	padding-inline-start: 18px;
+	list-style: decimal;
+}
+
 .paneButton {
  display:flex; align-items:center; justify-content:center; gap:8px; width:100%;
  padding:10px 12px; border:1px solid var(--border); border-radius:var(--r-md, 8px);

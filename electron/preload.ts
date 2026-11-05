@@ -646,6 +646,9 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.send(AI_EDITION_OPEN_PROJECT_CHANNEL, projectId);
 	},
 	stt: {
+		saveQwenInstaller: (): Promise<boolean> => ipcRenderer.invoke("stt:save-qwen-installer"),
+		qwenRuntimeSetup: (): Promise<import("./stt/transcriptionContract").QwenRuntimeSetup> =>
+			ipcRenderer.invoke("stt:qwen-runtime-setup"),
 		transcribe: (request: SttTranscribeRequest): Promise<SttTranscribeResponse> => {
 			return ipcRenderer.invoke("stt:transcribe", request) as Promise<SttTranscribeResponse>;
 		},
