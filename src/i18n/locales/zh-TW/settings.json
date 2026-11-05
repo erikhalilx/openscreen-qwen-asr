@@ -1,4 +1,15 @@
 {
+	"qwenRuntime": {
+		"title": "補裝本機千問轉錄元件",
+		"requirements": "這台 Mac 缺少千問執行元件。安裝需要網路連線，請預留至少 8 GB 可用空間。",
+		"save": "儲存補裝指令稿",
+		"run": "按兩下儲存的 .command 檔案，終端機會開啟並執行安裝。",
+		"restart": "按 ⌘Q 完全結束 OpenScreen Qwen，重新開啟後再試轉錄。",
+		"saved": "補裝指令稿已儲存",
+		"saveFailed": "無法儲存補裝指令稿。",
+		"unsupported": "本機千問轉錄需要 Apple Silicon 晶片和 macOS 26 或更新版本。",
+		"unavailable": "無法檢查千問元件。請重新開啟應用程式後再試。"
+	},
 	"background": {
 		"motion": "動畫",
 		"motionNone": "無",

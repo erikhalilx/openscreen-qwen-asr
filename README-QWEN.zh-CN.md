@@ -2,10 +2,14 @@
 
 这是融合 [OpenScreen v2.2.1](https://github.com/getopenscreen/openscreen/releases/tag/v2.2.1) 的独立社区 Fork，默认使用 Qwen3-ASR-0.6B、Qwen3-ForcedAligner-0.6B 和 Silero VAD。保留录屏、编辑器、时间线、摄像头效果、原生预览、字幕、项目保存、导出及 CLI/MCP 源码。AI 聊天和翻译仍需用户配置自己的服务商。
 
+## 已安装应用的转录补装
+
+在工作室打开 **转录文本 → 字幕**。看到千问组件提示后，点击 **保存补装脚本**，双击保存的 `.command` 文件。安装需要联网，请预留至少 8 GB 可用空间。完成后按 ⌘Q 完全退出 OpenScreen Qwen，再重新打开并尝试转录。
+
 ## 设备要求
 
 - Apple Silicon Mac，**macOS 26 或以上**。这是固定版本 MLX 0.32.2 的运行要求；本版本不支持 Windows、Linux 或 Intel Mac 的 Qwen 推理。
-- Node.js **22.22.1**、npm **10.9.4**、[uv](https://docs.astral.sh/uv/getting-started/installation/)。使用 npm。
+- Node.js **22.22.1**、npm **10.9.4**。使用 npm。
 - Xcode（含命令行工具）及 [Rust](https://rust-lang.org/tools/install/)，用于编译修改过的录屏辅助程序和合成器。
 - 安装及原生编译预留至少 16 GB 空间，另需录屏和导出空间。16 GB 统一内存是已验证配置；并发软件仍会争用内存和 GPU。
 

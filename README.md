@@ -1,4 +1,10 @@
-# OpenScreen Qwen3-ASR 0.3
+# OpenScreen Qwen3-ASR 0.3.1
+
+## Version 0.3.1 / 0.3.1 版本
+
+The Transcript and Captions panels detect missing Qwen components. Save the installer script, double-click the `.command` file, and restart the app after setup.
+
+转录文本和字幕面板会检测缺少的千问组件。保存补装脚本，双击 `.command` 文件，安装完成后重启应用。
 
 ## Version 0.3 changes / 0.3 版本迭代
 
@@ -22,9 +28,15 @@ An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork wi
 
 [中文安装说明](README-QWEN.zh-CN.md) · [Models and verified downloads](models/README.md) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Privacy and publication](PUBLICATION.md) · [Upstream README](README-UPSTREAM.md)
 
+## Set up transcription on an installed app / 已安装应用的转录补装
+
+Open **Studio → Transcript → Captions**. If Qwen components are missing, choose **Save installer script** and double-click the saved `.command` file. Setup installs the pinned Python dependencies and verifies the downloaded models. Allow at least 8 GB free and an internet connection. When setup finishes, quit with Cmd+Q, reopen OpenScreen Qwen, and retry transcription.
+
+打开 **工作室 → 转录文本 → 字幕**。缺少千问组件时，点击 **保存补装脚本**，双击保存的 `.command` 文件。安装器会准备锁定版本的 Python 依赖并校验下载的模型。请保持联网并预留至少 8 GB 可用空间。安装完成后按 ⌘Q 完全退出，重新打开 OpenScreen Qwen，再尝试转录。
+
 ## Install from source
 
-Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled with that Node release), [uv](https://docs.astral.sh/uv/getting-started/installation/), Xcode with its command-line tools, and [Rust](https://rust-lang.org/tools/install/). Select Xcode with `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` if necessary. Use npm, as required by the Electron native module build. Allow at least 16 GB free for installation and native compilation, plus recordings/exports; 16 GB unified memory is the tested configuration, not a reservation against other apps.
+Install [Node.js 22.22.1](https://nodejs.org/en/download), npm 10.9.4 (bundled with that Node release), Xcode with its command-line tools, and [Rust](https://rust-lang.org/tools/install/). Select Xcode with `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` if necessary. Use npm, as required by the Electron native module build. Allow at least 16 GB free for installation and native compilation, plus recordings/exports; 16 GB unified memory is the tested configuration, not a reservation against other apps.
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git
@@ -51,7 +63,7 @@ The build first downloads the checksum-verified upstream **v2.1.2** native paylo
 
 ### 中文安装说明
 
-请先安装 [Node.js 22.22.1](https://nodejs.org/en/download)、npm 10.9.4（随该 Node.js 版本提供）、[uv](https://docs.astral.sh/uv/getting-started/installation/)、带命令行工具的 Xcode 和 [Rust](https://rust-lang.org/tools/install/)。必要时执行 `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` 选择 Xcode。本项目要求使用 npm，因为 Electron 原生模块的构建依赖它。安装和原生编译至少预留 16 GB 可用空间，另需为录制和导出预留空间；16 GB 统一内存是已测试配置，并不代表应用会独占这些内存。
+请先安装 [Node.js 22.22.1](https://nodejs.org/en/download)、npm 10.9.4（随该 Node.js 版本提供）、带命令行工具的 Xcode 和 [Rust](https://rust-lang.org/tools/install/)。必要时执行 `sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer` 选择 Xcode。本项目要求使用 npm，因为 Electron 原生模块的构建依赖它。安装和原生编译至少预留 16 GB 可用空间，另需为录制和导出预留空间；16 GB 统一内存是已测试配置，并不代表应用会独占这些内存。
 
 ```bash
 git clone https://github.com/erikhalilx/openscreen-qwen-asr.git

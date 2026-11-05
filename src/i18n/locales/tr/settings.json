@@ -1,4 +1,15 @@
 {
+	"qwenRuntime": {
+		"title": "Set up local Qwen transcription",
+		"requirements": "This Mac is missing Qwen components. Setup needs an internet connection and at least 8 GB of available space.",
+		"save": "Save installer script",
+		"run": "Double-click the saved .command file. Terminal opens and runs the installer.",
+		"restart": "Quit OpenScreen Qwen with Cmd+Q, reopen it, then retry transcription.",
+		"saved": "Installer script saved",
+		"saveFailed": "Could not save the installer script.",
+		"unsupported": "Local Qwen transcription requires an Apple Silicon Mac running macOS 26 or later.",
+		"unavailable": "Couldn't check the Qwen setup. Reopen the app and try again."
+	},
 	"background": {
 		"motion": "Animasyon",
 		"motionNone": "Yok",

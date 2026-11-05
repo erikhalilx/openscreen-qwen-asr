@@ -544,6 +544,8 @@ interface Window {
 		onRequestCloseConfirm: (callback: () => void) => () => void;
 		sendCloseConfirmResponse: (choice: "save" | "discard" | "cancel") => void;
 		stt: {
+			saveQwenInstaller?: () => Promise<boolean>;
+			qwenRuntimeSetup?: () => Promise<import("./stt/transcriptionContract").QwenRuntimeSetup>;
 			transcribe: (
 				request: import("./stt/transcriptionContract").SttTranscribeRequest,
 			) => Promise<import("./stt/transcriptionContract").SttTranscribeResponse>;
