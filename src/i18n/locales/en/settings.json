@@ -308,7 +308,8 @@
 			"right": "Right",
 			"bottomLeft": "Bottom left",
 			"bottom": "Bottom",
-			"bottomRight": "Bottom right"
+			"bottomRight": "Bottom right",
+			"center": "Center"
 		},
 		"selectPreset": "Select preset",
 		"bgModes": {
@@ -329,7 +330,16 @@
 		"webcamBackground": "Camera background",
 		"helpNoWebcam": "This project has no camera, so the layout controls are off and the preset reads “No webcam”. Your saved layout is kept for when a camera is added.",
 		"title": "Camera layout",
-		"noWebcam": "No webcam"
+		"noWebcam": "No webcam",
+		"cameraTrack": "Camera layouts",
+		"fullscreenLayout": "Fullscreen",
+		"enableTrack": "Enable camera layout track",
+		"hideSegment": "Hide camera in this segment",
+		"segmentHelp": "Settings apply only to this segment. Adjacent layouts animate smoothly; empty track intervals hide the camera while keeping audio.",
+		"trackHelp": "Camera layouts are controlled on the timeline. Select a camera segment to edit it. Empty intervals hide the camera while keeping audio.",
+		"newSegmentDefaults": "Default style for new camera segments",
+		"connectedStart": "Connected to the previous camera segment",
+		"connectedEnd": "Connected to the next camera segment"
 	},
 	"textAnimation": {
 		"slideLeft": "Slide left",
@@ -397,12 +407,18 @@
 		}
 	},
 	"audio": {
+		"mouseEffects": "Mouse sound effects",
+		"mouseEffectsHint": "Recorded click timing and position select single or double sounds. Hiding the cursor does not mute them.",
+		"noMouseClicks": "This recording has no captured clicks to add sound to.",
 		"systemSource": "System audio",
 		"microphoneSource": "Microphone",
 		"outputGain": "Output level",
 		"help": "Voices are levelled to a standard loudness automatically. Adjust the output level from there; it applies identically in the preview and the export.",
 		"reset": "Reset audio",
-		"title": "Audio"
+		"title": "Audio",
+		"mouseSoundPreset": "Sound set",
+		"mouseRealistic": "Realistic",
+		"mouseBubble": "Bubble"
 	},
 	"language": {
 		"title": "Language"

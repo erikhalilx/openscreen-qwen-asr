@@ -1,3 +1,4 @@
+import { layoutCameraSettings } from "@/lib/ai-edition/layoutCamera";
 // Hosts the native D3D preview canvas (the sole pixel source) plus the
 // interactive-only DOM overlays (zoom gimbal, annotations, webcam drag) that
 // still need real hitboxes. The shared source of truth is `useEditorSettings`,
@@ -33,6 +34,7 @@ import {
 	type ZoomFocus,
 } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
+import { materializeLayouts, sampleLayoutRegionsAt } from "@/lib/ai-edition/document/layout";
 import {
 	isFormatFillActive,
 	resolveAspectRatioValue,
@@ -53,6 +55,7 @@ import { locateVirtualPosition } from "@/lib/ai-edition/timeline/virtual-preview
 import {
 	computeCameraFullscreenRect,
 	computeCompositeLayout,
+	interpolateCompositeLayout,
 	paddedContentSize,
 	resolveWebcamLayoutPreset,
 	type WebcamCompositeLayout,
@@ -85,6 +88,7 @@ interface PreviewCanvasProps {
 	clips: AxcutClip[];
 	zoomRegions?: AxcutZoomRegion[];
 	speedRegions?: SpeedRegion[];
+	playUneditedTimeline?: boolean;
 	cameraFullscreenRegions?: CameraFullscreenRegion[];
 	trimRanges?: AxcutTrimRange[];
 	/** Relayed to `VirtualPreview` so a clip carrying added words plays their extensions. */
@@ -99,7 +103,7 @@ interface PreviewCanvasProps {
 	onAnnotationChange?: (id: string, patch: Partial<AxcutAnnotationRegion>) => void;
 	onAnnotationBlurDataChange?: (id: string, blurData: BlurData) => void;
 	onAnnotationCommit?: () => void;
-	seekTarget: { timeSec: number; requestId: number } | null;
+	seekTarget: { timeSec: number; requestId: number; preservePlayback?: boolean } | null;
 	onTimeChange: (sec: number) => void;
 	onSeek: (sec: number) => void;
 	onLoadedMetadata: (sec: number, assetId: string) => void;
@@ -124,6 +128,7 @@ interface PreviewCanvasProps {
 // (the <video> contain-fits its true ratio within a box sized for the wrong
 // one), on top of the intentional `settings.padding` margin.
 const SCREEN_SOURCE_SIZE = { width: 1920, height: 1080 };
+const NO_SPEED_REGIONS: SpeedRegion[] = [];
 
 export function PreviewCanvas(props: PreviewCanvasProps) {
 	const te = useScopedT("editor");
@@ -253,17 +258,20 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 			),
 		[activeCameraTrack, settings.webcamCropRegion, webcamSizeRevision],
 	);
+	const layoutRegions = useMemo(() => (document ? materializeLayouts(document) : []), [document]);
+	const sample = useMemo(
+		() => sampleLayoutRegionsAt(layoutRegions, props.currentTimeSec, settings.webcamLayoutPreset),
+		[layoutRegions, props.currentTimeSec, settings.webcamLayoutPreset],
+	);
+	const activePreset = resolveWebcamLayoutPreset(sample.preset, activeClipHasCamera);
 
 	const formatFill = useMemo(() => (document ? isFormatFillActive(document) : false), [document]);
 	const layout = useMemo(() => {
 		// A clip with no camera lays out as "no-webcam", whatever the panel says. Hiding
 		// only the webcam slot is not enough: the block presets size the SCREEN off the
 		// block, so the screen stayed squeezed into its half with nothing beside it.
-		const preset = resolveWebcamLayoutPreset(
-			settings.webcamLayoutPreset as WebcamLayoutPreset,
-			activeClipHasCamera,
-		);
-		const mask = settings.webcamMaskShape as WebcamMaskShape;
+		const preset = activePreset;
+
 		// Padding shrinks the available content area for ALL layouts (PiP/dual/stack),
 		// through the same `paddedContentSize` the scene description uses.
 		const maxContentSize = paddedContentSize(
@@ -280,27 +288,39 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 			width: Math.max(1, Math.round(fullScreenSize.width * cropRegion.width)),
 			height: Math.max(1, Math.round(fullScreenSize.height * cropRegion.height)),
 		};
-		return computeCompositeLayout({
-			canvasSize: frameSize,
-			maxContentSize,
-			// Same box as the scene: a filled format gives the screen the whole padded area.
-			screenSize: formatFill ? maxContentSize : croppedScreenSize,
-			webcamSize: preset === "no-webcam" ? null : webcamSourceSize,
-			layoutPreset: preset,
-			webcamSizePreset: settings.webcamSizePreset,
-			// Picture-in-picture only: the block layouts place and round their own camera.
-			webcamAnchor: settings.webcamAnchor,
-			webcamMaskShape: mask,
-			webcamRoundness: settings.webcamRoundness,
-			frame: settings.frame,
-		});
+		const compute = (
+			layoutPreset: WebcamLayoutPreset,
+			camera = document ? layoutCameraSettings(document, sample.region) : null,
+		) =>
+			computeCompositeLayout({
+				canvasSize: frameSize,
+				maxContentSize,
+				// Same box as the scene: a filled format gives the screen the whole padded area.
+				screenSize: formatFill ? maxContentSize : croppedScreenSize,
+				webcamSize: layoutPreset === "no-webcam" ? null : webcamSourceSize,
+				layoutPreset,
+				webcamSizePreset: camera?.size ?? settings.webcamSizePreset,
+				// Picture-in-picture only: the block layouts place and round their own camera.
+				webcamAnchor: camera?.anchor ?? settings.webcamAnchor,
+				webcamMaskShape: camera?.shape ?? settings.webcamMaskShape,
+				webcamRoundness: camera?.roundness ?? settings.webcamRoundness,
+				frame: settings.frame,
+			});
+		const target = compute(preset);
+		const from =
+			sample.fromPreset && sample.progress < 1
+				? compute(
+						resolveWebcamLayoutPreset(sample.fromPreset, activeClipHasCamera),
+						document ? layoutCameraSettings(document, sample.previous) : null,
+					)
+				: null;
+		return target && from ? interpolateCompositeLayout(from, target, sample.progress) : target;
 	}, [
 		frameSize,
 		screenNativeSize,
 		cropRegion,
 		activeClipHasCamera,
 		webcamSourceSize,
-		settings.webcamLayoutPreset,
 		settings.webcamMaskShape,
 		settings.webcamSizePreset,
 		settings.webcamAnchor,
@@ -309,19 +329,28 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 		settings.aspectRatio,
 		formatFill,
 		settings.frame,
+		activePreset,
+		sample.fromPreset,
+		sample.progress,
+		document,
+		sample.region,
+		sample.previous,
 	]);
 
 	// Full Camera: during a cameraFullscreen region the webcam takes the whole
 	// frame and eases back. Same `computeCameraFullscreenRect` call as both
 	// exporters and the native compositor, so all four animate identically.
+	const cameraFullscreenSpeedRegions = props.playUneditedTimeline
+		? NO_SPEED_REGIONS
+		: props.speedRegions;
 	const cameraFullscreenProgress = useMemo(
 		() =>
 			computeCameraFullscreenProgress(
 				props.cameraFullscreenRegions ?? [],
 				Math.round(props.currentTimeSec * 1000),
-				props.speedRegions,
+				cameraFullscreenSpeedRegions,
 			),
-		[props.cameraFullscreenRegions, props.currentTimeSec, props.speedRegions],
+		[props.cameraFullscreenRegions, props.currentTimeSec, cameraFullscreenSpeedRegions],
 	);
 	const effectiveLayout = useMemo<WebcamCompositeLayout | null>(() => {
 		if (!layout?.webcamRect || cameraFullscreenProgress <= 0) return layout;
@@ -381,7 +410,12 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 	};
 
 	const handleWebcamPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
-		if (settings.webcamLayoutPreset !== "picture-in-picture") return;
+		if (
+			activePreset !== "picture-in-picture" ||
+			sample.progress < 1 ||
+			cameraFullscreenProgress > 0
+		)
+			return;
 		if (isPlaying) return;
 		const slot = webcamSlotRef.current;
 		if (!slot) return;
@@ -424,7 +458,8 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 		slot.addEventListener("pointercancel", handleUp);
 	};
 
-	const isPipGrab = settings.webcamLayoutPreset === "picture-in-picture";
+	const isPipGrab =
+		activePreset === "picture-in-picture" && sample.progress >= 1 && cameraFullscreenProgress <= 0;
 
 	const selectedZoomRegion = props.selectedZoomRegionId
 		? (props.zoomRegions?.find((z) => z.id === props.selectedZoomRegionId) ?? null)
@@ -443,7 +478,7 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 			    interactive-only layers (ZoomFocusOverlay, AnnotationLayer, webcam drag
 			    hitbox) still render on top as normal DOM so they stay clickable. No more
 			    dual preview path. */}
-			<NativeCompositorOverlay />
+			<NativeCompositorOverlay playUneditedTimeline={props.playUneditedTimeline} />
 			{layout?.screenRect ? (
 				<div className={styles.screenStage} style={screenStyle}>
 					{(() => {

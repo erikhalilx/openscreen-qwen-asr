@@ -4,9 +4,15 @@
 import { describe, expect, it } from "vitest";
 import { executeAgentTool } from "../../electron/ai-edition/agent-tools";
 import { type AxcutDocument, documentSchema } from "../../src/lib/ai-edition/schema";
-import { recordingWithSilences, singleClip, twoClipsWithTrim } from "../lib/fixtures";
+import {
+	recordingWithSilences,
+	singleClip,
+	twoClipsWithTrim,
+	withCameraTrack,
+} from "../lib/fixtures";
 import {
 	assetDuration,
+	buildEvalContext,
 	classifyFailure,
 	compressedDurationSec,
 	diffMatches,
@@ -77,6 +83,27 @@ describe("unplayableRegions", () => {
 		expect(unplayableRegions(document).map((r) => r.kind)).toEqual(["zoom"]);
 	});
 
+	it("catches an anchored layout outside its clip's source window", () => {
+		const document = documentSchema.parse({
+			...singleClip(),
+			layoutRegions: [
+				{
+					id: "layout_far",
+					preset: "no-webcam",
+					startMs: 120_000,
+					endMs: 130_000,
+					clipId: "clip_1",
+					sourceStartSec: 120,
+					sourceEndSec: 130,
+				},
+			],
+		});
+		expect(unplayableRegions(document)).toEqual([{ kind: "layout", id: "layout_far" }]);
+		expect(documentInvariants(document).some((v) => v.rule === "regions.anchor-in-window")).toBe(
+			true,
+		);
+	});
+
 	it("no longer has to: the tool refuses a span that covers no clip", () => {
 		// D-HONEST. `addZoom 120→130` on a 24.7 s recording used to answer ok:true
 		// with "added zoom 2:00.0 – 2:10.0" and store a region that can never
@@ -104,6 +131,82 @@ describe("unplayableRegions", () => {
 });
 
 describe("diffMatches", () => {
+	it("does not compare an earlier layout report with a later settings write", () => {
+		const before = withCameraTrack();
+		const first = apply(before, "addLayoutChange", { timeSec: 5, preset: "camera-only" });
+		const last = apply(first.document, "setEditorSettings", { webcamLayoutPreset: "no-webcam" });
+		expect(first.call.resultOk).toBe(true);
+		expect(last.call.resultOk).toBe(true);
+		expect(JSON.parse(last.call.resultJson ?? "{}").layoutSegments).toBeUndefined();
+		expect(diffMatches(last.document, first.call)).toBe(false);
+		const context = buildEvalContext({
+			answer: "",
+			before,
+			after: last.document,
+			mutated: true,
+			run: { ok: true, ms: 1 },
+			wire: {
+				systemBlocks: [],
+				systemChars: 0,
+				systemSha256: "",
+				toolsSent: [],
+				toolNames: [],
+				toolsSha256: "",
+				rounds: 1,
+				calls: [first.call, last.call],
+			},
+		});
+		expect(context.diffMatches(first.call)).toBe(true);
+	});
+
+	it("still verifies layout reports when only a read follows", () => {
+		const before = withCameraTrack();
+		const { document, call } = apply(before, "addLayoutChange", {
+			timeSec: 5,
+			preset: "camera-only",
+		});
+		const read = { ...apply(document, "getCurrentDocument", {}).call, mutating: false };
+		const check = (reported: WireCall) =>
+			buildEvalContext({
+				answer: "",
+				before,
+				after: document,
+				mutated: true,
+				run: { ok: true, ms: 1 },
+				wire: {
+					systemBlocks: [],
+					systemChars: 0,
+					systemSha256: "",
+					toolsSent: [],
+					toolNames: [],
+					toolsSha256: "",
+					rounds: 1,
+					calls: [reported, read],
+				},
+			}).diffMatches(reported);
+		expect(check(call)).toBe(true);
+		expect(check({ ...call, resultJson: JSON.stringify({ layoutSegments: [] }) })).toBe(false);
+	});
+
+	it("checks the whole layout partition returned by the tool against the document", () => {
+		const { document, call } = apply(withCameraTrack(), "addLayoutChange", {
+			timeSec: 5,
+			preset: "camera-only",
+		});
+		expect(call.resultOk).toBe(true);
+		expect(diffMatches(document, call)).toBe(true);
+		const report = JSON.parse(call.resultJson ?? "{}");
+		for (const field of ["preset", "startSec", "endSec", "id"]) {
+			const changed = structuredClone(report);
+			changed.layoutSegments[1][field] =
+				typeof changed.layoutSegments[1][field] === "number" ? 999 : "invented";
+			expect(diffMatches(document, { ...call, resultJson: JSON.stringify(changed) })).toBe(false);
+		}
+		expect(
+			diffMatches(document, { ...call, resultJson: JSON.stringify({ layoutSegments: [] }) }),
+		).toBe(false);
+	});
+
 	it("accepts a tool whose report matches the document", () => {
 		const { document, call } = apply(singleClip(), "addTrim", { startSec: 5, endSec: 8 });
 		expect(diffMatches(document, call)).toBe(true);

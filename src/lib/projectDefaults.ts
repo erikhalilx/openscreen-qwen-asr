@@ -67,15 +67,15 @@ export function readRecordingFrame(
 }
 
 /**
- * Where the picture-in-picture camera sits: a corner or the middle of an edge, always the
- * same distance from the border of the frame. Never a free position: a camera dropped
- * anywhere else ended up against an edge or over the middle of the screen.
+ * Where the picture-in-picture camera sits: nine aligned positions on a 3×3 grid.
+ * Edge positions keep a constant margin; the centre shares the edge-middle axes.
  */
 export const WEBCAM_ANCHORS = [
 	"top-left",
 	"top",
 	"top-right",
 	"left",
+	"center",
 	"right",
 	"bottom-left",
 	"bottom",
@@ -84,30 +84,37 @@ export const WEBCAM_ANCHORS = [
 
 export type WebcamAnchor = (typeof WEBCAM_ANCHORS)[number];
 
+export const WEBCAM_ANCHOR_LABEL_KEYS: Record<WebcamAnchor, string> = {
+	"top-left": "layout.anchors.topLeft",
+	top: "layout.anchors.top",
+	"top-right": "layout.anchors.topRight",
+	left: "layout.anchors.left",
+	center: "layout.anchors.center",
+	right: "layout.anchors.right",
+	"bottom-left": "layout.anchors.bottomLeft",
+	bottom: "layout.anchors.bottom",
+	"bottom-right": "layout.anchors.bottomRight",
+};
+
 export function isWebcamAnchor(value: unknown): value is WebcamAnchor {
 	return (WEBCAM_ANCHORS as readonly unknown[]).includes(value);
 }
 
-/** The anchor grid, row by row. The middle cell is no place for a camera. */
+/** Nine aligned anchors, including the centre of the frame. */
 export const WEBCAM_ANCHOR_GRID = [
 	["top-left", "top", "top-right"],
-	["left", null, "right"],
+	["left", "center", "right"],
 	["bottom-left", "bottom", "bottom-right"],
 ] as const satisfies readonly (readonly (WebcamAnchor | null)[])[];
 
 /**
- * The anchor nearest a point of the frame, in fractions of it: the cell of a 3x3 grid, and
- * from the middle cell the nearer edge. What the camera snaps to when it is dragged, and what
+ * The anchor nearest a point of the frame, in fractions of it: the cell of a 3×3 grid. What the camera snaps to when it is dragged, and what
  * a free position stored by an older build reads as.
  */
 export function webcamAnchorAt(cx: number, cy: number): WebcamAnchor {
 	const cell = (v: number) => (v < 1 / 3 ? 0 : v > 2 / 3 ? 2 : 1);
-	let col = cell(cx);
-	let row = cell(cy);
-	if (col === 1 && row === 1) {
-		if (Math.abs(cy - 0.5) >= Math.abs(cx - 0.5)) row = cy < 0.5 ? 0 : 2;
-		else col = cx < 0.5 ? 0 : 2;
-	}
+	const col = cell(cx);
+	const row = cell(cy);
 	return WEBCAM_ANCHOR_GRID[row][col] ?? "bottom-right";
 }
 
@@ -123,7 +130,17 @@ export function readWebcamAnchor(anchor: unknown, legacyPosition: unknown): Webc
 	if (isWebcamAnchor(anchor)) return anchor;
 	const p = legacyPosition as { cx?: unknown; cy?: unknown } | null | undefined;
 	if (p && typeof p.cx === "number" && typeof p.cy === "number") {
-		return webcamAnchorAt(p.cx, p.cy);
+		const nearest = webcamAnchorAt(p.cx, p.cy);
+		// Free positions predate the centre anchor. Preserve their eight-position rendering;
+		// a newly chosen centre is saved explicitly as webcamAnchor: "center".
+		if (nearest !== "center") return nearest;
+		return Math.abs(p.cy - 0.5) >= Math.abs(p.cx - 0.5)
+			? p.cy < 0.5
+				? "top"
+				: "bottom"
+			: p.cx < 0.5
+				? "left"
+				: "right";
 	}
 	return "bottom-right";
 }
@@ -202,7 +219,7 @@ export interface ProjectAppearanceDefaults {
 	depthOfField: boolean;
 	borderRadius: number;
 	padding: number;
-	webcamLayoutPreset: "picture-in-picture" | "vertical-stack" | "dual-frame" | "no-webcam";
+	webcamLayoutPreset: import("./layoutTypes").LayoutPreset;
 	/** The camera's proportions: cropped square or its own ("rectangle"). See `readWebcamMask`. */
 	webcamMaskShape: WebcamMask;
 	/** 0 square corners to 1 fully round. See `DEFAULT_WEBCAM_ROUNDNESS`. */
@@ -223,6 +240,7 @@ export interface ProjectAppearanceDefaults {
 		asArrow: CursorKind[];
 		clickImpact: boolean;
 		clickSound: boolean;
+		clickSoundPreset: "realistic" | "bubble";
 		clickSoundGainDb: number;
 		autoHide: boolean;
 	};
@@ -264,7 +282,8 @@ export const DEFAULT_PROJECT_APPEARANCE: ProjectAppearanceDefaults = {
 		// 3.6 draws a 98 px arrow in a 1080p export, about five times the system one: the cursor
 		// effects are part of the product, and a smaller arrow plays them down. 6 reaches 164 px.
 		size: 3.6,
-		smoothing: 0.67,
+		// About 95 ms of spring lag: 0.67 trailed the pointer by 190 ms, 150 px on a quick click.
+		smoothing: 0.3,
 		motionBlur: 0.35,
 		// A light tap: 2.5 squashed the arrow to 40% and threw it to 140% in 260 ms on every click.
 		clickBounce: 1,
@@ -274,6 +293,7 @@ export const DEFAULT_PROJECT_APPEARANCE: ProjectAppearanceDefaults = {
 		asArrow: ["text", "grab", "resize", "busy", "crosshair", "not-allowed", "help", "up-arrow"],
 		clickImpact: false,
 		clickSound: false,
+		clickSoundPreset: "realistic",
 		clickSoundGainDb: 0,
 		autoHide: false,
 	},

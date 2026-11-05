@@ -11,8 +11,8 @@ import {
 	takeCrossedClickHits,
 } from "@/lib/ai-edition/clickSound";
 import {
-	collapseTracksToPills,
 	resolveFadeSecs,
+	takesByHeadFragment,
 	trackGroupId,
 } from "@/lib/ai-edition/document/audioTracks";
 import {
@@ -453,7 +453,14 @@ interface VirtualPreviewProps {
 	zoomRegions?: AxcutZoomRegion[];
 	speedRegions?: SpeedRegion[];
 	trimRanges?: AxcutTrimRange[];
-	seekTarget?: { timeSec: number; isSource?: boolean; requestId: number } | null;
+	/** Play the raw timeline continuously while capturing a voiceover. */
+	playUneditedTimeline?: boolean;
+	seekTarget?: {
+		timeSec: number;
+		isSource?: boolean;
+		requestId: number;
+		preservePlayback?: boolean;
+	} | null;
 	onTimeChange?: (timeSec: number) => void;
 	onLoadedMetadata?: (
 		durationSec: number,
@@ -485,6 +492,9 @@ interface VirtualPreviewProps {
 	cropRegion?: CropRegion | null;
 }
 
+const NO_TRIM_RANGES: AxcutTrimRange[] = [];
+const NO_SPEED_REGIONS: SpeedRegion[] = [];
+
 export function VirtualPreview({
 	videoSources,
 	audioTracks = [],
@@ -493,6 +503,7 @@ export function VirtualPreview({
 	zoomRegions = [],
 	speedRegions = [],
 	trimRanges = [],
+	playUneditedTimeline = false,
 	seekTarget,
 	onTimeChange,
 	onLoadedMetadata,
@@ -504,6 +515,8 @@ export function VirtualPreview({
 	cropRegion,
 }: VirtualPreviewProps) {
 	const { settings } = useEditorSettings();
+	const playbackTrimRanges = playUneditedTimeline ? NO_TRIM_RANGES : trimRanges;
+	const playbackSpeedRegions = playUneditedTimeline ? NO_SPEED_REGIONS : speedRegions;
 	// ponytail: an oversized, offset video inside .videoFrame's overflow:hidden
 	// box — the same "scale + negative-position the full frame, let the
 	// container clip the rest" technique the export renderer uses via a Pixi
@@ -580,6 +593,12 @@ export function VirtualPreview({
 	const activeClipIdRef = useRef<string | null>(null);
 	const [virtualTimeSec, setVirtualTimeSec] = useState(0);
 	const [loadState, setLoadState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+	const loadStateRef = useRef(loadState);
+	loadStateRef.current = loadState;
+	const updateLoadState = useCallback((nextState: "idle" | "loading" | "ready" | "error") => {
+		loadStateRef.current = nextState;
+		setLoadState(nextState);
+	}, []);
 	const [sourceIndex, setSourceIndex] = useState(0);
 
 	const virtualDurationSec = useMemo(() => totalVirtualDuration(clips), [clips]);
@@ -870,8 +889,8 @@ export function VirtualPreview({
 	// Same reason as `clipsRef`: the rAF projects the playhead and each imported
 	// audio track's head raw→output every frame (see the audio-track loop), and
 	// must see the live trims, not the set captured when the loop was created.
-	const trimRangesRef = useRef(trimRanges);
-	trimRangesRef.current = trimRanges;
+	const trimRangesRef = useRef(playbackTrimRanges);
+	trimRangesRef.current = playbackTrimRanges;
 	// What the film no longer contains, recomputed only when the cuts move — the rAF asks
 	// it once per voiceover per frame, and walking every trim there would be wasteful.
 	// The film's pauses, placed on the raw ruler once. The projection needs them or every
@@ -879,23 +898,25 @@ export function VirtualPreview({
 	// One walk per take, recomputed only when the cuts or the insertions move. The rAF asks
 	// it every frame per track, and walking on each would be wasteful.
 	const takePiecesRef = useRef<Map<string, TakePiece[]>>(new Map());
-	const takeHeadsRef = useRef<Map<string, string>>(new Map());
-	const removedRef = useRef(removedRawSpans(clips, trimRanges));
-	removedRef.current = useMemo(() => removedRawSpans(clips, trimRanges), [clips, trimRanges]);
+	// Each take keyed by the fragment whose element plays it, as the export mixes it.
+	const takesRef = useRef<Map<string, AxcutAudioTrack>>(new Map());
+	const removedRef = useRef(removedRawSpans(clips, playbackTrimRanges));
+	removedRef.current = useMemo(
+		() => removedRawSpans(clips, playbackTrimRanges),
+		[clips, playbackTrimRanges],
+	);
 	const takeWalks = useMemo(() => {
 		const pieces = new Map<string, TakePiece[]>();
-		const heads = new Map<string, string>();
-		const removed = removedRawSpans(clips, trimRanges);
-		for (const pill of collapseTracksToPills(audioTracks)) {
+		const removed = removedRawSpans(clips, playbackTrimRanges);
+		const takes = takesByHeadFragment(audioTracks);
+		for (const pill of takes.values()) {
 			if (pill.kind !== "voiceover" || pill.loop) continue;
-			const groupId = trackGroupId(pill);
-			heads.set(groupId, pill.id);
-			pieces.set(groupId, takeProgramme(pill, removed));
+			pieces.set(trackGroupId(pill), takeProgramme(pill, removed));
 		}
-		return { pieces, heads };
-	}, [audioTracks, clips, trimRanges]);
+		return { pieces, takes };
+	}, [audioTracks, clips, playbackTrimRanges]);
 	takePiecesRef.current = takeWalks.pieces;
-	takeHeadsRef.current = takeWalks.heads;
+	takesRef.current = takeWalks.takes;
 	// Trim-narrowed (`resolvePlaybackSegments`) — used ONLY to detect "has the <video>'s own
 	// currentTime drifted into a trim" and where to jump it back out to. Everything ELSE in
 	// this component (`clips`/`clipsRef` above, virtualTimeSec, zoom/speed region lookups,
@@ -907,8 +928,8 @@ export function VirtualPreview({
 	// source time to a RAW virtual time that jumps discontinuously by exactly the trim's
 	// width the moment the video itself jumps — matching the marker's own pixel span.
 	const playbackClips = useMemo(
-		() => resolvePlaybackSegments(clips, trimRanges),
-		[clips, trimRanges],
+		() => resolvePlaybackSegments(clips, playbackTrimRanges),
+		[clips, playbackTrimRanges],
 	);
 	const playbackClipsRef = useRef(playbackClips);
 	playbackClipsRef.current = playbackClips;
@@ -920,8 +941,8 @@ export function VirtualPreview({
 	virtualTimeSecRef.current = virtualTimeSec;
 	const virtualDurationSecRef = useRef(virtualDurationSec);
 	virtualDurationSecRef.current = virtualDurationSec;
-	const speedRegionsRef = useRef(speedRegions);
-	speedRegionsRef.current = speedRegions;
+	const speedRegionsRef = useRef(playbackSpeedRegions);
+	speedRegionsRef.current = playbackSpeedRegions;
 	// Imported audio tracks (issue #350): the rAF reads these through refs, same as
 	// everything else it touches, so a track added/edited mid-playback is picked up
 	// without re-creating the loop. `audioTrackElsRef` maps a track id to its mounted
@@ -1037,9 +1058,18 @@ export function VirtualPreview({
 				}
 			}
 			duck.db = nextMusicDuckDb(duck.db, (now - duck.voiceAt) / 1000, frameSec);
-			for (const track of audioTracksRef.current) {
-				const el = audioTrackElsRef.current.get(track.id);
+			for (const fragment of audioTracksRef.current) {
+				const el = audioTrackElsRef.current.get(fragment.id);
 				if (!el) continue;
+				// A take plays once, from its head fragment's element, as its whole pill: the
+				// document keeps one fragment per clip the take covers, and letting each play its
+				// own slice put a bed back on the ruler under a speed region (see
+				// `takesByHeadFragment`), and a voiceover on top of itself.
+				const track = fragment.recordingSource ? fragment : takesRef.current.get(fragment.id);
+				if (!track) {
+					if (!el.paused) el.pause();
+					continue;
+				}
 				const outputStartSec = projectRawTimelineSecToPlayback(
 					clipsRef.current,
 					trimRangesRef.current,
@@ -1066,22 +1096,15 @@ export function VirtualPreview({
 						),
 				);
 				// A voiceover follows the cuts AND its own insertions, through one walk over
-				// its PILL. Every fragment but the head is silenced: the document keeps one
-				// per clip the take covers, and letting each play its own slice would put the
-				// take on top of itself, exactly as it would in the export.
+				// its pill.
 				//
 				// A bed plays through a cut and ends early, on purpose. A looping voiceover
 				// keeps the bed's treatment — step 6 of #560 refuses that combination, and
 				// inventing semantics for it would be the worse answer.
-				const takeGroupId = trackGroupId(track);
 				const takePieces =
 					track.kind === "voiceover" && !track.loop
-						? takePiecesRef.current.get(takeGroupId)
+						? takePiecesRef.current.get(trackGroupId(track))
 						: undefined;
-				if (takePieces && takeHeadsRef.current.get(takeGroupId) !== track.id) {
-					if (!el.paused) el.pause();
-					continue;
-				}
 				const trackTarget = track.recordingSource
 					? {
 							targetTimeSec: Math.max(
@@ -1126,7 +1149,7 @@ export function VirtualPreview({
 				} else if (!track.recordingSource) {
 					trackGainDb += duck.db;
 				}
-				const trackGainNode = audioTrackGainNodesRef.current.get(track.id);
+				const trackGainNode = audioTrackGainNodesRef.current.get(fragment.id);
 				if (trackGainNode) {
 					trackGainNode.gain.value = audioGainScalar(trackGainDb) * fade;
 					if (el.volume !== 1) el.volume = 1;
@@ -1176,10 +1199,32 @@ export function VirtualPreview({
 			// position rather than jumping. Note this cannot ride on `v.paused`,
 			// the gate the rest of the tick uses — an `error` does not fire
 			// `pause`, so a failure mid-playback leaves `paused` false.
-			if (recoveringRef.current) {
+			// Same for in-flight pending seeks or loads: the element's currentTime is
+			// stale or 0 and must not trigger clip boundary or trim fallbacks.
+			if (
+				recoveringRef.current ||
+				v.seeking ||
+				pendingSeekRef.current !== null ||
+				loadStateRef.current === "loading"
+			) {
 				return;
 			}
 			const activeSourceId = videoSourcesRef.current[sourceIndexRef.current]?.id;
+			if (isProgrammaticSeekRef.current) {
+				isProgrammaticSeekRef.current = false;
+				const pos = locateSourcePosition(
+					clipsRef.current,
+					v.currentTime,
+					activeSourceId,
+					0.05,
+					activeClipIdRef.current ?? undefined,
+				);
+				if (pos) {
+					activeClipIdRef.current = pos.clip.id;
+					updateVirtualTime(clampVirtualTime(clipsRef.current, pos.virtualTimeSec));
+				}
+				return;
+			}
 			// Trims only trim ahead during actual playback — scrubbing/paused seeks are
 			// intentionally NOT clamped, so the user can navigate freely into a trim while
 			// editing; only Play/export treats it as a cut (mirrors the pre-existing intent
@@ -1223,7 +1268,10 @@ export function VirtualPreview({
 						return;
 					}
 					v.pause();
-					updateVirtualTime(virtualDurationSecRef.current);
+					const endPos = locateVirtualPosition(clipsRef.current, virtualDurationSecRef.current);
+					if (activeClipIdRef.current === endPos?.clip.id) {
+						updateVirtualTime(virtualDurationSecRef.current);
+					}
 					return;
 				}
 			}
@@ -1295,21 +1343,6 @@ export function VirtualPreview({
 				updateVirtualTime(v.currentTime);
 				return;
 			}
-			if (isProgrammaticSeekRef.current) {
-				isProgrammaticSeekRef.current = false;
-				const pos = locateSourcePosition(
-					clipsRef.current,
-					v.currentTime,
-					activeSourceId,
-					0.05,
-					activeClipIdRef.current ?? undefined,
-				);
-				if (pos) {
-					activeClipIdRef.current = pos.clip.id;
-					updateVirtualTime(clampVirtualTime(clipsRef.current, pos.virtualTimeSec));
-				}
-				return;
-			}
 			const position = locateSourcePosition(
 				clipsRef.current,
 				v.currentTime,
@@ -1324,7 +1357,10 @@ export function VirtualPreview({
 				if (nextClip) seekToVirtualTimeRef.current?.(nextClip.timelineStartSec, true);
 				else {
 					v.pause();
-					updateVirtualTime(virtualDurationSecRef.current);
+					const endPos = locateVirtualPosition(clipsRef.current, virtualDurationSecRef.current);
+					if (activeClipIdRef.current === endPos?.clip.id) {
+						updateVirtualTime(virtualDurationSecRef.current);
+					}
 				}
 				return;
 			}
@@ -1345,7 +1381,10 @@ export function VirtualPreview({
 				);
 				if (!nextClip) {
 					v.pause();
-					updateVirtualTime(virtualDurationSecRef.current);
+					const endPos = locateVirtualPosition(clipsRef.current, virtualDurationSecRef.current);
+					if (activeClipIdRef.current === endPos?.clip.id) {
+						updateVirtualTime(virtualDurationSecRef.current);
+					}
 					return;
 				}
 				seekToVirtualTimeRef.current?.(nextClip.timelineStartSec, true);
@@ -1496,8 +1535,11 @@ export function VirtualPreview({
 			const shouldContinuePlayback = preservePlayback && (forceResume || !videoRef.current?.paused);
 
 			if (isAssetSwitch) {
+				if (!shouldContinuePlayback) {
+					videoRef.current?.pause();
+				}
 				setSourceIndex(targetIndex);
-				setLoadState("loading");
+				updateLoadState("loading");
 				updateVirtualTime(position.virtualTimeSec);
 				pendingSeekRef.current = {
 					sourceTimeSec: position.sourceTimeSec,
@@ -1527,12 +1569,12 @@ export function VirtualPreview({
 				// A rejection here means playback never actually started, so the browser
 				// never fired 'play' — nothing to reconcile, just avoid an unhandled
 				// rejection warning.
-				void video.play().catch(() => {
+				void video.play()?.catch(() => {
 					// swallow: rejection just means playback never started
 				});
 			}
 		},
-		[applySourceTime, clips, videoSources, sourceIndex, updateVirtualTime],
+		[applySourceTime, clips, videoSources, sourceIndex, updateLoadState, updateVirtualTime],
 	);
 
 	const seekToSourceTime = useCallback(
@@ -1555,52 +1597,55 @@ export function VirtualPreview({
 	 * queue the position to come back to. Everything is read through refs, so the
 	 * callback is stable and the scheduled work always sees current state.
 	 */
-	const reloadActiveSource = useCallback((play: boolean, delayMs: number) => {
-		if (retryTimerRef.current !== null) {
-			window.clearTimeout(retryTimerRef.current);
-			retryTimerRef.current = null;
-		}
-		recoveringRef.current = true;
-		setLoadState("loading");
-		retryTimerRef.current = window.setTimeout(() => {
-			retryTimerRef.current = null;
-			const video = videoRef.current;
-			if (!video) return;
-			// Resolved HERE rather than when the error fired: the user can scrub
-			// during the backoff, and the position they left the playhead on is
-			// the one that has to come back. An asset switch queued in the
-			// meantime is newer intent still, so it wins outright.
-			if (!pendingSeekRef.current) {
-				const position = locateVirtualPosition(clipsRef.current, virtualTimeSecRef.current);
-				// `locateVirtualPosition` answers for whatever clip the playhead
-				// is on, which after a boundary advance can belong to a DIFFERENT
-				// asset — its source time would be a meaningless offset into the
-				// file we are about to reload. The mounted source is read from the
-				// same two mirrors the rAF tick uses, rather than kept in a third.
-				const clipIsOnThisSource =
-					position?.clip.assetId === videoSourcesRef.current[sourceIndexRef.current]?.id;
-				if (position && clipIsOnThisSource) {
-					// The rAF resumes against this; leaving it stale would resolve
-					// the next tick against the clip we were on before the failure.
-					activeClipIdRef.current = position.clip.id;
-				}
-				const resumeSec =
-					position && clipIsOnThisSource ? position.sourceTimeSec : lastGoodSourceTimeRef.current;
-				pendingSeekRef.current = {
-					sourceTimeSec: Number.isFinite(resumeSec) ? resumeSec : 0,
-					play,
-				};
+	const reloadActiveSource = useCallback(
+		(play: boolean, delayMs: number) => {
+			if (retryTimerRef.current !== null) {
+				window.clearTimeout(retryTimerRef.current);
+				retryTimerRef.current = null;
 			}
-			// The restore itself rides the cross-asset path `onLoadedMetadata`
-			// already implements — one resume path in this component, not two.
-			//
-			// load() and nothing else: per spec it unconditionally re-runs the
-			// media load algorithm. Re-assigning `src` first (the obvious
-			// alternative) starts a SECOND load that aborts the first, which
-			// surfaces as a spurious MEDIA_ERR_ABORTED.
-			video.load();
-		}, delayMs);
-	}, []);
+			recoveringRef.current = true;
+			updateLoadState("loading");
+			retryTimerRef.current = window.setTimeout(() => {
+				retryTimerRef.current = null;
+				const video = videoRef.current;
+				if (!video) return;
+				// Resolved HERE rather than when the error fired: the user can scrub
+				// during the backoff, and the position they left the playhead on is
+				// the one that has to come back. An asset switch queued in the
+				// meantime is newer intent still, so it wins outright.
+				if (!pendingSeekRef.current) {
+					const position = locateVirtualPosition(clipsRef.current, virtualTimeSecRef.current);
+					// `locateVirtualPosition` answers for whatever clip the playhead
+					// is on, which after a boundary advance can belong to a DIFFERENT
+					// asset — its source time would be a meaningless offset into the
+					// file we are about to reload. The mounted source is read from the
+					// same two mirrors the rAF tick uses, rather than kept in a third.
+					const clipIsOnThisSource =
+						position?.clip.assetId === videoSourcesRef.current[sourceIndexRef.current]?.id;
+					if (position && clipIsOnThisSource) {
+						// The rAF resumes against this; leaving it stale would resolve
+						// the next tick against the clip we were on before the failure.
+						activeClipIdRef.current = position.clip.id;
+					}
+					const resumeSec =
+						position && clipIsOnThisSource ? position.sourceTimeSec : lastGoodSourceTimeRef.current;
+					pendingSeekRef.current = {
+						sourceTimeSec: Number.isFinite(resumeSec) ? resumeSec : 0,
+						play,
+					};
+				}
+				// The restore itself rides the cross-asset path `onLoadedMetadata`
+				// already implements — one resume path in this component, not two.
+				//
+				// load() and nothing else: per spec it unconditionally re-runs the
+				// media load algorithm. Re-assigning `src` first (the obvious
+				// alternative) starts a SECOND load that aborts the first, which
+				// surfaces as a spurious MEDIA_ERR_ABORTED.
+				video.load();
+			}, delayMs);
+		},
+		[updateLoadState],
+	);
 
 	/** The element is loaded again, so the reload is over and any failure the
 	 *  caller is showing can go. Note what this does NOT do: re-arm the retry
@@ -1674,7 +1719,11 @@ export function VirtualPreview({
 		if (seekTarget.isSource) {
 			seekToSourceTimeRef.current(seekTarget.timeSec);
 		} else {
-			seekToVirtualTimeRef.current?.(seekTarget.timeSec);
+			seekToVirtualTimeRef.current?.(
+				seekTarget.timeSec,
+				seekTarget.preservePlayback,
+				seekTarget.preservePlayback,
+			);
 		}
 	}, [seekTarget]);
 
@@ -1706,7 +1755,7 @@ export function VirtualPreview({
 							muted
 							playsInline
 							onLoadedMetadata={(e) => {
-								setLoadState("ready");
+								updateLoadState("ready");
 								markSourceLoaded();
 								// ponytail: forward the raw duration (possibly NaN for
 								// MediaRecorder WebMs) to the parent. handleLoadedMetadata
@@ -1744,6 +1793,7 @@ export function VirtualPreview({
 								}
 							}}
 							onSeeked={(e) => {
+								isProgrammaticSeekRef.current = false;
 								// The demuxer is free again: apply the newest target that
 								// arrived while it was busy, if the playhead has moved on.
 								const queued = pendingScrubTargetRef.current;
@@ -1752,9 +1802,9 @@ export function VirtualPreview({
 									applySourceTime(e.currentTarget, queued);
 								}
 							}}
-							onWaiting={() => setLoadState("loading")}
+							onWaiting={() => updateLoadState("loading")}
 							onCanPlay={() => {
-								setLoadState("ready");
+								updateLoadState("ready");
 								markSourceLoaded();
 							}}
 							onError={(e) => {
@@ -1816,14 +1866,36 @@ export function VirtualPreview({
 								// Latched so an expiring window cannot restart the cycle behind
 								// the card. Only Retry or a media change lifts it.
 								gaveUpRef.current = true;
-								setLoadState("error");
+								updateLoadState("error");
 								// An 'error' doesn't itself fire 'pause', so make sure the shell's
 								// transport state (single source of truth, see NewEditorShell's
 								// own play/pause/ended listener) actually learns playback stopped.
 								el.pause();
 								onVideoError?.(activeSource.id, detail);
 							}}
-							onEnded={() => {
+							onPlay={() => {
+								// The edited timeline can end before the underlying file. A
+								// plain play() would hit that same boundary and pause again.
+								// Resolve the rewind here so cross-asset restarts also carry
+								// playback intent through the pending metadata load.
+								const duration = virtualDurationSecRef.current;
+								const vTime = virtualTimeSecRef.current;
+								const endPos = locateVirtualPosition(clipsRef.current, duration);
+								const currentPos = locateVirtualPosition(clipsRef.current, vTime);
+								const hasNextClip = clipsRef.current.some((c) => c.timelineStartSec > vTime + 0.1);
+								if (
+									duration > 0 &&
+									vTime >= duration - 0.05 &&
+									!hasNextClip &&
+									currentPos?.clip.id === endPos?.clip.id
+								) {
+									seekToVirtualTimeRef.current?.(0, true, true);
+								}
+							}}
+							onEnded={(e) => {
+								if (!e.currentTarget.paused || pendingSeekRef.current !== null) {
+									return;
+								}
 								// BUG corrigé : ce handler stoppait TOUJOURS la lecture dès que le
 								// <video> brut atteignait SA PROPRE fin de fichier — une course
 								// avec la boucle rAF (reachedClipEnd, plus haut) qui gère
@@ -1838,7 +1910,7 @@ export function VirtualPreview({
 								// navigateur a déjà mis `.paused = true` avant de déclencher
 								// 'ended', donc le check `!video.paused` habituel empêcherait
 								// toujours la reprise de la lecture sur le clip suivant. Si aucun
-								// clip suivant n'existe, on ne fait rien de plus ici : le navigateur
+								// clip suivant n'existe, on publie la fin de timeline : le navigateur
 								// a déjà mis la vidéo en pause, et NewEditorShell (seule source de
 								// vérité pour l'état de lecture) l'apprend via son propre listener
 								// 'ended'/'pause' sur ce même élément.
@@ -1850,6 +1922,14 @@ export function VirtualPreview({
 									: undefined;
 								if (nextClip) {
 									seekToVirtualTime(nextClip.timelineStartSec, true, true);
+								} else {
+									const endPos = locateVirtualPosition(
+										clipsRef.current,
+										virtualDurationSecRef.current,
+									);
+									if (current && current.id === endPos?.clip.id) {
+										updateVirtualTime(virtualDurationSecRef.current);
+									}
 								}
 							}}
 							// ponytail: handleTimeUpdate is now driven by the rAF loop

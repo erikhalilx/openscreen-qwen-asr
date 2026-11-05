@@ -37,6 +37,7 @@ interface PreviewProps {
 	clips: AxcutClip[];
 	zoomRegions?: AxcutZoomRegion[];
 	speedRegions?: SpeedRegion[];
+	playUneditedTimeline?: boolean;
 	cameraFullscreenRegions?: CameraFullscreenRegion[];
 	trimRanges?: AxcutTrimRange[];
 	transcripts?: AxcutTranscript[];
@@ -49,7 +50,7 @@ interface PreviewProps {
 	onAnnotationChange?: (id: string, patch: Partial<AxcutAnnotationRegion>) => void;
 	onAnnotationBlurDataChange?: (id: string, blurData: BlurData) => void;
 	onAnnotationCommit?: () => void;
-	seekTarget: { timeSec: number; requestId: number } | null;
+	seekTarget: { timeSec: number; requestId: number; preservePlayback?: boolean } | null;
 	onTimeChange: (sec: number) => void;
 	onSeek: (sec: number) => void;
 	onLoadedMetadata: (sec: number, assetId: string) => void;
@@ -72,6 +73,7 @@ export function Preview({
 	clips,
 	zoomRegions,
 	speedRegions,
+	playUneditedTimeline,
 	cameraFullscreenRegions,
 	trimRanges,
 	transcripts,
@@ -215,6 +217,7 @@ export function Preview({
 						clips={clips}
 						zoomRegions={zoomRegions}
 						speedRegions={speedRegions}
+						playUneditedTimeline={playUneditedTimeline}
 						cameraFullscreenRegions={cameraFullscreenRegions}
 						trimRanges={trimRanges}
 						transcripts={transcripts}

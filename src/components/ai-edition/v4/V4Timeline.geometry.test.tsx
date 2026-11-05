@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { Profiler, type ProfilerOnRenderCallback } from "react";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The regression under test is geometric, so the environment has to have a size:
 // jsdom reports 0 for every box, which would leave `pxPerSec` at 0 (the
@@ -35,10 +35,13 @@ const measureText = vi.fn((text: string) => ({ width: text.length * 6 }));
 import { ShortcutsProvider } from "@/contexts/ShortcutsContext";
 import type { I18nNamespace } from "@/i18n/config";
 import { getAvailableLocales, translate } from "@/i18n/loader";
+import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import type { useTimeline } from "@/lib/ai-edition/store/useTimeline";
 import { DEFAULT_SHORTCUTS, formatBinding } from "@/lib/shortcuts";
 import { zoomTransitionMs } from "@/lib/zoomMath/constants";
 import { V4Timeline } from "./V4Timeline";
+
+beforeEach(() => useProjectStore.setState({ currentTimeSec: 0 }));
 
 beforeAll(() => {
 	globalThis.ResizeObserver = class {
@@ -93,10 +96,9 @@ function clip(startSec: number, endSec: number) {
 	};
 }
 
-/** The asset every clip above points at. No `cameraTrack`: this recording has no webcam,
- *  which is what the Full Camera button is gated on. */
+/** The asset every clip above points at. With no camera, only screen-only is available. */
 const NO_CAMERA_ASSET = { id: "a1", label: "rec", durationSec: TOTAL_SEC };
-/** The same recording, with a camera track: the Full Camera button is offered. */
+/** The same recording with a camera track: camera layout presets become available. */
 const CAMERA_ASSET = {
 	...NO_CAMERA_ASSET,
 	cameraTrack: { sourcePath: "/tmp/cam.webm", startMs: 0, offsetMs: 0, visible: true },
@@ -122,6 +124,8 @@ function renderTimeline(
 		cameraFullscreenRegions: [],
 		shaderEffectRanges: [],
 		shaderEffects: [],
+		layoutSegments: [],
+		hasDoc: true,
 		zoomRegions: [],
 		trimRanges: [],
 		hasEditRegions: true,
@@ -146,9 +150,11 @@ function renderTimeline(
 		...overrides,
 	};
 	const setCurrentTime = vi.fn();
-	const timeline = (
+	const onAnnotationRowCountChange = vi.fn();
+	const timeline = (variant: "edit" | "media" = "edit") => (
 		<ShortcutsProvider>
 			<V4Timeline
+				variant={variant}
 				// Only the members the lanes and the clip row read are mocked; the prop
 				// stays typed as the real API rather than widened to `any` (AGENTS.md).
 				tl={tl as unknown as ReturnType<typeof useTimeline>}
@@ -157,23 +163,26 @@ function renderTimeline(
 				onTogglePlay={vi.fn()}
 				onEditClip={vi.fn()}
 				onAddVoiceover={vi.fn()}
+				onAnnotationRowCountChange={onAnnotationRowCountChange}
 			/>
 		</ShortcutsProvider>
 	);
-	render(
+	const view = render(
 		onRender ? (
 			<Profiler id="timeline" onRender={onRender}>
-				{timeline}
+				{timeline()}
 			</Profiler>
 		) : (
-			timeline
+			timeline()
 		),
 	);
 	return {
+		rerenderVariant: (variant: "edit" | "media") => view.rerender(timeline(variant)),
+		onAnnotationRowCountChange,
 		// A getter: a test that empties `annotationRegions` renders no such pill, and an eager
 		// lookup would throw before its own assertions ran.
 		get pill() {
-			return screen.getByTitle("toolbar.newAnnotation");
+			return screen.getByTitle(/^toolbar\.newAnnotation/);
 		},
 		clipEls: Array.from(document.querySelectorAll<HTMLElement>("[data-clip-id]")),
 		tl,
@@ -204,6 +213,122 @@ function wheelZoomOn(el: HTMLElement, notches: number) {
 function zoomIn(notches: number) {
 	wheelZoomOn(document.querySelector("[class*=tlTracks]") as HTMLElement, notches);
 }
+
+describe("timeline tracks", () => {
+	afterEach(cleanup);
+
+	it("shows identical nested annotations on separate rows and selects each independently", () => {
+		const { tl } = renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [
+				{ id: "main", startMs: 0, endMs: 67000, type: "text", content: "Same", zIndex: 1 },
+				{ id: "second", startMs: 35000, endMs: 40000, type: "text", content: "Same", zIndex: 1 },
+			],
+		});
+		const pills = [...document.querySelectorAll<HTMLElement>("[data-region-id]")];
+		expect(pills).toHaveLength(2);
+		expect(new Set(pills.map((p) => p.style.top)).size).toBe(2);
+		for (const pill of pills) {
+			fireEvent.keyDown(pill, { key: "Enter" });
+			expect(tl.selectRegion).toHaveBeenLastCalledWith("annotation", pill.dataset.regionId, {
+				additive: false,
+			});
+		}
+	});
+
+	it("reuses a single row for back-to-back annotations and keeps the empty lane free of drag hints", () => {
+		renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: Array.from({ length: 10 }, (_, i) => ({
+				id: `ann-${i}`,
+				startMs: i * 1000,
+				endMs: (i + 1) * 1000,
+				zIndex: i + 1,
+			})),
+		});
+		const lane = document.querySelector<HTMLElement>(
+			'[data-track-kind="annotation"]',
+		) as HTMLElement;
+		expect(lane.style.height).toBe("24px");
+		expect(lane.title).toBe("");
+		expect(
+			new Set([...lane.querySelectorAll<HTMLElement>("[data-region-id]")].map((p) => p.style.top))
+				.size,
+		).toBe(1);
+		expect(lane.querySelector<HTMLElement>("[data-region-id]")?.title).toContain("tracks.dragHint");
+		cleanup();
+		renderTimeline(undefined, undefined, undefined, undefined, { annotationRegions: [] });
+		expect(document.querySelector<HTMLElement>('[data-track-kind="annotation"]')?.title).toBe("");
+	});
+
+	it("creates a separate live row when a horizontal drag moves into an existing annotation", () => {
+		const { tl, onAnnotationRowCountChange } = renderTimeline(
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{
+				annotationRegions: [
+					{ id: "main", startMs: 0, endMs: 100000, zIndex: 1 },
+					{ id: "second", startMs: 200000, endMs: 300000, zIndex: 1 },
+				],
+			},
+		);
+		expect(onAnnotationRowCountChange).toHaveBeenLastCalledWith(1);
+		const second = document.querySelector<HTMLElement>('[data-region-id="second"]') as HTMLElement;
+		const main = document.querySelector<HTMLElement>('[data-region-id="main"]') as HTMLElement;
+		fireEvent.pointerDown(second, { clientX: 100, clientY: 10 });
+		act(() => {
+			window.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 10 }));
+		});
+		expect(onAnnotationRowCountChange).toHaveBeenLastCalledWith(2);
+		expect(second.style.top).not.toBe(main.style.top);
+		expect(
+			document.querySelector<HTMLElement>('[data-track-kind="annotation"]')?.style.height,
+		).toBe("51px");
+		act(() => {
+			window.dispatchEvent(new MouseEvent("pointerup"));
+		});
+		expect(tl.updateAnnotationSpan).toHaveBeenCalledWith("second", 20000, 120000);
+	});
+
+	it("moves annotations vertically between existing layers and creates layers above and below", () => {
+		const { tl } = renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [
+				{ id: "low", startMs: 0, endMs: 100000, zIndex: 0 },
+				{ id: "high", startMs: 0, endMs: 100000, zIndex: 4 },
+			],
+		});
+		const low = document.querySelector<HTMLElement>('[data-region-id="low"]') as HTMLElement;
+		expect(low.dataset.trackRow).toBe("1");
+		for (const dy of [-27, -54, 27]) {
+			fireEvent.pointerDown(low, { clientX: 10, clientY: 100 });
+			act(() => {
+				window.dispatchEvent(new MouseEvent("pointermove", { clientX: 10, clientY: 100 + dy }));
+			});
+			act(() => {
+				window.dispatchEvent(new MouseEvent("pointerup"));
+			});
+			expect(tl.updateAnnotationSpan).toHaveBeenLastCalledWith("low", 0, 100000, {
+				row: 1 + dy / 27,
+				direction: dy < 0 ? "up" : "down",
+			});
+		}
+	});
+
+	it("keeps speed regions in a single lane", () => {
+		renderTimeline(undefined, undefined, undefined, undefined, {
+			annotationRegions: [],
+			speedRegions: [
+				{ id: "a", startMs: 0, endMs: 67000, speed: 2 },
+				{ id: "b", startMs: 35000, endMs: 40000, speed: 3 },
+			],
+		});
+		const pills = [
+			...document.querySelectorAll<HTMLElement>('[data-track-kind="speed"] [data-region-id]'),
+		];
+		expect(pills).toHaveLength(2);
+		expect(pills[0].style.top).toBe(pills[1].style.top);
+	});
+});
 
 describe("V4Timeline scrubbing", () => {
 	it("publishes at most one React scrub-state update per animation frame", () => {
@@ -519,7 +644,7 @@ describe("V4Timeline create-from-toolbar", () => {
 		expect(tl.clearTimeline).toHaveBeenCalledTimes(1);
 	});
 
-	it("puts Clear timeline last, behind a divider, after the Add Full Camera button", () => {
+	it("puts Clear timeline last, behind a divider, after the layout button", () => {
 		renderTimeline(undefined, undefined, [CAMERA_ASSET]);
 		const toolbar = toolbarOf();
 		const buttons = Array.from(toolbar.querySelectorAll("button"));
@@ -528,25 +653,86 @@ describe("V4Timeline create-from-toolbar", () => {
 
 		const divider = clear.previousElementSibling;
 		expect(divider?.className).toContain("tlToolSep");
-		expect(divider?.previousElementSibling).toBe(
-			screen.getByLabelText("buttons.addCameraFullscreen"),
-		);
+		expect(divider?.previousElementSibling).toBe(screen.getByLabelText("layouts.changeHere"));
 		expect(dividersIn(toolbar)).toHaveLength(2);
 	});
 
-	// #353. A camera-fullscreen region grows the webcam overlay, so with no webcam on the
-	// timeline it renders nothing in the preview and nothing in the export — the region is
-	// stored and forgotten. `addCameraFullscreen` now refuses to write one; the button says
-	// so before it is clicked instead of looking like it worked. Absent, not greyed out: an
-	// inoperative control is hidden, and a greyed one with no reason is a puzzle.
-	it("shows no Add Full Camera button when no clip on the timeline has a camera", () => {
-		renderTimeline();
-		expect(screen.queryByLabelText("buttons.addCameraFullscreen")).not.toBeInTheDocument();
+	it.each([
+		"media",
+		"no-document",
+		"empty-timeline",
+	] as const)("closes the layout picker and ignores shortcuts while %s, without reopening on return", (condition) => {
+		const { tl, rerenderVariant } = renderTimeline();
+		const clips = tl.clips;
+		const openPicker = () => act(() => window.dispatchEvent(new Event("openscreen:change-layout")));
+		openPicker();
+		expect(screen.getByRole("group", { name: "layouts.title" })).toBeInTheDocument();
+		if (condition === "no-document") tl.hasDoc = false;
+		if (condition === "empty-timeline") tl.clips = [];
+		rerenderVariant(condition === "media" ? "media" : "edit");
+		expect(screen.queryByRole("group", { name: "layouts.title" })).not.toBeInTheDocument();
+		openPicker();
+		tl.hasDoc = true;
+		tl.clips = clips;
+		rerenderVariant("edit");
+		expect(screen.queryByRole("group", { name: "layouts.title" })).not.toBeInTheDocument();
+		openPicker();
+		expect(screen.getByRole("group", { name: "layouts.title" })).toBeInTheDocument();
 	});
 
-	it("shows Add Full Camera as soon as a clip's asset carries one", () => {
-		renderTimeline(undefined, undefined, [CAMERA_ASSET]);
-		expect(screen.getByLabelText("buttons.addCameraFullscreen")).toBeEnabled();
+	it("keeps layout changes available for screen-only footage", () => {
+		renderTimeline();
+		const button = screen.getByRole("button", { name: "layouts.changeHere" });
+		expect(button).toBeEnabled();
+		expect(button).toHaveTextContent("");
+	});
+
+	it("only offers a layout change inside footage and closes its menu at gaps and the final end", () => {
+		renderTimeline([clip(2, 4), clip(8, 12)]);
+		const button = screen.getByRole("button", { name: "layouts.changeHere" });
+		const seek = (currentTimeSec: number) =>
+			act(() => useProjectStore.setState({ currentTimeSec }));
+		const open = () => act(() => window.dispatchEvent(new Event("openscreen:change-layout")));
+		const menu = () => screen.queryByRole("group", { name: "layouts.title" });
+		expect(button).toBeDisabled();
+		open();
+		expect(menu()).not.toBeInTheDocument();
+		seek(2);
+		expect(button).toBeEnabled();
+		fireEvent.click(button);
+		expect(menu()).toBeInTheDocument();
+		seek(3.999);
+		expect(button).toBeEnabled();
+		expect(menu()).toBeInTheDocument();
+		seek(4);
+		expect(button).toBeDisabled();
+		expect(menu()).not.toBeInTheDocument();
+		open();
+		expect(menu()).not.toBeInTheDocument();
+		seek(6);
+		expect(button).toBeDisabled();
+		seek(8);
+		expect(button).toBeEnabled();
+		expect(menu()).not.toBeInTheDocument();
+		open();
+		expect(menu()).toBeInTheDocument();
+		seek(12);
+		expect(button).toBeDisabled();
+		expect(menu()).not.toBeInTheDocument();
+		open();
+		expect(menu()).not.toBeInTheDocument();
+		seek(13);
+		expect(button).toBeDisabled();
+	});
+
+	it("enables layout changes as soon as a clip's asset carries one", () => {
+		renderTimeline(undefined, undefined, [
+			{
+				...NO_CAMERA_ASSET,
+				cameraTrack: { sourcePath: "/tmp/cam.webm", startMs: 0, offsetMs: 0, visible: true },
+			},
+		]);
+		expect(screen.getByRole("button", { name: "layouts.changeHere" })).toBeEnabled();
 	});
 
 	// The disabled button is only half the promise: an empty lane advertises the shortcut
@@ -555,7 +741,7 @@ describe("V4Timeline create-from-toolbar", () => {
 	// instead, so the two surfaces agree about the same project.
 	it("does not advertise the C shortcut on a lane that cannot be filled", () => {
 		renderTimeline();
-		expect(screen.getByText("layout.noWebcam")).toBeInTheDocument();
+		expect(screen.queryByTestId("layout-lane")).not.toBeInTheDocument();
 		expect(screen.queryByText("hints.pressCameraFullscreen")).not.toBeInTheDocument();
 	});
 
@@ -566,7 +752,7 @@ describe("V4Timeline create-from-toolbar", () => {
 				cameraTrack: { sourcePath: "/tmp/cam.webm", startMs: 0, offsetMs: 0, visible: true },
 			},
 		]);
-		expect(screen.getByText("hints.pressCameraFullscreen")).toBeInTheDocument();
+		expect(screen.queryByTestId("layout-lane")).not.toBeInTheDocument();
 		expect(screen.queryByText("layout.noWebcam")).not.toBeInTheDocument();
 	});
 });
@@ -723,6 +909,8 @@ describe("V4Timeline audio lane drag", () => {
 			annotationRegions: [],
 			speedRegions: [],
 			cameraFullscreenRegions: [],
+			layoutSegments: [],
+			hasDoc: true,
 			shaderEffectRanges: [],
 			shaderEffects: [],
 			zoomRegions: [],
@@ -941,7 +1129,9 @@ describe("V4Timeline empty-lane hints", () => {
 		expect(screen.getByText("Press Z to add zoom")).toBeInTheDocument();
 		expect(screen.getByText("Press T to add trim")).toBeInTheDocument();
 		expect(screen.getByText("Press S to add speed")).toBeInTheDocument();
-		expect(screen.getByText("Press C to add a Full Camera segment")).toBeInTheDocument();
+		expect(
+			screen.getByLabelText(translate("en", "timeline", "layouts.changeHere")),
+		).toBeInTheDocument();
 		expect(screen.getByText("Press M to add audio, V to record a voiceover")).toBeInTheDocument();
 	});
 
@@ -970,7 +1160,9 @@ describe("V4Timeline empty-lane hints", () => {
 		expect(screen.getByText("Press Ctrl + Shift + T to add trim")).toBeInTheDocument();
 		expect(screen.getByText("Press N to add annotation")).toBeInTheDocument();
 		expect(screen.getByText("Press J to add speed")).toBeInTheDocument();
-		expect(screen.getByText("Press K to add a Full Camera segment")).toBeInTheDocument();
+		expect(
+			screen.getByLabelText(translate("en", "timeline", "layouts.changeHere")),
+		).toBeInTheDocument();
 		expect(
 			screen.getByText("Press U to add audio, Alt + R to record a voiceover"),
 		).toBeInTheDocument();
@@ -1031,7 +1223,7 @@ describe("V4Timeline toolbar tooltips", () => {
 			"buttons.addTrim",
 			"buttons.addSpeed",
 			"buttons.addAnnotation",
-			"buttons.addCameraFullscreen",
+			"layouts.changeHere",
 			// Its menu also records a voiceover, but the key, like the lane's "Press M", adds audio.
 			"toolbar.addAudioTooltip",
 		]) {
@@ -1044,7 +1236,7 @@ describe("V4Timeline toolbar tooltips", () => {
 			"buttons.addTrim": "T",
 			"buttons.addSpeed": "S",
 			"buttons.addAnnotation": "A",
-			"buttons.addCameraFullscreen": "C",
+			"layouts.changeHere": "C",
 			"toolbar.addAudioTooltip": "M",
 		});
 	});
@@ -1095,18 +1287,18 @@ describe("V4Timeline toolbar tooltips", () => {
 		for (const button of buttons) expect(button).not.toHaveAttribute("title");
 	});
 
-	it("names a pill on hover only when it cannot draw its own label", () => {
+	it("shows the annotation drag hint on pills of any width", () => {
 		// A hairline pill draws nothing, so the title is the only place its name is.
 		renderTimeline();
-		const hairline = screen.getByTitle("toolbar.newAnnotation");
+		const hairline = screen.getByTitle(/^toolbar\.newAnnotation/);
 		expect(hairline.textContent).toBe("");
 
-		// One that fills the timeline draws its label, and a title would repeat it.
+		// A wide annotation still teaches vertical dragging on hover.
 		cleanup();
 		renderTimeline(undefined, { id: "ann1", startMs: 0, endMs: TOTAL_SEC * 1000 });
 		const wide = document.querySelector("[class*=lanePill]") as HTMLElement;
 		expect(wide).toHaveTextContent("toolbar.newAnnotation");
-		expect(wide).not.toHaveAttribute("title");
+		expect(wide.title).toContain("tracks.dragHint");
 	});
 });
 
@@ -1188,5 +1380,28 @@ describe("V4Timeline zoom trails", () => {
 			"Zoom-out: the view moves back out after the zoom ends",
 		);
 		expect(trail("out").querySelector("[data-zoom-trail-cut]")).toBeNull();
+	});
+});
+
+describe("layout boundaries replace camera connection marks", () => {
+	it("offers one boundary handle between adjacent layout passages", () => {
+		renderTimeline([clip(0, 4)], undefined, [CAMERA_ASSET], undefined, {
+			layoutSegments: [
+				{
+					ids: ["left"],
+					start: 0,
+					end: 2,
+					member: { id: "left", startMs: 0, endMs: 2000, preset: "picture-in-picture" },
+				},
+				{
+					ids: ["right"],
+					start: 2,
+					end: 4,
+					member: { id: "right", startMs: 2000, endMs: 4000, preset: "camera-only" },
+				},
+			],
+		});
+		expect(screen.getByTestId("layout-lane")).toBeInTheDocument();
+		expect(document.querySelectorAll("[data-camera-join]")).toHaveLength(0);
 	});
 });

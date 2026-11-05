@@ -1,11 +1,11 @@
-// The "mouse clicks" row in the cursor pane.
+// Mouse sound controls in the Audio pane, independent of cursor visibility.
 //
 // The sound is a setting, not a timeline track: its hits are laid out from the take's recorded
 // clicks every time a scene is built (see src/lib/ai-edition/clickSound.ts), so there is no file
 // to render, no track to keep honest, and nothing that can fall behind an edit.
 
 import { useEffect, useState } from "react";
-import type { ClickCue } from "@/lib/ai-edition/clickSound";
+import type { ClickCue, ClickSoundPreset } from "@/lib/ai-edition/clickSound";
 import { clickTakeOf, ensureClickHitPaths, loadClickCues } from "@/lib/ai-edition/clickSound";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 
@@ -28,14 +28,15 @@ export function useClickSound() {
 
 	return {
 		hasClicks: Boolean(cues?.length),
+		isLoading: Boolean(takePath && cues === null),
 		/** Warms the two caches the sound reads — the cues, and the samples staged for the
 		 *  export — the moment the user asks for it, instead of leaving the first export to race
 		 *  a background read. Nothing here can fail the pane: a sample that will not stage just
 		 *  means the export has no clicks in it. */
-		prepare: async () => {
+		prepare: async (preset: ClickSoundPreset = "realistic") => {
 			const take = clickTakeOf(document)?.originalPath;
 			if (!take) return;
-			await Promise.all([loadClickCues(take), ensureClickHitPaths().catch(() => null)]);
+			await Promise.all([loadClickCues(take), ensureClickHitPaths(preset).catch(() => null)]);
 		},
 	};
 }

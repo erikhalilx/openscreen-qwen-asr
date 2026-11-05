@@ -117,11 +117,11 @@
 		"microphone": "マイク",
 		"camera": "カメラ",
 		"editableCursor": "編集可能なカーソル",
-		"editableCursorTip": "オン：編集可能なカーソル。スタイル変更と自動ズームが使えます。オフ：システムカーソル。動画に録画されます。",
+		"editableCursorTip": "オン：スタイルを変更でき、自動ズームも使える編集可能なカーソル。オフ：動画にそのまま記録されるシステムカーソル。",
 		"autoZoom": "録画後に自動ズーム",
 		"hideDesktopIcons": "デスクトップアイコンを隠す",
 		"hideDesktopIconsHintMac": "画面収録からデスクトップアイコンを除外します。デスクトップ上には残ります。",
-		"hideDesktopIconsHintWindows": "録画中はデスクトップアイコンを覆います。録画が終わると元に戻ります。",
+		"hideDesktopIconsHintWindows": "録画中はデスクトップアイコンを覆い隠します。録画が終わるとアイコンは元に戻ります。",
 		"on": "オン",
 		"off": "オフ",
 		"loading": "読み込み中…",
@@ -172,7 +172,7 @@
 		"initializingModel": "音声モデルを起動しています",
 		"pendingTranscription": "文字起こし待機中",
 		"transcriptionFailed": "文字起こしに失敗しました",
-		"cpuBackendHint": "CPU で実行中：GPU より約 2 倍低速です",
+		"cpuBackendHint": "CPU で実行中：GPU より約 2 倍遅いです",
 		"noTranscript": "文字起こしなし",
 		"generationFailedHint": "生成に失敗しました — 言語を選んで再生成してください。",
 		"detectedLanguage": "検出された言語: {{language}}",
@@ -215,7 +215,12 @@
 		"failedToWriteFile": "ファイルの書き込みに失敗しました",
 		"qualityUpscaleWarning": "アップスケール",
 		"exportedVideoOf": "の動画を書き出しました。所要時間:",
-		"nothingToExport": "書き出す内容がありません — タイムラインが空です。"
+		"nothingToExport": "書き出す内容がありません — タイムラインが空です。",
+		"validationFailed": "書き出した動画を検証できませんでした。保存先のファイルは置き換えられていません。もう一度書き出してください。",
+		"noReadableFrames": "動画フレームが書き出されませんでした。クリップに読み取り可能な動画が含まれているか確認してから、再度書き出してください。",
+		"cameraEnded": "クリップ {{clip}} を書き出せません。カメラ動画がクリップの開始前に終了しています。カメラ動画を録画し直すか、カメラトラックを削除してから書き出してください。",
+		"cameraUnreadable": "クリップ {{clip}} を書き出せません。クリップの開始位置に読み取り可能なカメラ映像がありません。カメラ動画を録画し直すか、カメラトラックを削除してから書き出してください。",
+		"screenUnreadable": "クリップ {{clip}} を書き出せません。クリップの開始位置の画面動画を読み取れません。録画を確認するか、クリップを調整してから再度書き出してください。"
 	},
 	"inspector": {
 		"resetFocusPoint": "フォーカスポイントをリセット",
@@ -223,7 +228,7 @@
 		"trimHiddenDuration": "編集済みタイムラインから{{duration}}秒のソースメディアが非表示になっています。",
 		"restoreDeleteTrim": "復元(トリムを削除)",
 		"collapseInspector": "インスペクターを折りたたむ",
-		"editClipTip": "クリップを編集：切り抜き、開始、終了",
+		"editClipTip": "クリップを編集：切り抜き、開始位置、終了位置",
 		"captionsDescription": "文字起こしから単語ごとにタイミングを合わせたキャプションを生成し、タイムラインに配置します。",
 		"generateCaptions": "キャプションを生成",
 		"cropDescription": "録画をリフレーム — アスペクト比を選び、保持したい範囲にズームします。",
@@ -293,7 +298,7 @@
 		"authorUser": "あなた",
 		"authorAssistant": "OpenScreen",
 		"rewindToMessage": "このメッセージまで巻き戻す",
-		"rewindTip": "このメッセージまで巻き戻します。以降の変更は元に戻ります。",
+		"rewindTip": "このメッセージまで巻き戻します。以降の変更は取り消されます。",
 		"copyMessage": "メッセージをコピー",
 		"copiedToClipboard": "クリップボードにコピーしました",
 		"copyFailed": "コピーできませんでした",
@@ -313,7 +318,11 @@
 			"subtitle": "セッションを切り替えるか新規作成",
 			"empty": "まだ会話はありません。",
 			"msgsCount": "{{count}} 件のメッセージ · {{date}}"
-		}
+		},
+		"stop": "停止",
+		"stopping": "停止中…",
+		"stopped": "このターンを停止しました。適用済みの編集は保持されています。",
+		"stopFailed": "エージェントのターンを停止できませんでした。"
 	},
 	"newProjectDialog": {
 		"title": "新規プロジェクト",

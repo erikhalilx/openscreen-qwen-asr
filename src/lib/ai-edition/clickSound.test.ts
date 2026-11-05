@@ -59,45 +59,95 @@ const cut = (startSec: number, lenSec: number) => ({
 });
 
 describe("buildClickCues", () => {
-	it("turns one click into a press plus its recorded release, and ignores moves", () => {
-		const cues = buildClickCues([
-			point(1000, "move"),
-			point(7056, "click"),
-			point(7123, "mouseup"),
-			point(9000, "move"),
+	it("plays one complete single sample, ignoring motion and release", () => {
+		expect(
+			buildClickCues([point(1000, "move"), point(7056, "click"), point(7123, "mouseup")]),
+		).toEqual([{ timeSec: 7.056, gain: 1, release: false }]);
+	});
+	it("pairs two nearby left presses once at the first click", () => {
+		expect(
+			buildClickCues([
+				point(1000, "click"),
+				point(1050, "mouseup"),
+				point(1200, "click"),
+				point(1250, "mouseup"),
+			]),
+		).toEqual([{ timeSec: 1, gain: 1, release: true, pairedTimeSec: 1.2 }]);
+	});
+	it("honors a native double marker without adding synthetic presses", () => {
+		expect(buildClickCues([point(300, "double-click"), point(360, "mouseup")])).toEqual([
+			{ timeSec: 0.3, gain: 1, release: true },
 		]);
-		expect(cues).toEqual([
-			{ timeSec: 7.056, gain: 1, release: false },
-			{ timeSec: 7.123, gain: 0.7, release: true },
+		expect(buildClickCues([point(1000, "click"), point(1200, "double-click")])).toHaveLength(1);
+	});
+	it("keeps slow clicks and rapid clicks at different positions separate", () => {
+		expect(
+			buildClickCues([point(1000, "click"), point(1501, "click")]).map((c) => c.release),
+		).toEqual([false, false]);
+		expect(
+			buildClickCues([point(1000, "click"), { ...point(1100, "click"), cx: 0.8 }]).map(
+				(c) => c.release,
+			),
+		).toEqual([false, false]);
+	});
+	it("recognizes the 500ms boundary and pairs a triple click only once", () => {
+		expect(buildClickCues([point(1000, "click"), point(1500, "click")])[0].release).toBe(true);
+		expect(
+			buildClickCues([point(1000, "click"), point(1100, "click"), point(1200, "click")]).map(
+				(c) => c.release,
+			),
+		).toEqual([true, false]);
+	});
+	it("keeps mouse buttons distinct and does not interpret releases as clicks", () => {
+		expect(
+			buildClickCues([
+				point(1000, "right-click"),
+				point(1100, "middle-click"),
+				point(1150, "mouseup"),
+			]),
+		).toEqual([
+			{ timeSec: 1, gain: 0.85, release: false },
+			{ timeSec: 1.1, gain: 0.85, release: false },
 		]);
 	});
-
-	it("adds a second press for a double click", () => {
-		const cues = buildClickCues([point(300, "double-click"), point(360, "mouseup")]);
-		expect(cues.map((c) => [c.timeSec, c.release])).toEqual([
-			[0.3, false],
-			[0.36, true],
-			[0.39, false],
-		]);
-	});
-
-	it("quiets right and middle clicks", () => {
-		const [press] = buildClickCues([point(500, "right-click"), point(560, "mouseup")]);
-		expect(press.gain).toBeCloseTo(0.85);
-	});
-
-	it("falls back to a synthetic release when the recorded one is too far away", () => {
-		const cues = buildClickCues([point(1000, "click"), point(3000, "mouseup")]);
-		expect(cues[1]).toEqual({ timeSec: 1.11, gain: 0.7, release: true });
-	});
-
-	it("pairs the release even when the samples arrive out of order", () => {
-		const cues = buildClickCues([point(2070, "mouseup"), point(2000, "click")]);
-		expect(cues.map((c) => c.timeSec)).toEqual([2, 2.07]);
+	it("sorts without changing telemetry and rejects invalid times", () => {
+		const input = [
+			point(2000, "click"),
+			point(1000, "click"),
+			point(NaN, "click"),
+			point(-1, "click"),
+		];
+		const copy = input.map((p) => ({ ...p }));
+		expect(buildClickCues(input).map((c) => c.timeSec)).toEqual([1, 2]);
+		expect(input).toEqual(copy);
 	});
 });
 
 describe("placeClickHits", () => {
+	it("reduces a double to the surviving single when an edit removes either press", () => {
+		const pair = buildClickCues([point(1000, "click"), point(1200, "click")]);
+		expect(placeClickHits(doc([clip()], [], [cut(1.1, 0.2)]), asset as never, pair)).toEqual([
+			{ timeSec: 1, gain: 1, release: false },
+		]);
+		expect(
+			placeClickHits(doc([clip()], [], [cut(0.9, 0.2)]), asset as never, pair)[0],
+		).toMatchObject({ timeSec: expect.closeTo(1, 5), release: false });
+		expect(placeClickHits(doc([clip()]), asset as never, pair)).toEqual([
+			{ timeSec: 1, gain: 1, release: true },
+		]);
+	});
+	it("does not pair clicks across independently trimmed clips", () => {
+		const pair = buildClickCues([point(1000, "click"), point(1200, "click")]);
+		const result = placedClickHits(
+			doc([
+				clip({ sourceEndSec: 1.1, timelineEndSec: 1.1 }),
+				clip({ id: "copy", sourceStartSec: 1.1, timelineStartSec: 1.1, timelineEndSec: 10 }),
+			]),
+			asset as never,
+			pair,
+		);
+		expect(result.map((p) => p.cue.release)).toEqual([false, false]);
+	});
 	const at = (document: never, cues: ClickCue[], take = asset) =>
 		placeClickHits(document, take as never, cues).map((hit) => hit.timeSec);
 
@@ -356,7 +406,10 @@ describe("ensureClickHitPaths", () => {
 		vi.stubGlobal("fetch", async () => new Response(new Uint8Array([1])));
 		try {
 			const [a, b] = await Promise.all([ensureClickHitPaths(), ensureClickHitPaths()]);
-			expect(a).toEqual({ down: "/sfx/click-down.wav", up: "/sfx/click-up.wav" });
+			expect(a).toEqual({
+				down: "/sfx/mouse-realistic-single.wav",
+				up: "/sfx/mouse-realistic-double.wav",
+			});
 			expect(b).toBe(a);
 			expect(stage).toHaveBeenCalledTimes(2);
 		} finally {

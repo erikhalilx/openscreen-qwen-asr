@@ -43,6 +43,7 @@ export function stylePresetAppearanceFromSettings(
 			asArrow: [...settings.cursor.asArrow],
 			clickImpact: settings.cursor.clickImpact,
 			clickSound: settings.cursor.clickSound,
+			clickSoundPreset: settings.cursor.clickSoundPreset,
 			clickSoundGainDb: settings.cursor.clickSoundGainDb,
 		},
 		cursorShow: settings.cursorShow,

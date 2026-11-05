@@ -26,7 +26,8 @@ it("edits each source independently and applies the Audio panel gain across that
 	const save = vi.fn(async (_document: AxcutDocument, _options: { history: boolean }) => true);
 	useProjectStore.setState({ document: doc, projectId: "p", saveDocument: save });
 	const { unmount } = render(<AudioPane />);
-	expect(screen.getAllByRole("slider")).toHaveLength(3);
+	expect(screen.getAllByRole("slider")).toHaveLength(4);
+	expect(screen.getByRole("slider", { name: "cursor.clickSoundVolume" })).toBeDisabled();
 	const slider = screen.getByRole("slider", { name: "audio.systemSource" });
 	fireEvent.change(slider, { target: { value: "-12" } });
 	await act(async () => {

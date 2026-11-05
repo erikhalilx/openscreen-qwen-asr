@@ -9,6 +9,7 @@
 // before→after diff.
 
 import { isMutatingTool } from "../../electron/ai-edition/agent-tools";
+import { layoutRuns } from "../../src/lib/ai-edition/document/layout";
 import { type AxcutDocument, documentSchema } from "../../src/lib/ai-edition/schema";
 import { projectRegionsToSource } from "../../src/lib/ai-edition/timeline/timelineMap";
 import {
@@ -309,7 +310,7 @@ function spanOfId(document: AxcutDocument, id: string): Span | null {
  * not carry — the repel clamp (DSL-4), the multi-clip pill amputation (DSL-1),
  * and a silently dropped region (invariant 2) all land here.
  */
-export function diffMatches(after: AxcutDocument, call: WireCall): boolean {
+export function diffMatches(after: AxcutDocument, call: WireCall, laterMutation = false): boolean {
 	if (!call.mutating || !call.resultOk || call.resultJson === undefined) return true;
 	let result: Record<string, unknown>;
 	try {
@@ -318,6 +319,27 @@ export function diffMatches(after: AxcutDocument, call: WireCall): boolean {
 		result = parsed as Record<string, unknown>;
 	} catch {
 		return true;
+	}
+	if (Array.isArray(result.layoutSegments)) {
+		// Only the final document is available; a later write can replace this partition.
+		if (laterMutation) return true;
+		const actual = layoutRuns(after);
+		return (
+			result.layoutSegments.length === actual.length &&
+			result.layoutSegments.every((value, i) => {
+				if (!value || typeof value !== "object") return false;
+				const claimed = value as Record<string, unknown>;
+				const run = actual[i];
+				return (
+					claimed.id === run.ids[0] &&
+					claimed.preset === run.member.preset &&
+					typeof claimed.startSec === "number" &&
+					typeof claimed.endSec === "number" &&
+					Math.abs(claimed.startSec - run.start) <= EPSILON_SEC &&
+					Math.abs(claimed.endSec - run.end) <= EPSILON_SEC
+				);
+			})
+		);
 	}
 	// ponytail: a batch tool (`addTrims`, `addZooms`) reports one entry per
 	// element under `applied`, and nothing at the top level this check can
@@ -415,7 +437,12 @@ export function buildEvalContext(input: EvalInput): EvalContext {
 			return index === -1 ? Number.POSITIVE_INFINITY : index;
 		},
 		unplayableRegions: () => unplayableRegions(after),
-		diffMatches: (call) => diffMatches(after, call),
+		diffMatches: (call) =>
+			diffMatches(
+				after,
+				call,
+				wire.calls.slice(wire.calls.indexOf(call) + 1).some((later) => later.mutating),
+			),
 		assetDuration: (assetId) => assetDuration(after, assetId),
 		compressedDurationSec: () => compressedDurationSec(after),
 		classifyFailure: () => classifyFailure(input.run),
