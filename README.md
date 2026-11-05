@@ -1,10 +1,10 @@
-# OpenScreen Qwen3-ASR 0.3.1
+# OpenScreen Qwen3-ASR 0.3
 
-## Version 0.3.1 / 0.3.1 版本
+## Setup and sound previews / 补装与音效试听
 
-The Transcript and Captions panels detect missing Qwen components. Save the installer script, double-click the `.command` file, and restart the app after setup.
+The Transcript and Captions panels detect missing Qwen components. Save the installer script, double-click the `.command` file, and restart the app after setup. Click either mouse sound preset to hear its single-click sample.
 
-转录文本和字幕面板会检测缺少的千问组件。保存补装脚本，双击 `.command` 文件，安装完成后重启应用。
+转录文本和字幕面板会检测缺少的千问组件。保存补装脚本，双击 `.command` 文件，安装完成后重启应用。每次点击「写实」或「气泡」音效按钮，都会试听一次对应的单击声。
 
 ## Version 0.3 changes / 0.3 版本迭代
 
