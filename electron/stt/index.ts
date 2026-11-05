@@ -1,5 +1,5 @@
 import path from "node:path";
-import { app, type IpcMain, net } from "electron";
+import { app, BrowserWindow, type IpcMain, net } from "electron";
 import { planChunks } from "./chunking";
 import { extractMono16kPcm } from "./extractAudio";
 import {
@@ -10,6 +10,7 @@ import {
 	modelPaths,
 } from "./modelManager";
 import { QwenMlxManager } from "./qwenMlx";
+import { getQwenRuntimeSetup, saveQwenInstaller } from "./qwenRuntimeSetup";
 import type {
 	SttPhraseSegment,
 	SttStatusEvent,
@@ -566,10 +567,14 @@ export function _resetSttManagerForTests(): void {
  * `webContents` so two windows don't cross-talk.
  */
 export function registerSttIpc(ipcMain: IpcMain): void {
-	const manager = getSttManager();
+	ipcMain.handle("stt:qwen-runtime-setup", () => getQwenRuntimeSetup());
+	ipcMain.handle("stt:save-qwen-installer", (event) =>
+		saveQwenInstaller(BrowserWindow.fromWebContents(event.sender)),
+	);
 	ipcMain.handle(
 		"stt:transcribe",
 		async (event, req: SttTranscribeRequest): Promise<SttTranscribeResponse> => {
+			const manager = getSttManager();
 			const senderId = event.sender.id;
 			// Attach for the life of THIS request only. Overlapping requests each
 			// own their own sink, so neither can silence the other on the way out.
@@ -586,6 +591,6 @@ export function registerSttIpc(ipcMain: IpcMain): void {
 		},
 	);
 	ipcMain.handle("stt:cancel", () => {
-		manager.cancel();
+		singleton?.cancel();
 	});
 }

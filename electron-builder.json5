@@ -123,7 +123,8 @@
     { "from": "third-party-licenses", "to": "third-party-licenses" },
     { "from": "models/manifest.json", "to": "models/manifest.json" },
 
-    { "from": "scripts/qwen-asr", "to": "scripts/qwen-asr", "filter": ["worker.py", "text.py", "vad.py"] },
+    { "from": "scripts/setup-qwen-local.sh", "to": "scripts/setup-qwen-local.sh" },
+    { "from": "scripts/qwen-asr", "to": "scripts/qwen-asr", "filter": ["worker.py", "text.py", "vad.py", "setup_runtime.py", "requirements.lock.txt"] },
     // Attribution + LGPL source offer for the bundled ffmpeg DLLs and
     // whisper.cpp binaries. Redistributing LGPL libraries obliges us to ship
     // the notice with them, so it goes in resources/, not just in the repo.

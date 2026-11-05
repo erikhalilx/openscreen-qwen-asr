@@ -56,6 +56,7 @@ import { TEXT_FONT_FAMILIES } from "@/lib/textFonts";
 import { nativeBridgeClient } from "@/native";
 import { CaptionSrtExport } from "./CaptionSrtExport";
 import styles from "./NewEditorShell.module.css";
+import { QwenRuntimeNotice } from "./QwenRuntimeNotice";
 import { ChoiceRow, SliderCell, Toggle } from "./RightPanes";
 import { TextColorField } from "./TextColorField";
 import { useTranscriptionLabel } from "./TranscriptionStatus";
@@ -306,6 +307,7 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 					scrollbarColor: "var(--border) transparent",
 				}}
 			>
+				<QwenRuntimeNotice />
 				<div className={styles.paneRow}>
 					<span className={styles.label}>{t("captions.show")}</span>
 					<Toggle
