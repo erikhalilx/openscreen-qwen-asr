@@ -101,7 +101,9 @@ it("previews one single click per press, including the selected preset", async (
 	});
 	const played = vi
 		.mocked(HTMLMediaElement.prototype.play)
-		.mock.contexts.map((audio) => new URL(audio.src).pathname.split("/").pop());
+		.mock.contexts.map((audio) =>
+			audio instanceof HTMLMediaElement ? new URL(audio.src).pathname.split("/").pop() : null,
+		);
 	expect(played).toEqual([
 		"mouse-realistic-single.wav",
 		"mouse-realistic-single.wav",
