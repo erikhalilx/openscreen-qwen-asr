@@ -6,7 +6,10 @@
 // plain data — `store/transcriptionStore.ts` owns the queue and the side
 // effects, this module owns the vocabulary.
 
-import { STT_MEDIA_UNREADABLE } from "../../../../electron/stt/transcriptionContract";
+import {
+	STT_MEDIA_UNREADABLE,
+	STT_TRANSCRIPTION_INCOMPLETE,
+} from "../../../../electron/stt/transcriptionContract";
 import type { AxcutDocument, AxcutTranscript } from "../schema";
 import { voiceoverPlacements } from "../timeline/aggregated-transcript";
 
@@ -27,6 +30,8 @@ export interface TranscriptionFailure {
 	 * hint pointing at file access instead of the raw `message`.
 	 */
 	unreadableMedia?: boolean;
+	/** Recovery or word alignment failed for this asset's audio. */
+	incomplete?: boolean;
 }
 
 /** Which part of the pipeline a running job is in (mirrors `TranscribeAssetOptions.onStatus`). */
@@ -161,6 +166,10 @@ export function withTranscriptionFailure(
  */
 export function classifyTranscriptionError(error: unknown): TranscriptionFailure {
 	const message = stripIpcErrorWrapper(error instanceof Error ? error.message : String(error));
+	const incompletePrefix = `${STT_TRANSCRIPTION_INCOMPLETE}: `;
+	if (message.startsWith(incompletePrefix)) {
+		return { kind: "error", message: message.slice(incompletePrefix.length), incomplete: true };
+	}
 	// Keyed on the marker only the audio-extraction step sets, not on wording: a
 	// "permission denied" out of model loading is an engine failure, and must keep
 	// the engine-failure handling (raw message, fail the rest of the queue).

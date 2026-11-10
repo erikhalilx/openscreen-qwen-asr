@@ -109,15 +109,13 @@ def prepare(args):
     values = {"python": str(Path(sys.executable).absolute()), "model": str(asr),
               "aligner": str(aligner), "vad": str(vad / "silero_vad.onnx")}
     # Test that native extensions can load before publishing this device's configuration.
-    subprocess.run([sys.executable, "-I", "-c",
-                    "import mlx.core, mlx_qwen3_asr, numpy, onnxruntime"],
-                   check=True)
+    subprocess.run([sys.executable, "-I", "-B", str(HERE / "worker.py"), "--check-runtime"], check=True)
     # Optional inference checks the full model path and alignment.
     if args.smoke_audio:
         request = {"version": 1, "wavPath": str(args.smoke_audio.resolve()),
                    "language": "zh", **{k: values[k] for k in ("model", "aligner", "vad")}}
         env = {**os.environ, "HF_HUB_OFFLINE": "1", "HF_HUB_DISABLE_TELEMETRY": "1"}
-        result = subprocess.run([sys.executable, "-I", str(HERE / "worker.py")],
+        result = subprocess.run([sys.executable, "-I", "-B", str(HERE / "worker.py")],
                                 input=json.dumps(request), text=True, env=env,
                                 stdout=subprocess.PIPE, check=True)
         print(result.stdout, end="")

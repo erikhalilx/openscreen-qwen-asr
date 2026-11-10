@@ -147,6 +147,9 @@ export interface SttTranscribeRequest {
  */
 export const STT_MEDIA_UNREADABLE = "stt:media-unreadable";
 
+/** The decoder could not produce a complete aligned transcript for this source. */
+export const STT_TRANSCRIPTION_INCOMPLETE = "stt:transcription-incomplete";
+
 /** IPC response: main → renderer. */
 export interface SttTranscribeResponse {
 	segments: SttPhraseSegment[];
