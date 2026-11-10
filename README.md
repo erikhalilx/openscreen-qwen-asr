@@ -1,4 +1,4 @@
-# OpenScreen Qwen3-ASR 0.3
+# OpenScreen Qwen3-ASR 0.3.1
 
 ## Setup and sound previews / 补装与音效试听
 
