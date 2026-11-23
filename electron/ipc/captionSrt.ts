@@ -11,23 +11,27 @@ export function registerCaptionSrtHandler() {
 		if (
 			typeof fileName !== "string" ||
 			fileName !== path.basename(fileName) ||
-			!fileName.toLowerCase().endsWith(".srt") ||
+			!/^\.(srt|txt)$/i.test(path.extname(fileName)) ||
 			typeof contents !== "string" ||
 			!contents.trim()
 		) {
 			return { success: false };
 		}
+		const extension = path.extname(fileName).toLowerCase().slice(1);
 		try {
 			const result = await showSaveDialogOver(BrowserWindow.fromWebContents(event.sender), {
-				title: mainT("dialogs", "fileDialogs.saveSrt"),
+				title: extension === "srt" ? mainT("dialogs", "fileDialogs.saveSrt") : "TXT",
 				defaultPath: path.join(app.getPath("downloads"), fileName),
-				filters: [{ name: "SubRip (.srt)", extensions: ["srt"] }],
+				filters: [
+					{ name: extension === "srt" ? "SubRip (.srt)" : "Text (.txt)", extensions: [extension] },
+				],
 				properties: ["createDirectory", "showOverwriteConfirmation"],
 			});
 			if (result.canceled || !result.filePath) return { success: false, canceled: true };
 			// If the user explicitly changes the extension, don't silently write subtitle
 			// text over an unrelated file type.
-			if (!result.filePath.toLowerCase().endsWith(".srt")) return { success: false };
+			if (path.extname(result.filePath).toLowerCase() !== `.${extension}`)
+				return { success: false };
 			await fs.writeFile(result.filePath, contents, "utf8");
 			return { success: true };
 		} catch {

@@ -2057,6 +2057,13 @@ impl Compositor {
                     }
                     let spec = crate::text::TextSpec {
                         content: text.content.clone(),
+                        prefix: text.prefix_style.as_ref().map(|prefix| crate::text::TextPrefixStyle {
+                            length: prefix.length,
+                            font_family: prefix.font_family.clone(),
+                            bold: prefix.font_weight == "bold",
+                            color: parse_hex(&prefix.color)
+                                .unwrap_or_else(|| parse_hex(&text.color).unwrap_or([1.0; 4])),
+                        }),
                         color: parse_hex(&text.color).unwrap_or([1.0, 1.0, 1.0, 1.0]),
                         background: parse_hex(&text.background_color)
                             .unwrap_or([0.0, 0.0, 0.0, 0.0]),

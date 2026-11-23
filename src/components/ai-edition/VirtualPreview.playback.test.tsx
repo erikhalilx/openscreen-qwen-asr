@@ -1285,6 +1285,9 @@ describe("VirtualPreview replay", () => {
 			fireEvent.loadedMetadata(videoEl2);
 		});
 		video2.play();
+		// A transient waiting event may leave the UI in loading before the clock resumes.
+		// Read the live readyState when playing progress is already available.
+		fireEvent.waiting(videoEl2);
 		video2.seekTo(1);
 		tick();
 

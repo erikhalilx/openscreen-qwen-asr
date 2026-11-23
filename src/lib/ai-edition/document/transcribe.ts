@@ -97,6 +97,7 @@ export async function transcribeAsset(
 		assetId,
 		result.segments,
 		result.detectedLanguage ?? options.language,
+		result.speakerTurns,
 	);
 }
 

@@ -16,6 +16,8 @@
  *  in the source recording. */
 export interface SttWordSegment {
 	word: string;
+	/** Source-local ID. Null when analysis cannot confidently attribute this word. */
+	speakerId?: string | null;
 	startSec: number;
 	endSec: number;
 	/** Confidence in `[0, 1]` when the recognizer exposes one; otherwise `undefined`. */
@@ -148,7 +150,14 @@ export interface SttTranscribeRequest {
 export const STT_MEDIA_UNREADABLE = "stt:media-unreadable";
 
 /** IPC response: main → renderer. */
+export interface SttSpeakerTurn {
+	speakerId: string;
+	startSec: number;
+	endSec: number;
+}
+
 export interface SttTranscribeResponse {
+	speakerTurns?: SttSpeakerTurn[];
 	segments: SttPhraseSegment[];
 	wordSegments: SttWordSegment[];
 	detectedLanguage: string;
@@ -171,3 +180,18 @@ export interface SttVadSegment {
 }
 
 export type QwenRuntimeSetup = { kind: "ready" } | { kind: "unsupported" } | { kind: "missing" };
+
+export interface SttSpeakerSettings {
+	available: boolean;
+	enabled: boolean;
+}
+
+export interface SttSpeakerBackfillRequest {
+	sourcePath: string;
+	words: SttWordSegment[];
+}
+
+export interface SttSpeakerBackfillResult {
+	speakerIds: (string | null)[];
+	speakerTurns: SttSpeakerTurn[];
+}

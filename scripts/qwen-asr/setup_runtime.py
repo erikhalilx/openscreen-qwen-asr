@@ -96,15 +96,28 @@ def prepare(args):
     manifest = json.loads(MANIFEST.read_text())
     runtime = args.data_dir / "runtime"
     models = runtime / "models"
-    asr = (verify_files(args.model_path, manifest["models"]["asr"], external=True)
-           if args.model_path else download_model(models / "Qwen3-ASR-0.6B", manifest["models"]["asr"]))
-    aligner = download_model(models / "Qwen3-ForcedAligner-0.6B", manifest["models"]["aligner"])
-    vad = download_model(models / "silero-vad", manifest["models"]["vad"])
-    licenses = ROOT / "third-party-licenses"
-    for directory in (models / "Qwen3-ASR-0.6B", aligner):
-        if directory.is_dir():
-            shutil.copyfile(licenses / "Apache-2.0.txt", directory / "LICENSE")
-    shutil.copyfile(licenses / "Silero-VAD-LICENSE.txt", vad / "LICENSE")
+    shared = getattr(args, "shared_models_dir", None)
+    if shared:
+        def shared_model(name, key):
+            directory = shared / name
+            spec = manifest["models"][key]
+            if directory.is_dir() and any(directory.iterdir()):
+                return verify_files(directory, spec, external=True)
+            return download_model(directory, spec)
+
+        asr = shared_model("Qwen3-ASR-0.6B", "asr")
+        aligner = shared_model("Qwen3-ForcedAligner-0.6B", "aligner")
+        vad = shared_model("silero-vad", "vad")
+    else:
+        asr = (verify_files(args.model_path, manifest["models"]["asr"], external=True)
+               if args.model_path else download_model(models / "Qwen3-ASR-0.6B", manifest["models"]["asr"]))
+        aligner = download_model(models / "Qwen3-ForcedAligner-0.6B", manifest["models"]["aligner"])
+        vad = download_model(models / "silero-vad", manifest["models"]["vad"])
+        licenses = ROOT / "third-party-licenses"
+        for directory in (models / "Qwen3-ASR-0.6B", aligner):
+            if directory.is_dir():
+                shutil.copyfile(licenses / "Apache-2.0.txt", directory / "LICENSE")
+        shutil.copyfile(licenses / "Silero-VAD-LICENSE.txt", vad / "LICENSE")
     collect_licenses(runtime / "PYTHON-THIRD-PARTY-LICENSES.txt")
     values = {"python": str(Path(sys.executable).absolute()), "model": str(asr),
               "aligner": str(aligner), "vad": str(vad / "silero_vad.onnx")}
@@ -133,12 +146,16 @@ def main():
                         default=Path.home() / "Library/Application Support/OpenScreen-Qwen")
     parser.add_argument("--model-path", type=Path, default=os.environ.get("OPENSCREEN_QWEN_MODEL"),
                         help="Reuse this official ASR checkpoint read-only instead of downloading it")
+    parser.add_argument("--shared-models-dir", type=Path,
+                        help="Reuse verified ASR, aligner and VAD models from this directory")
     parser.add_argument("--smoke-audio", type=Path, help="Optional 16 kHz mono PCM16 WAV for offline verification")
     parser.add_argument("--prepare-models", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     args.data_dir = args.data_dir.expanduser().resolve()
     if args.model_path:
         args.model_path = args.model_path.expanduser().resolve()
+    if args.shared_models_dir:
+        args.shared_models_dir = args.shared_models_dir.expanduser().resolve()
     if args.prepare_models:
         prepare(args)
         return
@@ -163,6 +180,8 @@ def main():
                    "--data-dir", str(args.data_dir)]
         if args.model_path:
             command += ["--model-path", str(args.model_path)]
+        if args.shared_models_dir:
+            command += ["--shared-models-dir", str(args.shared_models_dir)]
         if args.smoke_audio:
             command += ["--smoke-audio", str(args.smoke_audio)]
         env = dict(os.environ)

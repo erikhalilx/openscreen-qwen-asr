@@ -73,6 +73,7 @@ import {
 } from "./Modals";
 import { Preview } from "./Preview";
 import { importPendingRecording, maybeSaveFreshRecordingAutoZooms } from "./recordingImport";
+import { SpeakerDefaultsDialog } from "./SpeakerDefaultsDialog";
 import { AddAudioLayerDialog } from "./v4/AddAudioLayerDialog";
 import v4 from "./v4/EditorShellV4.module.css";
 import { type EditorMode, EditorTopBar } from "./v4/EditorTopBar";
@@ -1008,6 +1009,7 @@ export function NewEditorShell() {
 		setExportOpen(true);
 	}, [hasAsset]);
 
+	const [speakerDefaultsOpen, setSpeakerDefaultsOpen] = useState(false);
 	const handleOpenSettings = useCallback(() => {
 		openShortcutsConfig();
 	}, [openShortcutsConfig]);
@@ -1653,6 +1655,7 @@ export function NewEditorShell() {
 					save: () => void handleSave(),
 					export: handleExport,
 					openSettings: handleOpenSettings,
+					openTranscriptionSettings: () => setSpeakerDefaultsOpen(true),
 					renameProject: handleRenameProject,
 					toggleChat: () => setChatOpen((v) => !v),
 					openProviderSettings: () => openDialog("providers"),
@@ -1871,6 +1874,7 @@ export function NewEditorShell() {
 				onChoose={handleConfirmUnsaved}
 			/>
 			<ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} document={document} />
+			<SpeakerDefaultsDialog open={speakerDefaultsOpen} onOpenChange={setSpeakerDefaultsOpen} />
 			<AddAudioLayerDialog
 				open={voiceoverFlow !== null}
 				maxDurationSec={voiceoverFlow?.maxDurationSec ?? 0}

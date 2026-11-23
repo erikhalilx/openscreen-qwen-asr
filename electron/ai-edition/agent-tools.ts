@@ -2164,10 +2164,19 @@ export function executeAgentTool(
 				startSec: s.startSec,
 				endSec: s.endSec,
 				text: s.text,
+				...(s.speakerId !== undefined ? { speakerId: s.speakerId } : {}),
 			}));
 			return {
 				ok: true,
-				resultJson: JSON.stringify({ assetId, language: transcript.language, segments }),
+				resultJson: JSON.stringify({
+					assetId,
+					language: transcript.language,
+					segments,
+					speakerNumbers: transcript.speakerNumbers,
+					speakerNames: transcript.speakerNames,
+					speakerTurns: transcript.speakerTurns,
+					captionSpeakerOverrides: transcript.captionSpeakerOverrides,
+				}),
 			};
 		}
 
@@ -2196,6 +2205,7 @@ export function executeAgentTool(
 					text: word.text,
 					startSec: word.startSec,
 					endSec: word.endSec,
+					...(word.speakerId !== undefined ? { speakerId: word.speakerId } : {}),
 					// Only the words that are NOT plain transcription say so, so the common
 					// case costs nothing to read.
 					...(word.source ? { source: word.source } : {}),
@@ -2208,6 +2218,8 @@ export function executeAgentTool(
 					language: transcript.language,
 					total: transcript.words.length,
 					returned: words.length,
+					speakerNumbers: transcript.speakerNumbers,
+					speakerNames: transcript.speakerNames,
 					words,
 				}),
 			};

@@ -42,13 +42,16 @@ describe.skipIf(process.platform === "win32")("Qwen process lifecycle", () => {
 			path.join(root, "fake.py"),
 			`import json,sys,time\nr=json.loads(sys.stdin.readline())\nprint(json.dumps({'version':1,'type':'progress','phase':'transcribe','completedSec':0,'totalSec':1}),flush=True)\nif r.get('prompt')=='wait': time.sleep(30)\nif r.get('prompt')=='fail': sys.exit(2)\nprint(json.dumps({'version':1,'type':'result','result':${JSON.stringify(valid)}}),flush=True)\n`,
 		);
-		manager = new QwenMlxManager({
-			python: "/usr/bin/python3",
-			worker: path.join(root, "fake.py"),
-			model: root,
-			aligner: root,
-			vad: path.join(root, "config.json"),
-		});
+		manager = new QwenMlxManager(
+			{
+				python: "/usr/bin/python3",
+				worker: path.join(root, "fake.py"),
+				model: root,
+				aligner: root,
+				vad: path.join(root, "config.json"),
+			},
+			async (result) => result,
+		);
 	});
 	afterEach(async () => {
 		await manager.shutdown();
