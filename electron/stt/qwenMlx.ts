@@ -13,6 +13,7 @@ import type {
 	SttTranscribeRequest,
 	SttTranscribeResponse,
 } from "./transcriptionContract";
+import { STT_TRANSCRIPTION_INCOMPLETE } from "./transcriptionContract";
 import { cleanupWav, writeSamplesAsWav } from "./wav";
 
 const timedText = z.object({
@@ -38,7 +39,12 @@ const response = z.object({
 });
 const eventSchema = z.discriminatedUnion("type", [
 	z.object({ version: z.literal(1), type: z.literal("ready") }),
-	z.object({ version: z.literal(1), type: z.literal("error"), message: z.string() }),
+	z.object({
+		version: z.literal(1),
+		type: z.literal("error"),
+		code: z.literal("incomplete").optional(),
+		message: z.string(),
+	}),
 	z.object({ version: z.literal(1), type: z.literal("result"), result: response }),
 	z.object({
 		version: z.literal(1),
@@ -98,6 +104,12 @@ export function qwenPaths(): QwenPaths {
 
 function cancelled(): Error {
 	return Object.assign(new Error("Transcription cancelled"), { name: "AbortError" });
+}
+
+class QwenIncompleteError extends Error {
+	constructor(message: string) {
+		super(`${STT_TRANSCRIPTION_INCOMPLETE}: ${message}`);
+	}
 }
 
 /** Validate the worker's source-clock contract before it reaches a persisted project. */
@@ -187,13 +199,16 @@ export class QwenMlxManager {
 				if (controller.signal.aborted) throw cancelled();
 				wav = await writeSamplesAsWav(samples);
 				if (controller.signal.aborted) throw cancelled();
-				// Retry a failed worker once. Never commit partial transcripts.
 				let result: SttTranscribeResponse;
-				try {
-					result = await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
-				} catch (error) {
-					if (controller.signal.aborted) throw error;
-					result = await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
+				// Retry a failed worker once. The decoder already retried incomplete audio locally.
+				for (let attempt = 0; ; attempt++) {
+					try {
+						result = await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
+						break;
+					} catch (error) {
+						if (controller.signal.aborted || error instanceof QwenIncompleteError || attempt >= 1)
+							throw error;
+					}
 				}
 				return await this.runAttribution(result, wav, controller.signal);
 			} finally {
@@ -223,7 +238,7 @@ export class QwenMlxManager {
 		// Parent shells and other local ASR deployments can carry unrelated Python paths.
 		delete (env as NodeJS.ProcessEnv).PYTHONPATH;
 		delete (env as NodeJS.ProcessEnv).PYTHONHOME;
-		const child = spawn(this.paths.python, ["-I", this.paths.worker], {
+		const child = spawn(this.paths.python, ["-I", "-B", this.paths.worker], {
 			env,
 			shell: false,
 			stdio: "pipe",
@@ -239,7 +254,7 @@ export class QwenMlxManager {
 				killTimer.unref();
 			};
 			const deadline = () => {
-				failure = new Error("Qwen worker made no progress before its timeout");
+				failure ??= new Error("Qwen worker made no progress before its timeout");
 				stop();
 			};
 			// Reset on actual chunk progress; never put one fixed ceiling on a long recording.
@@ -255,7 +270,12 @@ export class QwenMlxManager {
 					timer = setTimeout(deadline, 180_000);
 					timer.unref();
 					if (event.type === "result") result = parseQwenResponse(event.result, duration);
-					if (event.type === "error") failure = new Error(event.message);
+					if (event.type === "error") {
+						failure =
+							event.code === "incomplete"
+								? new QwenIncompleteError(event.message)
+								: new Error(event.message);
+					}
 					if (event.type === "progress")
 						this.emit({
 							phase: event.phase,

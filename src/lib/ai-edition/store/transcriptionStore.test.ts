@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toastText } from "@/i18n/toastText";
+import { STT_TRANSCRIPTION_INCOMPLETE } from "../../../../electron/stt/transcriptionContract";
 import type { AxcutDocument, AxcutTranscript } from "../schema";
 import { answerMcpHostRequest } from "./mcpDocumentHost";
 import { useProjectStore } from "./projectStore";
@@ -244,6 +245,30 @@ describe("useTranscriptionStore", () => {
 		expect(Object.values(jobs).map((j) => j.status)).toEqual(["failed", "failed", "failed"]);
 		expect(jobs.asset_3?.failure?.message).toBe("whisper-server exited");
 		expect(toastMocks.error).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the other source queued when one source exhausts recovery", async () => {
+		const interval = "Qwen could not complete transcription at 12.000–13.000s (repetition)";
+		transcribeMocks.transcribeAsset
+			.mockRejectedValueOnce(
+				new Error(
+					`Error invoking remote method 'stt:transcribe': Error: ${STT_TRANSCRIPTION_INCOMPLETE}: ${interval}`,
+				),
+			)
+			.mockResolvedValueOnce(transcriptFor("microphone"));
+		loadDocument(makeDoc(["system", "microphone"]));
+		useTranscriptionStore.getState().sync(useProjectStore.getState().document);
+		await whenTranscriptionIdle();
+
+		expect(transcribeMocks.transcribeAsset).toHaveBeenCalledTimes(2);
+		expect(useTranscriptionStore.getState().jobs.system?.failure).toEqual({
+			kind: "error",
+			message: interval,
+			incomplete: true,
+		});
+		expect(useProjectStore.getState().document?.transcripts.map((t) => t.assetId)).toEqual([
+			"microphone",
+		]);
 	});
 
 	// The verdict is about the FILE, so a run the user asked for by hand answers
