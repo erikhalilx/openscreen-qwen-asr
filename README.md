@@ -28,6 +28,8 @@ An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork wi
 
 [中文安装说明](README-QWEN.zh-CN.md) · [Models and verified downloads](models/README.md) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Privacy and publication](PUBLICATION.md) · [Upstream README](README-UPSTREAM.md)
 
+完整的中文功能范围、运行要求、双音轨/双字幕行为和旧项目兼容规则见[《OpenScreen Qwen v0.3.0 功能说明书》](docs/OpenScreen-Qwen-v0.3.0-功能说明书.md)。
+
 ## Set up transcription on an installed app / 已安装应用的转录补装
 
 Open **Studio → Transcript → Captions**. If Qwen components are missing, choose **Save installer script** and double-click the saved `.command` file. Setup installs the pinned Python dependencies and verifies the downloaded models. Allow at least 8 GB free and an internet connection. When setup finishes, quit with Cmd+Q, reopen OpenScreen Qwen, and retry transcription.

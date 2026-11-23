@@ -47,7 +47,15 @@ export type CaptionAnchorV = "bottom" | "top";
  */
 export type CaptionAnchorH = "left" | "center" | "right";
 
+export const SPEAKER_SEPARATORS = ["", " ", ":", "："] as const;
+export type SpeakerSeparator = (typeof SPEAKER_SEPARATORS)[number];
+
 export interface CaptionSettings {
+	showSpeakers: boolean;
+	speakerFontFamily?: string;
+	speakerColor?: string;
+	speakerFontWeight?: "normal" | "bold";
+	speakerSeparator: SpeakerSeparator;
 	/** Master show/hide for the whole caption layer (preview AND export). */
 	enabled: boolean;
 	/**
@@ -105,6 +113,8 @@ export interface CaptionSettings {
 }
 
 export const DEFAULT_CAPTION_SETTINGS: CaptionSettings = {
+	showSpeakers: false,
+	speakerSeparator: "：",
 	enabled: false,
 	language: null,
 	captionLane: "recording",
@@ -579,6 +589,7 @@ export function getCaptionSettings(
 						...base,
 						...style,
 						enabled: base.enabled,
+						showSpeakers: base.showSpeakers,
 						captionLane: base.captionLane,
 					},
 				},
@@ -631,6 +642,17 @@ export function getCaptionSettings(
 
 	return {
 		enabled: readBoolean(raw.enabled, d.enabled),
+		showSpeakers: readBoolean(raw.showSpeakers, d.showSpeakers),
+		speakerFontFamily:
+			typeof raw.speakerFontFamily === "string"
+				? resolveTextFontFamily(raw.speakerFontFamily)
+				: undefined,
+		speakerColor: typeof raw.speakerColor === "string" ? raw.speakerColor : undefined,
+		speakerFontWeight:
+			raw.speakerFontWeight === "normal" || raw.speakerFontWeight === "bold"
+				? raw.speakerFontWeight
+				: undefined,
+		speakerSeparator: readEnum(raw.speakerSeparator, SPEAKER_SEPARATORS, d.speakerSeparator),
 		// `null` is a meaningful value here ("show the original"), so an explicit
 		// null must survive; only a missing/garbage entry falls back to the default.
 		language: raw.language === null || typeof raw.language === "string" ? raw.language : d.language,
@@ -696,12 +718,13 @@ export function patchCaptionSettings(
 ): AxcutDocument {
 	if (source) {
 		let current = doc;
-		const { enabled, captionLane, ...style } = patch;
-		if (enabled !== undefined || captionLane !== undefined)
+		const { enabled, captionLane, showSpeakers, ...style } = patch;
+		if (enabled !== undefined || captionLane !== undefined || showSpeakers !== undefined)
 			current = patchCaptionSettings(
 				doc,
 				{
 					...(enabled !== undefined ? { enabled } : {}),
+					...(showSpeakers !== undefined ? { showSpeakers } : {}),
 					...(captionLane !== undefined ? { captionLane } : {}),
 				},
 				aspectValue,

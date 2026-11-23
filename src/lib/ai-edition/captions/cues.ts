@@ -21,6 +21,7 @@ import {
 	groupTimedCaptionWordsIntoLines,
 	splitMergedCaptionsByWordBounds,
 } from "@/lib/captioning/annotationsFromCaptions";
+import { groupChineseSentences, usesChineseSentences } from "@/lib/captioning/chineseSentences";
 import type { CaptionSegment } from "@/lib/captioning/transcribe";
 import type { AxcutDocument, AxcutTranscript } from "../schema";
 import {
@@ -39,11 +40,39 @@ import {
 import { type CaptionTranslations, captionTranslationUnits } from "./translations";
 
 /** One on-screen caption line, in whichever time base the producer documented. */
+export function transcriptSpeakerLabel(transcript: AxcutTranscript, id: string): string {
+	const custom = transcript.speakerNames?.[id];
+	if (custom) return custom;
+	const number = transcript.speakerNumbers?.[id] ?? /^speaker-(\d+)$/.exec(id)?.[1];
+	if (!number) return id;
+	return ["zh", "yue"].includes(transcript.language) ? `说话人 ${number}` : `Speaker ${number}`;
+}
+
 export interface CaptionCue {
 	id: string;
 	startMs: number;
 	endMs: number;
 	text: string;
+	speakerId?: string | null;
+	speakerLabel?: string;
+	speakerNeedsReview?: boolean;
+	speakerRef?: { assetId: string; startKey: string };
+}
+
+const MAX_SPEAKER_GAP_SEC = 0.5;
+
+/** Infer only from the immediate original lines of this source. */
+export function inferCaptionSpeaker(lines: readonly CaptionSegment[], index: number) {
+	const line = lines[index];
+	const previous = lines[index - 1];
+	const next = lines[index + 1];
+	if (line?.speakerId !== null || !previous?.speakerId || previous.speakerId !== next?.speakerId)
+		return null;
+	const before = line.startSec - previous.endSec;
+	const after = next.startSec - line.endSec;
+	return before >= 0 && before <= MAX_SPEAKER_GAP_SEC && after >= 0 && after <= MAX_SPEAKER_GAP_SEC
+		? previous.speakerId
+		: null;
 }
 
 /** Captions draw above every user annotation so a blur or a sticker can't bury
@@ -53,7 +82,12 @@ export const CAPTION_Z_INDEX_BASE = 100_000;
 function toCaptionSegments(transcript: AxcutTranscript): CaptionSegment[] {
 	return transcript.words
 		.filter((word) => word.text.trim().length > 0)
-		.map((word) => ({ startSec: word.startSec, endSec: word.endSec, text: word.text }));
+		.map((word) => ({
+			startSec: word.startSec,
+			endSec: word.endSec,
+			text: word.text,
+			speakerId: word.speakerId,
+		}));
 }
 
 function segmentWordsAsCaptionSegments(
@@ -66,7 +100,12 @@ function segmentWordsAsCaptionSegments(
 	return segment.wordIds
 		.map((id) => byId.get(id))
 		.filter((w): w is NonNullable<typeof w> => w !== undefined && w.text.trim().length > 0)
-		.map((w) => ({ startSec: w.startSec, endSec: w.endSec, text: w.text }));
+		.map((w) => ({
+			startSec: w.startSec,
+			endSec: w.endSec,
+			text: w.text,
+			speakerId: w.speakerId,
+		}));
 }
 
 /**
@@ -75,10 +114,17 @@ function segmentWordsAsCaptionSegments(
  * word count and word order, so the source's per-word timestamps cannot carry
  * over — but the span it was spoken in can, and does.
  */
-function textAsPseudoWords(startSec: number, endSec: number, text: string): CaptionSegment[] {
+function textAsPseudoWords(
+	startSec: number,
+	endSec: number,
+	text: string,
+	speakerId?: string | null,
+): CaptionSegment[] {
 	const trimmed = text.trim();
 	if (!trimmed) return [];
-	return splitMergedCaptionsByWordBounds([{ startSec, endSec, text: trimmed }], 1, 1);
+	return splitMergedCaptionsByWordBounds([{ startSec, endSec, text: trimmed }], 1, 1).map(
+		(word) => ({ ...word, speakerId }),
+	);
 }
 
 /**
@@ -102,6 +148,7 @@ export function captionLinesForAsset(
 	transcript: AxcutTranscript,
 	settings: CaptionSettings,
 	translations: CaptionTranslations,
+	chineseSentences = false,
 ): CaptionSegment[] {
 	const minWords = settings.minWordsPerLine;
 	const maxWords = settings.maxWordsPerLine;
@@ -119,6 +166,28 @@ export function captionLinesForAsset(
 			: translatedWordStream(transcript, translations, settings.language);
 
 	if (stream.length === 0) return [];
+	if (
+		chineseSentences &&
+		settings.language === null &&
+		usesChineseSentences(transcript.language, stream)
+	) {
+		const group = (words: CaptionSegment[]) =>
+			groupChineseSentences(words, transcript.speakerTurns ?? [], maxWords);
+		const overrides = transcript.captionSpeakerOverrides;
+		if (!overrides || Object.keys(overrides).length === 0) return polish(group(stream));
+		// Keep the original word span of manually edited cues, including explicit blanks.
+		const previous = polish(groupTimedCaptionWordsIntoLines(stream, minWords, maxWords));
+		const protectedLines = previous.filter(
+			(line) => overrides[String(Math.round(line.startSec * 1_000_000))] !== undefined,
+		);
+		const out: CaptionSegment[] = [];
+		let remaining = stream;
+		for (const line of protectedLines) {
+			out.push(...group(remaining.filter((word) => word.startSec < line.startSec)), line);
+			remaining = remaining.filter((word) => word.startSec >= line.endSec);
+		}
+		return finalizeCaptionSegmentsForPlayback([...out, ...group(remaining)]);
+	}
 	return polish(groupTimedCaptionWordsIntoLines(stream, minWords, maxWords));
 }
 
@@ -127,7 +196,9 @@ function originalWordStream(transcript: AxcutTranscript): CaptionSegment[] {
 	if (words.length > 0) return words;
 	// A transcript with segments but no words (hand-authored / imported) still
 	// deserves captions — spread each segment's own text across its span.
-	return transcript.segments.flatMap((s) => textAsPseudoWords(s.startSec, s.endSec, s.text));
+	return transcript.segments.flatMap((s) =>
+		textAsPseudoWords(s.startSec, s.endSec, s.text, s.speakerId),
+	);
 }
 
 function translatedWordStream(
@@ -139,7 +210,7 @@ function translatedWordStream(
 	return captionTranslationUnits(transcript).flatMap((unit) => {
 		const replacement = translated[unit.id];
 		if (typeof replacement === "string" && replacement.trim()) {
-			return textAsPseudoWords(unit.startSec, unit.endSec, replacement);
+			return textAsPseudoWords(unit.startSec, unit.endSec, replacement, unit.speakerId);
 		}
 		// Not translated yet — keep the original words, with their real timings.
 		const originals = unit.segmentIds.flatMap((id) =>
@@ -147,7 +218,7 @@ function translatedWordStream(
 		);
 		return originals.length > 0
 			? originals
-			: textAsPseudoWords(unit.startSec, unit.endSec, unit.text);
+			: textAsPseudoWords(unit.startSec, unit.endSec, unit.text, unit.speakerId);
 	});
 }
 
@@ -223,13 +294,52 @@ export function deriveCaptionCues(
 	for (const assetId of new Set(placements.map((c) => c.assetId))) {
 		const transcript = transcripts.get(assetId);
 		if (!transcript) continue;
-		linesByAsset.set(assetId, captionLinesForAsset(transcript, settings, translations));
+		linesByAsset.set(
+			assetId,
+			captionLinesForAsset(transcript, settings, translations, document.chineseSentenceCaptions),
+		);
 	}
 
 	for (const [assetId, lines] of linesByAsset) {
-		for (const line of lines) {
+		for (const [index, line] of lines.entries()) {
 			const text = line.text.trim();
 			if (!text) continue;
+			const startKey = String(Math.round(line.startSec * 1_000_000));
+			const transcript = transcripts.get(assetId);
+			const sentenceMode =
+				document.chineseSentenceCaptions &&
+				settings.language === null &&
+				transcript &&
+				usesChineseSentences(transcript.language, [line]);
+			const editKey = sentenceMode ? `sentence:${startKey}` : startKey;
+			const overrides = transcript?.captionSpeakerOverrides;
+			const sentenceOverride = overrides?.[editKey];
+			const override = sentenceOverride === undefined ? overrides?.[startKey] : sentenceOverride;
+			const speakerId =
+				line.speakerId === null && !sentenceMode
+					? inferCaptionSpeaker(lines, index)
+					: line.speakerId;
+			const speakerLabel =
+				override === undefined
+					? speakerId && transcript
+						? transcriptSpeakerLabel(transcript, speakerId)
+						: undefined
+					: (override ?? undefined);
+			const attribution =
+				line.speakerId !== undefined || override !== undefined
+					? {
+							speakerId,
+							speakerLabel,
+							speakerNeedsReview: Boolean(
+								sentenceMode && speakerId === null && override === undefined,
+							),
+							speakerRef: {
+								assetId,
+								startKey:
+									sentenceOverride === undefined && override !== undefined ? startKey : editKey,
+							},
+						}
+					: {};
 			for (const span of sourceSpanToTimelineSpans(
 				assetId,
 				line.startSec,
@@ -238,7 +348,7 @@ export function deriveCaptionCues(
 			)) {
 				const startMs = Math.round(span.startSec * 1000);
 				const endMs = Math.max(Math.round(span.endSec * 1000), startMs + 1);
-				cues.push({ id: `caption-${n++}`, startMs, endMs, text });
+				cues.push({ id: `caption-${n++}`, startMs, endMs, text, ...attribution });
 			}
 		}
 	}
@@ -280,7 +390,15 @@ export function captionCueAt(cues: CaptionCue[], timeMs: number): CaptionCue | n
  * overhangs the frame edge — through `annotationRegionSchema`, which bounds position
  * to 0..100. Captions are never stored, so they never meet that schema.
  */
+export interface CaptionTextPrefixStyle {
+	length: number;
+	fontFamily: string;
+	fontWeight: "normal" | "bold";
+	color: string;
+}
+
 export type CaptionTextRegion = AnnotationRegion & {
+	textPrefixStyle?: CaptionTextPrefixStyle;
 	space: "frame";
 	/** Which edge of the drawn block the compositor pins to the region's box. Carried
 	 *  here rather than on `AnnotationTextStyle` for the same reason as `space`: an
@@ -303,33 +421,49 @@ export function captionCuesToTextRegions(
 	aspectValue: number,
 ): CaptionTextRegion[] {
 	const rect = captionBoxRect(settings, aspectValue);
-	return cues.map((cue, index) => ({
-		space: "frame" as const,
-		// The edge the compositor pins the drawn block to inside `size`. Without it the
-		// rasterizers centre the block — which is what made a caption drift vertically
-		// every time its text wrapped to another line.
-		verticalAlign: rect.verticalAlign,
-		id: cue.id,
-		startMs: cue.startMs,
-		endMs: cue.endMs,
-		type: "text" as const,
-		content: cue.text,
-		position: { x: rect.x, y: rect.y },
-		size: { width: rect.width, height: rect.height },
-		style: {
-			color: settings.color,
-			backgroundColor: captionBackgroundCss(settings),
-			fontSize: settings.fontSize,
-			fontFamily: settings.fontFamily,
-			fontWeight: settings.fontWeight,
-			fontStyle: "normal" as const,
-			textDecoration: "none" as const,
-			// One horizontal control, not two: `anchorH` picks which edge of the block is
-			// pinned to the column, and the rasterizers' plate maths already snaps the
-			// plate onto that edge (`text_linux.rs` `plate_x`, and its two mirrors).
-			textAlign: settings.anchorH,
-			textAnimation: "none" as const,
-		},
-		zIndex: CAPTION_Z_INDEX_BASE + index,
-	}));
+	return cues.map((cue, index) => {
+		const prefix =
+			settings.showSpeakers && cue.speakerLabel
+				? `${cue.speakerLabel}${settings.speakerSeparator}`
+				: "";
+		return {
+			space: "frame" as const,
+			// The edge the compositor pins the drawn block to inside `size`. Without it the
+			// rasterizers centre the block — which is what made a caption drift vertically
+			// every time its text wrapped to another line.
+			verticalAlign: rect.verticalAlign,
+			id: cue.id,
+			startMs: cue.startMs,
+			endMs: cue.endMs,
+			type: "text" as const,
+			content: `${prefix}${cue.text}`,
+			...(prefix
+				? {
+						textPrefixStyle: {
+							length: prefix.length,
+							fontFamily: settings.speakerFontFamily ?? settings.fontFamily,
+							fontWeight: settings.speakerFontWeight ?? settings.fontWeight,
+							color: settings.speakerColor ?? settings.color,
+						},
+					}
+				: {}),
+			position: { x: rect.x, y: rect.y },
+			size: { width: rect.width, height: rect.height },
+			style: {
+				color: settings.color,
+				backgroundColor: captionBackgroundCss(settings),
+				fontSize: settings.fontSize,
+				fontFamily: settings.fontFamily,
+				fontWeight: settings.fontWeight,
+				fontStyle: "normal" as const,
+				textDecoration: "none" as const,
+				// One horizontal control, not two: `anchorH` picks which edge of the block is
+				// pinned to the column, and the rasterizers' plate maths already snaps the
+				// plate onto that edge (`text_linux.rs` `plate_x`, and its two mirrors).
+				textAlign: settings.anchorH,
+				textAnimation: "none" as const,
+			},
+			zIndex: CAPTION_Z_INDEX_BASE + index,
+		};
+	});
 }

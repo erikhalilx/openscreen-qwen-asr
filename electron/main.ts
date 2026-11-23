@@ -95,12 +95,21 @@ const LOCAL_QWEN_FORK = true;
 
 // Personal Qwen fork: isolate projects, settings, recordings and the single-instance lock.
 // Development/QA also stays separate from the installed application's active projects.
-app.setName("OpenScreen Qwen");
+const localTestName = "OpenScreen Qwen 测试版";
+const isLocalTest = app.isPackaged && app.getName() === localTestName;
+app.setName(isLocalTest ? localTestName : "OpenScreen Qwen");
 app.setPath(
 	"userData",
 	!app.isPackaged && process.env.ELECTRON_USER_DATA_DIR
 		? path.resolve(process.env.ELECTRON_USER_DATA_DIR)
-		: path.join(app.getPath("appData"), app.isPackaged ? "OpenScreen-Qwen" : "OpenScreen-Qwen-Dev"),
+		: path.join(
+				app.getPath("appData"),
+				isLocalTest
+					? "OpenScreen-Qwen-Test"
+					: app.isPackaged
+						? "OpenScreen-Qwen"
+						: "OpenScreen-Qwen-Dev",
+			),
 );
 
 // CLI mode: `openscreen export|record|info|help ...` runs headless without

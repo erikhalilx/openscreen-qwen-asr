@@ -1205,7 +1205,7 @@ export function VirtualPreview({
 				recoveringRef.current ||
 				v.seeking ||
 				pendingSeekRef.current !== null ||
-				loadStateRef.current === "loading"
+				(loadStateRef.current === "loading" && v.readyState < HTMLMediaElement.HAVE_CURRENT_DATA)
 			) {
 				return;
 			}
@@ -1538,13 +1538,14 @@ export function VirtualPreview({
 				if (!shouldContinuePlayback) {
 					videoRef.current?.pause();
 				}
-				setSourceIndex(targetIndex);
-				updateLoadState("loading");
-				updateVirtualTime(position.virtualTimeSec);
+				pendingScrubTargetRef.current = null;
 				pendingSeekRef.current = {
 					sourceTimeSec: position.sourceTimeSec,
 					play: shouldContinuePlayback,
 				};
+				setSourceIndex(targetIndex);
+				updateLoadState("loading");
+				updateVirtualTime(position.virtualTimeSec);
 				return;
 			}
 
@@ -1803,6 +1804,7 @@ export function VirtualPreview({
 								}
 							}}
 							onWaiting={() => updateLoadState("loading")}
+							onPlaying={() => updateLoadState("ready")}
 							onCanPlay={() => {
 								updateLoadState("ready");
 								markSourceLoaded();

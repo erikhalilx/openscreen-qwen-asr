@@ -15,6 +15,28 @@ const CAPTION_LINE_END_TAIL_SEC = 0;
 
 /** A real silence between word-level timestamps should start a new caption run. */
 const WORD_RUN_BREAK_GAP_SEC = 0.24;
+const SAME_SPEAKER_PAUSE_SEC = 0.65;
+const MAX_SPEAKER_BRIDGE_SEC = 0.5;
+const SENTENCE_END = /[.!?。！？…]["'”’」』）)]*$/;
+
+/** A short unknown span inside a same-speaker sentence is not a speaker change. */
+function bridgeUnassignedWords(words: CaptionSegment[]): void {
+	for (let start = 1; start < words.length; start++) {
+		const before = words[start - 1];
+		if (words[start].speakerId !== null || !before.speakerId) continue;
+		let end = start;
+		while (words[end]?.speakerId === null) end++;
+		const after = words[end];
+		if (
+			after?.speakerId === before.speakerId &&
+			after.startSec - before.endSec <= MAX_SPEAKER_BRIDGE_SEC &&
+			!words.slice(start - 1, end).some((word) => SENTENCE_END.test(word.text.trimEnd()))
+		) {
+			for (let i = start; i < end; i++) words[i] = { ...words[i], speakerId: before.speakerId };
+		}
+		start = end - 1;
+	}
+}
 
 /** Same text again with almost no gap or overlap; common Whisper/chunk artifact. */
 const DEDUPE_SAME_TEXT_MAX_GAP_SEC = 0.55;
@@ -72,7 +94,11 @@ export function dedupeAdjacentCaptionRepeats(segments: CaptionSegment[]): Captio
 	for (const seg of sorted) {
 		const t = seg.text.trim();
 		const prev = out[out.length - 1];
-		if (prev && normalizeCaptionKey(prev.text) === normalizeCaptionKey(t)) {
+		if (
+			prev &&
+			prev.speakerId === seg.speakerId &&
+			normalizeCaptionKey(prev.text) === normalizeCaptionKey(t)
+		) {
 			const overlap = prev.endSec - seg.startSec;
 			const gap = seg.startSec - prev.endSec;
 			if (overlap > 0.015 || gap < DEDUPE_SAME_TEXT_MAX_GAP_SEC) {
@@ -81,7 +107,7 @@ export function dedupeAdjacentCaptionRepeats(segments: CaptionSegment[]): Captio
 				continue;
 			}
 		}
-		out.push({ startSec: seg.startSec, endSec: seg.endSec, text: t });
+		out.push({ ...seg, text: t });
 	}
 	return out;
 }
@@ -99,7 +125,7 @@ export function finalizeCaptionSegmentsForPlayback(segments: CaptionSegment[]): 
 		let e = seg.endSec + AUTO_CAPTION_END_HOLD_SEC;
 		s = Math.max(0, s);
 		if (e <= s) e = s + 0.02;
-		return { startSec: s, endSec: e, text: seg.text.trim() };
+		return { ...seg, startSec: s, endSec: e, text: seg.text.trim() };
 	});
 
 	for (let i = 1; i < a.length; i++) {
@@ -255,10 +281,9 @@ export function groupTimedCaptionWordsIntoLines(
 	minWords: number,
 	maxWords: number,
 ): CaptionSegment[] {
-	const words = [...segments]
-		.filter((s) => s.text.trim())
-		.sort((a, b) => a.startSec - b.startSec || a.endSec - b.endSec);
+	const words = [...segments].filter((s) => s.text.trim()).sort((a, b) => a.startSec - b.startSec);
 	if (words.length === 0) return [];
+	bridgeUnassignedWords(words);
 
 	const minW = Math.max(1, Math.min(Math.floor(minWords), Math.floor(maxWords)));
 	const maxW = Math.max(minW, Math.floor(maxWords));
@@ -274,11 +299,27 @@ export function groupTimedCaptionWordsIntoLines(
 			const s = slice[0]!.startSec;
 			const rawEnd = slice[slice.length - 1]!.endSec;
 			const e = Math.max(s + WORD_SPLIT_MIN_SPAN_SEC, rawEnd + CAPTION_LINE_END_TAIL_SEC);
-			out.push({
-				startSec: s,
-				endSec: e,
-				text: joinTranscriptText(slice.map((w) => w.text)),
-			});
+			const text = joinTranscriptText(slice.map((w) => w.text));
+			const speakerId = slice[0].speakerId;
+			const previous = out.at(-1);
+			// A zero-duration aligned word can share an onset with the next run.
+			// A subtitle clock cannot display two consecutive cues at that instant.
+			if (
+				speakerId !== undefined &&
+				previous &&
+				Math.round(previous.startSec * 1000) === Math.round(s * 1000)
+			) {
+				previous.text = joinTranscriptText([previous.text, text]);
+				previous.endSec = Math.max(previous.endSec, e);
+				if (previous.speakerId !== speakerId) previous.speakerId = null;
+			} else {
+				out.push({
+					startSec: s,
+					endSec: e,
+					text,
+					...(speakerId !== undefined ? { speakerId } : {}),
+				});
+			}
 		}
 	};
 
@@ -286,7 +327,12 @@ export function groupTimedCaptionWordsIntoLines(
 		const prev = words[i - 1]!;
 		const cur = words[i]!;
 		const gap = cur.startSec - prev.endSec;
-		if (gap >= WORD_RUN_BREAK_GAP_SEC) {
+		const sameSpeaker = prev.speakerId != null && prev.speakerId === cur.speakerId;
+		if (
+			gap >= (sameSpeaker ? SAME_SPEAKER_PAUSE_SEC : WORD_RUN_BREAK_GAP_SEC) ||
+			prev.speakerId !== cur.speakerId ||
+			(prev.speakerId !== undefined && SENTENCE_END.test(prev.text.trimEnd()))
+		) {
 			flushRun(i);
 			runStart = i;
 		}

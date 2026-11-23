@@ -8,18 +8,21 @@ import {
 	captionSrtFileName,
 	captionSrtSources,
 	captionsToSrt,
+	captionsToText,
 } from "@/lib/ai-edition/captions/srt";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { useTimelineTranscriptGate } from "@/lib/ai-edition/store/transcriptionStore";
 import styles from "./NewEditorShell.module.css";
 
-/** Shared by the transcript editor and caption settings. Exporting is read-only:
+/** Exporting from the transcript editor is read-only:
  * showing a hidden source or saving an SRT must not alter project settings/history. */
 export function CaptionSrtExport() {
 	const t = useScopedT("settings");
 	const document = useProjectStore((state) => state.document);
 	const gate = useTimelineTranscriptGate();
 	const [open, setOpen] = useState(false);
+	const [includeTimestamps, setIncludeTimestamps] = useState(true);
+	const [includeSpeaker, setIncludeSpeaker] = useState(false);
 	const [saving, setSaving] = useState(false);
 	const sources = useMemo(() => captionSrtSources(document), [document]);
 	const options = useMemo(
@@ -35,15 +38,18 @@ export function CaptionSrtExport() {
 		if (!document || busy || !option.cues.length) return;
 		setOpen(false);
 		setSaving(true);
+		const format = includeTimestamps ? "SRT" : "TXT";
 		try {
 			const result = await window.electronAPI?.saveCaptionSrt(
-				captionSrtFileName(document.project.title, option.source),
-				captionsToSrt(option.cues),
+				captionSrtFileName(document.project.title, option.source, includeTimestamps),
+				includeTimestamps
+					? captionsToSrt(option.cues, includeSpeaker)
+					: captionsToText(option.cues, includeSpeaker),
 			);
-			if (result?.success) toast.success(t("captions.srtSaved"));
-			else if (!result?.canceled) toast.error(t("captions.srtFailed"));
+			if (result?.success) toast.success(t("captions.srtSaved", { format }));
+			else if (!result?.canceled) toast.error(t("captions.srtFailed", { format }));
 		} catch {
-			toast.error(t("captions.srtFailed"));
+			toast.error(t("captions.srtFailed", { format }));
 		} finally {
 			setSaving(false);
 		}
@@ -71,6 +77,22 @@ export function CaptionSrtExport() {
 			</PopoverTrigger>
 			<PopoverContent align="end" className={styles.srtExportMenu}>
 				<strong>{t("captions.exportSrt")}</strong>
+				<label>
+					<input
+						type="checkbox"
+						checked={includeTimestamps}
+						onChange={(event) => setIncludeTimestamps(event.currentTarget.checked)}
+					/>
+					{t("captions.exportTimestamps")}
+				</label>
+				<label>
+					<input
+						type="checkbox"
+						checked={includeSpeaker}
+						onChange={(event) => setIncludeSpeaker(event.currentTarget.checked)}
+					/>
+					{t("captions.exportSpeaker")}
+				</label>
 				{options.map((option) => (
 					<button
 						key={option.source}
@@ -89,10 +111,10 @@ export function CaptionSrtExport() {
 										? "transcript.laneVoiceover"
 										: "captions.srtMixedRecording",
 						)}{" "}
-						(.srt)
+						({includeTimestamps ? ".srt" : ".txt"})
 					</button>
 				))}
-				<p>{t("captions.srtHint")}</p>
+				{includeTimestamps ? <p>{t("captions.srtHint")}</p> : null}
 			</PopoverContent>
 		</Popover>
 	);

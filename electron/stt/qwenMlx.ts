@@ -7,6 +7,7 @@ import { createInterface } from "node:readline";
 import { app } from "electron";
 import { z } from "zod";
 import { extractMono16kPcm } from "./extractAudio";
+import { attributeSpeakers, localTranscriptionRoot } from "./speakerAttribution";
 import type {
 	SttStatusEvent,
 	SttTranscribeRequest,
@@ -61,7 +62,10 @@ export function qwenPaths(): QwenPaths {
 	const root = app.isPackaged ? process.resourcesPath : (process.env.APP_ROOT ?? process.cwd());
 	const userData = app.getPath("userData");
 	const runtime = path.join(userData, "runtime");
-	const configFile = process.env.OPENSCREEN_QWEN_CONFIG ?? path.join(userData, "qwen.local.json");
+	const sharedConfig = path.join(localTranscriptionRoot(), "qwen.local.json");
+	const configFile =
+		process.env.OPENSCREEN_QWEN_CONFIG ??
+		(existsSync(sharedConfig) ? sharedConfig : path.join(userData, "qwen.local.json"));
 	const local = existsSync(configFile)
 		? z
 				.object({ python: z.string(), model: z.string(), aligner: z.string(), vad: z.string() })
@@ -124,7 +128,10 @@ export class QwenMlxManager {
 	private active: AbortController | null = null;
 	private epoch = 0;
 	private closed = false;
-	constructor(private readonly paths = qwenPaths()) {}
+	constructor(
+		private readonly paths = qwenPaths(),
+		private readonly runAttribution = attributeSpeakers,
+	) {}
 
 	addStatusSink(sink: (event: SttStatusEvent) => void): () => void {
 		this.sinks.add(sink);
@@ -181,13 +188,14 @@ export class QwenMlxManager {
 				wav = await writeSamplesAsWav(samples);
 				if (controller.signal.aborted) throw cancelled();
 				// Retry a failed worker once. Never commit partial transcripts.
-				for (let attempt = 0; ; attempt++) {
-					try {
-						return await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
-					} catch (error) {
-						if (controller.signal.aborted || attempt >= 1) throw error;
-					}
+				let result: SttTranscribeResponse;
+				try {
+					result = await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
+				} catch (error) {
+					if (controller.signal.aborted) throw error;
+					result = await this.runWorker(wav, samples.length / 16_000, req, controller.signal);
 				}
+				return await this.runAttribution(result, wav, controller.signal);
 			} finally {
 				this.active = null;
 				if (wav) await cleanupWav(wav);

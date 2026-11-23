@@ -1,8 +1,9 @@
 import type { TrimRegion } from "@/components/video-editor/types";
-import type { SttWordSegment } from "../../../electron/stt/transcriptionContract";
+import type { SttSpeakerTurn, SttWordSegment } from "../../../electron/stt/transcriptionContract";
 import { segmentsFromStt } from "../ai-edition/transcription/fromStt";
 
 export interface CaptionSegment {
+	speakerId?: string | null;
 	startSec: number;
 	endSec: number;
 	text: string;
@@ -17,6 +18,7 @@ export interface CaptionSegment {
 export type CaptionTimestampGranularity = "word" | "phrase";
 
 export interface TranscribeMono16kResult {
+	speakerTurns?: SttSpeakerTurn[];
 	segments: CaptionSegment[];
 	granularity: CaptionTimestampGranularity;
 	/**
@@ -56,6 +58,7 @@ interface RendererSttApi {
 	transcribe: (request: { sourcePath: string; language?: string; prompt?: string }) => Promise<{
 		segments: CaptionSegment[];
 		wordSegments: SttWordSegment[];
+		speakerTurns?: SttSpeakerTurn[];
 		detectedLanguage: string;
 		backend: string;
 	}>;
@@ -117,7 +120,11 @@ export function transcribeSourceFileToSegments(
 	// quiet music intros / room tone. VAD or nothing.
 	return api
 		.transcribe({ sourcePath, language: forcedLanguage, prompt: options?.prompt })
-		.then((result) => ({ ...segmentsFromStt(result), detectedLanguage: result.detectedLanguage }))
+		.then((result) => ({
+			...segmentsFromStt(result),
+			detectedLanguage: result.detectedLanguage,
+			...(result.speakerTurns ? { speakerTurns: result.speakerTurns } : {}),
+		}))
 		.catch((error: unknown) => {
 			// A run the caller cancelled surfaces as an abort, not as an engine
 			// failure: the store drops it silently instead of toasting the user

@@ -46,6 +46,26 @@ describe("groupPhraseCaptionSegmentsIntoLines", () => {
 });
 
 describe("groupTimedCaptionWordsIntoLines", () => {
+	it("keeps the same speaker's sentence together across brief pauses and missing tags", () => {
+		const lines = groupTimedCaptionWordsIntoLines(
+			[
+				{ startSec: 0, endSec: 0.2, text: "我想", speakerId: "a" },
+				{ startSec: 0.5, endSec: 0.6, text: "跟你", speakerId: null },
+				{ startSec: 0.65, endSec: 0.8, text: "谈谈。", speakerId: "a" },
+				{ startSec: 0.81, endSec: 1, text: "关于", speakerId: "a" },
+				{ startSec: 1.4, endSec: 1.6, text: "这件事。", speakerId: "a" },
+				{ startSec: 1.61, endSec: 1.8, text: "好。", speakerId: "b" },
+			],
+			1,
+			8,
+		);
+		expect(lines.map(({ text, speakerId }) => [text, speakerId])).toEqual([
+			["我想跟你谈谈。", "a"],
+			["关于这件事。", "a"],
+			["好。", "b"],
+		]);
+	});
+
 	it("preserves empty timeline space when word timestamps contain a real pause", () => {
 		const lines = groupTimedCaptionWordsIntoLines(
 			[
