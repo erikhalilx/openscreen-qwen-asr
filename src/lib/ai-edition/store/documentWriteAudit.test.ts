@@ -132,6 +132,7 @@ const DECLARED: WritePath[] = [
 
 	// Speaker edits start with an explicit label save or backfill gesture.
 	w("src/components/ai-edition/CaptionsPane.tsx", "saveSpeaker", "save", "gesture"),
+	w("src/components/ai-edition/CaptionsPane.tsx", "CaptionsPane", "save", "gesture"),
 	w("src/components/ai-edition/ReplaceSpeakerDialog.tsx", "save", "save", "gesture"),
 	w("src/components/ai-edition/SpeakerBackfillButton.tsx", "run", "save", "gesture"),
 

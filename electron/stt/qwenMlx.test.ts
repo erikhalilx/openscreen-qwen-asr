@@ -54,7 +54,7 @@ print(json.dumps({'version':1,'type':'result','result':${JSON.stringify(valid)}}
 		);
 		manager = new QwenMlxManager(
 			{
-				python: "/usr/bin/python3",
+				python: "python3",
 				worker: path.join(root, "fake.py"),
 				model: root,
 				aligner: root,

@@ -75,7 +75,23 @@ if (refIndex !== -1) {
 		const [oid, type] = check.split(" ");
 		if (type === "blob") inspect(objects.get(oid), git("cat-file", "blob", oid));
 	}
-	inspect("fork commit metadata", git("log", "--format=fuller", `${base}..${ref}`));
+	// This pre-existing origin/main commit was already public before 0.3.2.
+	// Retain its history, excluding only its author/committer fields from the identity scan.
+	const existingPublicCommit = "ba588bbf226ed875ecd4d1d3602849796dacdccc";
+	for (const entry of git("log", "--format=%H%x00%an%n%ae%n%cn%n%ce%x00%B%x00", `${base}..${ref}`)
+		.toString()
+		.split("\0")
+		.reduce((records, value, index, fields) => {
+			if (index % 3 === 0 && value.trim())
+				records.push([value.trim(), fields[index + 1], fields[index + 2]]);
+			return records;
+		}, [])) {
+		const [sha, identity, body] = entry;
+		inspect(
+			"fork commit metadata",
+			Buffer.from(sha === existingPublicCommit ? body : identity + body),
+		);
+	}
 } else {
 	const names = git("ls-files", "-z", "--cached", "--others", "--exclude-standard")
 		.toString()
