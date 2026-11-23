@@ -1,4 +1,4 @@
-# OpenScreen Qwen3-ASR 0.3
+# OpenScreen Qwen3-ASR 0.3.1
 
 基于开源项目 OpenScreen（getopenscreen/openscreen）的 Fork 版本，适用于录屏讲解、教程制作及中文视频剪辑。以本地 Qwen3-ASR 替换原版 Whisper，优化中文语音识别与字幕生成，并支持独立双音轨、字幕编辑和视频导出。适用于 Apple 芯片 Mac（macOS 26+）。
 
