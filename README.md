@@ -1,5 +1,7 @@
 # OpenScreen Qwen3-ASR 0.3
 
+基于开源项目 OpenScreen（getopenscreen/openscreen）的 Fork 版本，适用于录屏讲解、教程制作及中文视频剪辑。以本地 Qwen3-ASR 替换原版 Whisper，优化中文语音识别与字幕生成，并支持独立双音轨、字幕编辑和视频导出。适用于 Apple 芯片 Mac（macOS 26+）。
+
 ## Setup and sound previews / 补装与音效试听
 
 The Transcript and Captions panels detect missing Qwen components. Save the installer script, double-click the `.command` file, and restart the app after setup. Click either mouse sound preset to hear its single-click sample.
@@ -20,7 +22,7 @@ Version 0.1 introduced local Qwen3-ASR transcription and real character/word ali
 
 An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork with local Qwen3-ASR transcription, real word/character alignment and Chinese caption layout. Integrates upstream **v2.2.1**, commit `c5cd7b9ef8b1ee6e98ea8accd168eefcea6a5ddf`.
 
-这是一个基于 OpenScreen 的独立社区版本，最大的改进是用本地 **Qwen3-ASR** 替换原版 Whisper 语音识别，旨在大幅提升中文语音识别和字幕生成的准确度。同时保留录屏、编辑、时间线、字幕、项目保存、视频导出以及 CLI/MCP 等主要功能，并提供真实的字级/词级时间戳和更适合中文阅读的字幕排版。
+这是一个基于 OpenScreen 的独立社区版本。项目以本地 **Qwen3-ASR** 替换原版 Whisper 语音识别，优化中文语音识别和字幕生成，同时保留录屏、编辑、时间线、字幕、项目保存、视频导出以及 CLI/MCP 等主要功能，并提供真实的字级/词级时间戳和更适合中文阅读的字幕排版。
 
 **Supported Qwen runtime: Apple Silicon, macOS 26 or later.** The pinned MLX 0.32.2 wheels require macOS 26. Windows, Linux and Intel Mac Qwen inference are not supported by this release. The recording, editor, timeline, native compositor, captions, project persistence, export and CLI/MCP source remain included. AI chat/translation still require the user's own configured provider.
 
