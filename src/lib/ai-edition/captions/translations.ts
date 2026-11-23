@@ -161,6 +161,7 @@ export interface CaptionTranslationUnit {
 	startSec: number;
 	endSec: number;
 	text: string;
+	speakerId?: string | null;
 }
 
 /** A pause this long starts a new phrase even mid-sentence. */
@@ -198,6 +199,12 @@ export function captionTranslationUnits(transcript: AxcutTranscript): CaptionTra
 
 	for (const segment of segments) {
 		const text = segment.text.trim();
+		if (
+			current &&
+			(segment.startSec - current.endSec >= UNIT_BREAK_GAP_SEC ||
+				segment.speakerId !== current.speakerId)
+		)
+			flush();
 		if (!current) {
 			current = {
 				id: unitKey(segment.id),
@@ -205,19 +212,7 @@ export function captionTranslationUnits(transcript: AxcutTranscript): CaptionTra
 				startSec: segment.startSec,
 				endSec: segment.endSec,
 				text,
-			};
-			wordCount = text.split(/\s+/).length;
-			continue;
-		}
-
-		if (segment.startSec - current.endSec >= UNIT_BREAK_GAP_SEC) {
-			flush();
-			current = {
-				id: unitKey(segment.id),
-				segmentIds: [segment.id],
-				startSec: segment.startSec,
-				endSec: segment.endSec,
-				text,
+				...(segment.speakerId !== undefined ? { speakerId: segment.speakerId } : {}),
 			};
 			wordCount = text.split(/\s+/).length;
 			continue;

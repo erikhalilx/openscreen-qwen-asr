@@ -1,8 +1,10 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseQwenResponse, QwenMlxManager, qwenPaths } from "./qwenMlx";
+import { STT_TRANSCRIPTION_INCOMPLETE } from "./transcriptionContract";
 
 vi.mock("electron", () => ({
 	app: { isPackaged: false, getPath: () => process.env.TEST_QWEN_USER_DATA },
@@ -35,20 +37,38 @@ describe("Qwen timestamp contract", () => {
 describe.skipIf(process.platform === "win32")("Qwen process lifecycle", () => {
 	let root: string;
 	let manager: QwenMlxManager;
+	let python: string;
+	beforeAll(() => {
+		python = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
+			encoding: "utf8",
+		}).trim();
+	});
 	beforeEach(async () => {
 		root = await mkdtemp(path.join(os.tmpdir(), "qwen-worker-test-"));
 		await writeFile(path.join(root, "config.json"), "{}");
 		await writeFile(
 			path.join(root, "fake.py"),
-			`import json,sys,time\nr=json.loads(sys.stdin.readline())\nprint(json.dumps({'version':1,'type':'progress','phase':'transcribe','completedSec':0,'totalSec':1}),flush=True)\nif r.get('prompt')=='wait': time.sleep(30)\nif r.get('prompt')=='fail': sys.exit(2)\nprint(json.dumps({'version':1,'type':'result','result':${JSON.stringify(valid)}}),flush=True)\n`,
+			`import json,sys,time
+r=json.loads(sys.stdin.readline())
+print(json.dumps({'version':1,'type':'progress','phase':'transcribe','completedSec':0,'totalSec':1}),flush=True)
+if r.get('prompt')=='wait': time.sleep(30)
+if r.get('prompt')=='fail': sys.exit(2)
+if r.get('prompt')=='incomplete':
+    print(json.dumps({'version':1,'type':'error','code':'incomplete','message':'Unresolved at 0.200–0.500s'}),flush=True)
+    sys.exit(1)
+print(json.dumps({'version':1,'type':'result','result':${JSON.stringify(valid)}}),flush=True)
+`,
 		);
-		manager = new QwenMlxManager({
-			python: "/usr/bin/python3",
-			worker: path.join(root, "fake.py"),
-			model: root,
-			aligner: root,
-			vad: path.join(root, "config.json"),
-		});
+		manager = new QwenMlxManager(
+			{
+				python,
+				worker: path.join(root, "fake.py"),
+				model: root,
+				aligner: root,
+				vad: path.join(root, "config.json"),
+			},
+			async (result) => result,
+		);
 	});
 	afterEach(async () => {
 		await manager.shutdown();
@@ -85,6 +105,17 @@ describe.skipIf(process.platform === "win32")("Qwen process lifecycle", () => {
 		expect(
 			(await manager.transcribe({ samples: new Float32Array(16000) })).wordSegments,
 		).toHaveLength(2);
+	});
+	it("surfaces an incomplete interval without repeating the whole source", async () => {
+		const status = vi.fn();
+		manager.addStatusSink(status);
+		await expect(
+			manager.transcribe({ samples: new Float32Array(16000), prompt: "incomplete" }),
+		).rejects.toThrow(`${STT_TRANSCRIPTION_INCOMPLETE}: Unresolved at 0.200–0.500s`);
+		expect(status.mock.calls.filter(([event]) => event.phase === "model")).toHaveLength(1);
+		expect((await manager.transcribe({ samples: new Float32Array(16000) })).wordSegments).toEqual(
+			valid.wordSegments,
+		);
 	});
 });
 

@@ -2,7 +2,10 @@
 // editor's queue (through the renderer) and the MCP `transcribe` tool (in the main
 // process, `electron/mcp/`) build the very same words from the very same answer.
 
-import type { SttTranscribeResponse } from "../../../../electron/stt/transcriptionContract";
+import type {
+	SttSpeakerTurn,
+	SttTranscribeResponse,
+} from "../../../../electron/stt/transcriptionContract";
 import type { CaptionSegment, CaptionTimestampGranularity } from "../../captioning/transcribe";
 import type { AxcutTranscript, AxcutTranscriptSegment, AxcutWord } from "../schema";
 
@@ -16,7 +19,12 @@ export function segmentsFromStt(
 	const words = response.wordSegments ?? [];
 	if (words.length > 0) {
 		return {
-			segments: words.map((w) => ({ startSec: w.startSec, endSec: w.endSec, text: w.word })),
+			segments: words.map((w) => ({
+				startSec: w.startSec,
+				endSec: w.endSec,
+				text: w.word,
+				...(w.speakerId !== undefined ? { speakerId: w.speakerId } : {}),
+			})),
 			granularity: "word",
 		};
 	}
@@ -41,6 +49,7 @@ export function transcriptFromSegments(
 	assetId: string,
 	segments: readonly CaptionSegment[],
 	language: string | null | undefined,
+	speakerTurns?: SttSpeakerTurn[],
 ): AxcutTranscript {
 	const transcriptSegments: AxcutTranscriptSegment[] = [];
 	const words: AxcutWord[] = [];
@@ -63,6 +72,7 @@ export function transcriptFromSegments(
 				startSec,
 				endSec: startSec + wordDuration,
 				text: tokens[w],
+				...(seg.speakerId !== undefined ? { speakerId: seg.speakerId } : {}),
 			});
 			wordIds.push(wordId);
 		}
@@ -73,8 +83,15 @@ export function transcriptFromSegments(
 			endSec: segEndSec,
 			text: seg.text,
 			wordIds,
+			...(seg.speakerId !== undefined ? { speakerId: seg.speakerId } : {}),
 		});
 	}
 
-	return { assetId, language: language || "auto", segments: transcriptSegments, words };
+	return {
+		assetId,
+		language: language || "auto",
+		segments: transcriptSegments,
+		words,
+		...(speakerTurns ? { speakerTurns } : {}),
+	};
 }

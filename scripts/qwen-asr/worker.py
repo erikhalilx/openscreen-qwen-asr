@@ -9,6 +9,7 @@ import traceback
 import wave
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from decode import Decoder, IncompleteChunk, SAMPLE_RATE, recover_chunk
 from text import LANGUAGES, phrases_from_words, restore_words
 
 os.environ["HF_HUB_OFFLINE"] = "1"
@@ -37,10 +38,10 @@ def run(request):
         if not (directory / "config.json").is_file() or not list(directory.glob("*.safetensors")):
             raise ValueError(f"Missing local Qwen {field}: {directory}")
     with wave.open(request["wavPath"], "rb") as wav:
-        if (wav.getnchannels(), wav.getframerate(), wav.getsampwidth()) != (1, 16000, 2):
+        if (wav.getnchannels(), wav.getframerate(), wav.getsampwidth()) != (1, SAMPLE_RATE, 2):
             raise ValueError("Expected 16 kHz mono PCM16 WAV")
         audio = np.frombuffer(wav.readframes(wav.getnframes()), dtype="<i2").astype(np.float32) / 32768
-    duration = len(audio) / 16000
+    duration = len(audio) / SAMPLE_RATE
     started = time.perf_counter()
     emit("progress", phase="model", completedSec=0, totalSec=duration)
     # Budget is a per-process allocation ceiling, not a reservation against other apps.
@@ -50,28 +51,37 @@ def run(request):
     words = []
     detected = language if language in LANGUAGES else None
     if spans:
+        decoder = Decoder()
         session = Session(request["model"])
         aligner = ForcedAligner(request["aligner"])
+        prompt = request.get("prompt") or ""
         emit("ready")
         for left, right in spans:
             for chunk, chunk_offset in split_audio_into_chunks(audio[left:right]):
-                offset = left / 16000 + chunk_offset
-                result = session.transcribe((chunk, 16000), language=LANGUAGES.get(detected),
-                                            context=request.get("prompt") or "",
-                                            return_timestamps=False)
-                if result.truncated or result.finish_reason == "length":
-                    raise ValueError(f"Qwen truncated the transcript at {offset:.2f}s")
-                code = next((k for k, v in LANGUAGES.items() if v.lower() == result.language.lower()), None)
-                if result.text.strip() and code is None:
-                    raise ValueError(f"Qwen word alignment does not support detected language: {result.language}")
-                if result.text.strip():
+                offset = left / SAMPLE_RATE + chunk_offset
+                requested_language = LANGUAGES.get(detected)
+                recovered = recover_chunk(
+                    chunk, offset,
+                    lambda part, relaxed: decoder.decode(session, part, requested_language, prompt, relaxed),
+                )
+                for part, start, result in recovered:
+                    if not result.text.strip():
+                        continue
+                    duration_sec = len(part) / SAMPLE_RATE
+                    code = next((k for k, v in LANGUAGES.items() if v.lower() == result.language.lower()), None)
+                    if code is None:
+                        raise IncompleteChunk(start, duration_sec, f"unsupported word alignment language: {result.language}")
+                    try:
+                        aligned = aligner.align(part, result.text, result.language)
+                        segments = [{"text": w.text, "start": w.start_time, "end": w.end_time} for w in aligned]
+                        words.extend(restore_words(result.text, segments, start, duration_sec))
+                    except ValueError as exc:
+                        raise IncompleteChunk(start, duration_sec, f"word alignment: {exc}") from exc
                     detected = detected or code
-                    aligned = aligner.align(chunk, result.text, result.language)
-                    segments = [{"text": w.text, "start": w.start_time, "end": w.end_time} for w in aligned]
-                    words.extend(restore_words(result.text, segments, offset, len(chunk) / 16000))
                 elapsed = time.perf_counter() - started
-                emit("progress", phase="transcribe", completedSec=offset + len(chunk) / 16000,
-                     totalSec=duration, backend="qwen-mlx", rtf=elapsed / max(offset + len(chunk) / 16000, 0.001))
+                completed = offset + len(chunk) / SAMPLE_RATE
+                emit("progress", phase="transcribe", completedSec=completed,
+                     totalSec=duration, backend="qwen-mlx", rtf=elapsed / max(completed, 0.001))
                 mx.clear_cache()
     elapsed = time.perf_counter() - started
     emit("result", result={"segments": phrases_from_words(words), "wordSegments": words,
@@ -81,6 +91,11 @@ def run(request):
 
 
 if __name__ == "__main__":
+    if sys.argv[1:] == ["--check-runtime"]:
+        import numpy
+        import onnxruntime
+        Decoder()
+        sys.exit(0)
     try:
         request = json.loads(sys.stdin.readline())
         # Third-party progress and diagnostic prints never enter the protocol channel.
@@ -91,6 +106,9 @@ if __name__ == "__main__":
                 original_emit(kind, **values)
         with contextlib.redirect_stdout(sys.stderr):
             run(request)
+    except IncompleteChunk as exc:
+        emit("error", code="incomplete", message=str(exc))
+        sys.exit(1)
     except Exception as exc:
         traceback.print_exc(file=sys.stderr)
         emit("error", message=str(exc))

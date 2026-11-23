@@ -44,6 +44,13 @@ describe("native SRT save", () => {
 			}),
 		);
 	});
+	it("allows plain text only when the save dialog confirms a matching .txt destination", async () => {
+		const destination = path.join(directory, "captions.txt");
+		mocks.save.mockResolvedValue({ filePath: destination, canceled: false });
+		expect(await save(event, "captions.txt", "Speaker 1: Hello")).toEqual({ success: true });
+		expect(await fs.readFile(destination, "utf8")).toBe("Speaker 1: Hello");
+		expect(await save(event, "captions.srt", "字幕")).toEqual({ success: false });
+	});
 	it("cancels without creating a file", async () => {
 		mocks.save.mockResolvedValue({ canceled: true });
 		expect(await save(event, "captions.srt", "字幕")).toEqual({ success: false, canceled: true });

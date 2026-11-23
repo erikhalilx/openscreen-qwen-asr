@@ -762,6 +762,7 @@ export function createToolRunner(deps: McpToolDeps): McpToolRunner {
 			asset.id,
 			segmentsFromStt(response).segments,
 			response.detectedLanguage ?? language,
+			response.speakerTurns,
 		);
 		return landEdit(targetId, editsAllowed, async (current) => {
 			if (!current.assets.some((a) => a.id === asset.id)) {

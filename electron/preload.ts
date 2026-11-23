@@ -646,6 +646,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
 		ipcRenderer.send(AI_EDITION_OPEN_PROJECT_CHANNEL, projectId);
 	},
 	stt: {
+		speakerSettings: () => ipcRenderer.invoke("stt:speaker-settings"),
+		setSpeakerDefault: (enabled: boolean) => ipcRenderer.invoke("stt:set-speaker-default", enabled),
+		backfillSpeakers: (request: import("./stt/transcriptionContract").SttSpeakerBackfillRequest) =>
+			ipcRenderer.invoke("stt:backfill-speakers", request),
 		saveQwenInstaller: (): Promise<boolean> => ipcRenderer.invoke("stt:save-qwen-installer"),
 		qwenRuntimeSetup: (): Promise<import("./stt/transcriptionContract").QwenRuntimeSetup> =>
 			ipcRenderer.invoke("stt:qwen-runtime-setup"),

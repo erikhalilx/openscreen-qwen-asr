@@ -452,11 +452,9 @@ async function runJob(assetId: string, job: TranscriptionJob): Promise<void> {
 		// queue into the same wall would spend a full retry budget per asset and
 		// stack one identical toast per asset. Fail them with the same verdict
 		// instead — the gate then reads "failed" (not "queued forever"), and one
-		// manual retry re-runs them all once the engine is back. A file the OS would
-		// not let ffmpeg read is the exception: that verdict is about this file's
-		// folder, and stamping it on media elsewhere would send the user looking at
-		// the wrong permission.
-		if (failure.kind === "error" && !failure.unreadableMedia) {
+		// manual retry re-runs them all once the engine is back. Unreadable media
+		// and incomplete decodes are specific to the current asset.
+		if (failure.kind === "error" && !failure.unreadableMedia && !failure.incomplete) {
 			failRemainingQueue(projectId, failure);
 		}
 		// A silent recording is an expected outcome, not an incident: the media card

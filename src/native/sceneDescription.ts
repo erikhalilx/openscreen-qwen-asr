@@ -230,6 +230,7 @@ export interface SceneAnnotation {
 		 *  measuring the rect against the frame while sizing the text off the screen rect would
 		 *  hold a caption still and still shrink its text with the padding slider. */
 		fontSizeRel: number;
+		prefixStyle?: import("@/lib/ai-edition/captions/cues").CaptionTextPrefixStyle;
 		fontFamily: string;
 		fontWeight: "normal" | "bold";
 		fontStyle: "normal" | "italic";
@@ -1656,6 +1657,13 @@ export function buildSceneDescription(
 							color: style.color,
 							backgroundColor: style.backgroundColor,
 							fontSizeRel: annotationFontSizeFraction(style.fontSize),
+							...("textPrefixStyle" in region && region.textPrefixStyle
+								? {
+										prefixStyle: region.textPrefixStyle as NonNullable<
+											SceneAnnotation["text"]
+										>["prefixStyle"],
+									}
+								: {}),
 							// The one place every drawn text passes: a family that does not ship
 							// (a project saved with any other name) draws in the default rather
 							// than in whatever the machine falls back to.

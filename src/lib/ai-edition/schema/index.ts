@@ -87,6 +87,7 @@ export const wordSchema = z
 		// (`carryOverWordEdits`) instead of silently discarding them — and what a
 		// future TTS pass will read to know which words it has to speak.
 		originalText: z.string().optional(),
+		speakerId: z.string().min(1).nullable().optional(),
 		source: z.enum(["asr", "user", "synth"]).optional(),
 	})
 	.refine((data) => data.endSec >= data.startSec, {
@@ -102,6 +103,7 @@ export const transcriptSegmentSchema = z
 		endSec: z.number().nonnegative(),
 		text: z.string(),
 		wordIds: z.array(z.string().min(1)).default([]),
+		speakerId: z.string().min(1).nullable().optional(),
 	})
 	.refine((data) => data.endSec >= data.startSec, {
 		message: "endSec must be greater than or equal to startSec",
@@ -109,6 +111,20 @@ export const transcriptSegmentSchema = z
 	});
 
 export const transcriptSchema = z.object({
+	speakerNumbers: z.record(z.string(), z.number().int().positive()).optional(),
+	speakerNames: z.record(z.string(), z.string().min(1)).optional(),
+	captionSpeakerOverrides: z.record(z.string(), z.string().nullable()).optional(),
+	speakerTurns: z
+		.array(
+			z
+				.object({
+					speakerId: z.string().min(1),
+					startSec: z.number().nonnegative(),
+					endSec: z.number().nonnegative(),
+				})
+				.refine((turn) => turn.endSec > turn.startSec),
+		)
+		.optional(),
 	assetId: z.string().min(1),
 	language: z.string().min(1),
 	sourceDslPath: z.string().optional(),
@@ -775,6 +791,7 @@ export const layoutRegionSchema = endGteStart(
 
 const documentSchemaShape = z.object({
 	studioVersion: z.literal(3).optional(),
+	chineseSentenceCaptions: z.boolean().optional(),
 	schemaVersion: z.literal(axcutSchemaVersion),
 	project: z.object({
 		id: z.string().min(1),
@@ -1484,6 +1501,7 @@ export function createEmptyDocument(
 	return documentSchema.parse({
 		schemaVersion: axcutSchemaVersion,
 		studioVersion: 3,
+		chineseSentenceCaptions: true,
 		project: {
 			id: input.projectId,
 			title: input.title,

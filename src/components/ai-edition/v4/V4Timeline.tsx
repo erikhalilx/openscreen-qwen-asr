@@ -453,6 +453,7 @@ const AudioLanePill = memo(function AudioLanePill({
 	assetDurationSec,
 	leftPct,
 	widthPct,
+	joinedOnRight,
 	sourceStartSec,
 	sourceEndSec,
 	spanSec,
@@ -473,6 +474,7 @@ const AudioLanePill = memo(function AudioLanePill({
 	assetDurationSec: number | undefined;
 	leftPct: number;
 	widthPct: number;
+	joinedOnRight: boolean;
 	/** The slice of the source the pill is showing — the track's offset and its
 	 *  span, or the live window while an edge is being dragged. */
 	sourceStartSec: number;
@@ -543,7 +545,7 @@ const AudioLanePill = memo(function AudioLanePill({
 				}${slipArmed ? ` ${styles.laneAudioSlip}` : ""}`}
 				style={{
 					left: `${leftPct}%`,
-					width: `${widthPct}%`,
+					width: joinedOnRight ? `calc(${widthPct}% - ${CLIP_GUTTER_PX}px)` : `${widthPct}%`,
 					minWidth: 3,
 					cursor: track.recordingSource ? "pointer" : undefined,
 					top: AUDIO_LANE_PAD_PX + row * rowHeight,
@@ -1209,8 +1211,19 @@ export function V4Timeline({
 		const base = voice.length > 0 ? voiceRows.rowCount : 0;
 		for (const pill of voice) rowOf.set(pill.id, voiceRows.rowOf.get(pill.id) ?? 0);
 		for (const pill of music) rowOf.set(pill.id, base + (musicRows.rowOf.get(pill.id) ?? 0));
+		const nextTouchingTrack = new Map<string, string>();
+		const previousByRow = new Map<number, AxcutAudioTrack>();
+		for (const track of [...audioPills].sort((a, b) => a.startMs - b.startMs)) {
+			const row = rowOf.get(track.id) ?? 0;
+			const previous = previousByRow.get(row);
+			if (previous && Math.abs(previous.endMs - track.startMs) < 0.5) {
+				nextTouchingTrack.set(previous.id, track.id);
+			}
+			previousByRow.set(row, track);
+		}
 		return {
 			rowOf,
+			nextTouchingTrack,
 			rowCount: Math.max(1, base + (music.length > 0 ? musicRows.rowCount : 0)),
 		};
 	}, [audioPills]);
@@ -2493,6 +2506,7 @@ export function V4Timeline({
 												: Math.max(0, (track.endMs - track.startMs) / 1000);
 											const trimStart = drag ? drag.trimStart : track.offsetMs / 1000;
 											const trimEnd = trimStart + widthSec;
+											const next = audioRows.nextTouchingTrack.get(track.id);
 											return (
 												<AudioLanePill
 													key={track.id}
@@ -2501,6 +2515,7 @@ export function V4Timeline({
 													assetDurationSec={duration}
 													leftPct={pctOf(start)}
 													widthPct={pctOf(widthSec)}
+													joinedOnRight={!!next && !drag && audioDrag?.id !== next}
 													row={audioRows.rowOf.get(track.id) ?? 0}
 													rowHeight={AUDIO_ROW_HEIGHT_PX + AUDIO_ROW_GAP_PX}
 													spanSec={widthSec}

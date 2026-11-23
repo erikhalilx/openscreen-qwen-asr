@@ -130,6 +130,12 @@ const DECLARED: WritePath[] = [
 		"gesture",
 	),
 
+	// Speaker edits start with an explicit label save or backfill gesture.
+	w("src/components/ai-edition/CaptionsPane.tsx", "saveSpeaker", "save", "gesture"),
+	w("src/components/ai-edition/CaptionsPane.tsx", "CaptionsPane", "save", "gesture"),
+	w("src/components/ai-edition/ReplaceSpeakerDialog.tsx", "save", "save", "gesture"),
+	w("src/components/ai-edition/SpeakerBackfillButton.tsx", "run", "save", "gesture"),
+
 	// The project's names and terms for Whisper (#1023), saved when the field loses focus.
 	w("src/components/ai-edition/v4/MediaStage.tsx", "MediaStage", "save", "gesture"),
 

@@ -1,3 +1,4 @@
+import type { SttSpeakerBackfillResult } from "../../../../electron/stt/transcriptionContract";
 import { joinTranscriptText as joinSegmentText } from "../../captioning/joinText";
 import type { AxcutDocument, AxcutTranscript, AxcutWord } from "../schema";
 import {
@@ -103,6 +104,24 @@ export function withTranscript(
 	document: AxcutDocument,
 	transcript: AxcutTranscript,
 ): AxcutDocument {
+	const existing = document.transcripts.find((entry) => entry.assetId === transcript.assetId);
+	const ids = new Set([
+		...(transcript.speakerTurns ?? []).map((turn) => turn.speakerId),
+		...transcript.words.flatMap((word) => (word.speakerId ? [word.speakerId] : [])),
+	]);
+	if (ids.size) {
+		let highest = 0;
+		for (const entry of document.transcripts) {
+			for (const number of Object.values(entry.speakerNumbers ?? {})) {
+				highest = Math.max(highest, number);
+			}
+		}
+		const numbers = { ...existing?.speakerNumbers, ...transcript.speakerNumbers };
+		for (const id of ids) {
+			if (numbers[id] === undefined) numbers[id] = ++highest;
+		}
+		transcript = { ...transcript, speakerNumbers: numbers };
+	}
 	const transcripts = [
 		...document.transcripts.filter((t) => t.assetId !== transcript.assetId),
 		transcript,
@@ -113,6 +132,50 @@ export function withTranscript(
 			document.project.primaryAssetId === transcript.assetId ? transcript : document.transcript,
 		transcripts,
 	};
+}
+
+/** Match the analyzed word timings before committing labels to the latest live transcript. */
+export function applySpeakerBackfill(
+	document: AxcutDocument,
+	analyzed: AxcutTranscript,
+	result: SttSpeakerBackfillResult,
+): AxcutDocument | null {
+	const transcript = document.transcripts.find((entry) => entry.assetId === analyzed.assetId);
+	if (
+		!transcript ||
+		transcript.speakerTurns !== analyzed.speakerTurns ||
+		transcript.words.length !== result.speakerIds.length ||
+		analyzed.words.length !== result.speakerIds.length ||
+		transcript.words.some((word, index) => {
+			const previous = analyzed.words[index];
+			return (
+				previous.id !== word.id ||
+				previous.startSec !== word.startSec ||
+				previous.endSec !== word.endSec
+			);
+		})
+	)
+		return null;
+	const words = transcript.words.map((word, index) => ({
+		...word,
+		speakerId: result.speakerIds[index],
+	}));
+	const speakersByWord = new Map(words.map((word) => [word.id, word.speakerId]));
+	const segments = transcript.segments.map((segment) => {
+		const speakers = new Set(segment.wordIds.map((id) => speakersByWord.get(id)));
+		return segment.kind === "speech"
+			? {
+					...segment,
+					speakerId: speakers.size === 1 ? ([...speakers][0] ?? null) : null,
+				}
+			: segment;
+	});
+	return withTranscript(document, {
+		...transcript,
+		words,
+		segments,
+		speakerTurns: result.speakerTurns,
+	});
 }
 
 /**

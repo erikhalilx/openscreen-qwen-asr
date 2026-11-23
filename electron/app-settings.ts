@@ -220,6 +220,15 @@ export class AppSettingsStore {
 		};
 	}
 
+	getSpeakerAttributionEnabled(): boolean {
+		return bool(readRaw(this.userData).speakerAttributionEnabled, true);
+	}
+
+	setSpeakerAttributionEnabled(enabled: boolean): void {
+		const raw = readRaw(this.userData);
+		atomicWrite(this.userData, { ...raw, speakerAttributionEnabled: enabled });
+	}
+
 	setRecordingPreferences(patch: Partial<RecordingPreferences>): AppSettingsSnapshot {
 		validateRecordingPatch(patch);
 		const raw = readRaw(this.userData);
