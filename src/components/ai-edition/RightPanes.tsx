@@ -40,6 +40,7 @@ import {
 	type KeyboardEvent as ReactKeyboardEvent,
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
+	type Ref,
 	useCallback,
 	useEffect,
 	useId,
@@ -90,6 +91,7 @@ import {
 	DEFAULT_EDITOR_SETTINGS,
 } from "@/lib/ai-edition/store/editorSettings";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
+import { useTranscriptionStore } from "@/lib/ai-edition/store/transcriptionStore";
 import { useCaptions } from "@/lib/ai-edition/store/useCaptions";
 import { useEditorSettings } from "@/lib/ai-edition/store/useEditorSettings";
 import type { useTimeline } from "@/lib/ai-edition/store/useTimeline";
@@ -168,6 +170,7 @@ import { insertionsEnabled } from "./insertionsEnabled";
 import styles from "./NewEditorShell.module.css";
 import { QwenRuntimeNotice } from "./QwenRuntimeNotice";
 import { useRecordedCursorTypes } from "./recordedCursorTypes";
+import { SpeakerBackfillButton, useSpeakerAnalysis } from "./SpeakerBackfillButton";
 import { useTranscriptionLabel } from "./TranscriptionStatus";
 import { transcriptionBusyLabel } from "./transcriptionBusyLabel";
 import { LayoutPicker } from "./v4/LayoutPicker";
@@ -180,11 +183,12 @@ interface PaneProps {
 	// A control that belongs to the pane as a whole rather than to any one of its
 	// rows, sitting left of the Help button.
 	actions?: ReactNode;
+	bodyRef?: Ref<HTMLDivElement>;
 	onClose?: () => void;
 	children: ReactNode;
 }
 
-function Pane({ title, icon, helpText, actions, onClose, children }: PaneProps) {
+function Pane({ title, icon, helpText, actions, bodyRef, onClose, children }: PaneProps) {
 	const ts = useScopedT("settings");
 	const tc = useScopedT("common");
 	const helpLabel = ts("panes.help");
@@ -258,7 +262,9 @@ function Pane({ title, icon, helpText, actions, onClose, children }: PaneProps) 
 						</div>
 					) : null}
 				</header>
-				<div className={styles.paneBody}>{children}</div>
+				<div ref={bodyRef} className={styles.paneBody}>
+					{children}
+				</div>
 			</div>
 		</TooltipProvider>
 	);
@@ -958,6 +964,14 @@ export function TranscriptPane({
 		() => buildAggregatedSections(placements, transcripts, assets, removed),
 		[placements, transcripts, assets, removed],
 	);
+	const speakerAnalysisRunning = useSpeakerAnalysis((state) => state.progress !== null);
+	const transcriptAssetIds = sections.flatMap(({ transcript }) =>
+		transcript ? [transcript.assetId] : [],
+	);
+	const regenerateTranscripts = () => {
+		const { request } = useTranscriptionStore.getState();
+		for (const assetId of new Set(transcriptAssetIds)) void request(assetId);
+	};
 
 	// `currentTimeSec` is the RAW/document timeline (same referential as the ruler, see
 	// NewEditorShell), which is exactly what `findCueWordId` now takes. It used to be
@@ -968,6 +982,25 @@ export function TranscriptPane({
 		() => findCueWordId(sections, currentTimeSec),
 		[sections, currentTimeSec],
 	);
+
+	const transcriptBody = useRef<HTMLDivElement>(null);
+	const previousLane = useRef(activeLane);
+	useLayoutEffect(() => {
+		const laneChanged = previousLane.current !== activeLane;
+		previousLane.current = activeLane;
+		const body = transcriptBody.current;
+		if (laneChanged || !body || !cueWordId) return;
+		const word = body.querySelector<HTMLElement>(
+			`[data-word-id="${globalThis.CSS?.escape?.(cueWordId) ?? cueWordId}"]`,
+		);
+		if (!word) return;
+		const viewport = body.getBoundingClientRect();
+		const bounds = word.getBoundingClientRect();
+		const margin = 56;
+		if (bounds.top < viewport.top + margin) body.scrollTop += bounds.top - viewport.top - margin;
+		else if (bounds.bottom > viewport.bottom - margin)
+			body.scrollTop += bounds.bottom - viewport.bottom + margin;
+	}, [activeLane, cueWordId]);
 
 	const laneSwitch =
 		voiceover.length > 0 || sourceLanes.length ? (
@@ -995,7 +1028,7 @@ export function TranscriptPane({
 		insertionsEnabled() ? "transcript.editingHintDev" : "transcript.editingHint",
 	);
 
-	if (captionsOpen) return <CaptionsPane onClose={() => setCaptionsOpen(false)} />;
+	if (captionsOpen) return <CaptionsPane onClose={() => setCaptionsOpen(false)} onSeek={onSeek} />;
 
 	if (placements.length === 0 || !hasAnyTranscript) {
 		return (
@@ -1003,12 +1036,15 @@ export function TranscriptPane({
 				title={ts("transcript.title")}
 				icon={<FileText size={16} />}
 				helpText={helpText}
-				actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
+				bodyRef={transcriptBody}
+				actions={
+					<>
+						<CaptionSrtExport />
+						<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />
+					</>
+				}
 			>
 				<QwenRuntimeNotice />
-				<div className={styles.transcriptExportRow}>
-					<CaptionSrtExport />
-				</div>
 				{laneSwitch}
 				<div
 					style={{
@@ -1058,13 +1094,30 @@ export function TranscriptPane({
 			title={ts("transcript.title")}
 			icon={<FileText size={16} />}
 			helpText={helpText}
-			actions={<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />}
+			bodyRef={transcriptBody}
+			actions={
+				<>
+					<CaptionSrtExport />
+					<CaptionSettingsButton onOpen={() => setCaptionsOpen(true)} />
+				</>
+			}
 		>
 			<QwenRuntimeNotice />
-			<div className={styles.transcriptExportRow}>
-				<CaptionSrtExport />
-			</div>
 			{laneSwitch}
+			<button
+				type="button"
+				className={styles.paneHeadBtn}
+				disabled={!canTranscribe || isTranscribing || speakerAnalysisRunning}
+				onClick={regenerateTranscripts}
+			>
+				{paneBusyLabel ?? ts("captions.retranscribe")}
+			</button>
+			<SpeakerBackfillButton
+				assetIds={sections.flatMap(({ transcript }) =>
+					transcript?.words.length ? [transcript.assetId] : [],
+				)}
+				busy={isTranscribing}
+			/>
 			{/* The gestures are invisible until tried: nothing on a plain word stream says
 			 * that double-click corrects and Backspace cuts. One muted line names them; the
 			 * ? popover above carries the long version (amber inserts, hover-bin restore). */}
@@ -1166,44 +1219,6 @@ const TranscriptClipBlock = memo(function TranscriptClipBlock({
 
 	const editorRef = useRef<HTMLDivElement | null>(null);
 	const pendingCaretWordIdRef = useRef<string | null>(null);
-
-	// auto-scroll the cue word into view as the playback head
-	// moves. The right pane has ONE scroll container (paneBody, which
-	// already has overflow-y: auto) — the per-clip editor itself is not
-	// scrollable, so the cue scroll always lands on the paneBody.
-	// Mirrors axcut's `scrollCueWordIntoView` in CurrentTranscriptView
-	// (margins keep the highlighted word clear of the editor's edges).
-	const SCROLL_MARGIN_PX = 56;
-	useLayoutEffect(() => {
-		const editor = editorRef.current;
-		if (!editor || !cueWordId) return;
-		const wordElement = editor.querySelector<HTMLElement>(`[data-word-id="${cueWordId}"]`);
-		if (!wordElement) return;
-		// walk up to the first scrollable ancestor (paneBody)
-		// and scroll so the word element lands inside its viewport.
-		let ancestor: HTMLElement | null = wordElement.parentElement;
-		while (ancestor && ancestor !== document.body) {
-			const style = globalThis.getComputedStyle(ancestor);
-			const overflowY = style.overflowY;
-			if (overflowY === "auto" || overflowY === "scroll") {
-				const ancestorRect = ancestor.getBoundingClientRect();
-				const wordRect = wordElement.getBoundingClientRect();
-				if (
-					wordRect.top >= ancestorRect.top + SCROLL_MARGIN_PX &&
-					wordRect.bottom <= ancestorRect.bottom - SCROLL_MARGIN_PX
-				) {
-					return;
-				}
-				if (wordRect.top < ancestorRect.top + SCROLL_MARGIN_PX) {
-					ancestor.scrollTop -= ancestorRect.top + SCROLL_MARGIN_PX - wordRect.top;
-				} else if (wordRect.bottom > ancestorRect.bottom - SCROLL_MARGIN_PX) {
-					ancestor.scrollTop += wordRect.bottom - (ancestorRect.bottom - SCROLL_MARGIN_PX);
-				}
-				return;
-			}
-			ancestor = ancestor.parentElement;
-		}
-	}, [cueWordId]);
 
 	// keep the caret anchored to the next kept word after a
 	// trimRange is added (so the user can keep deleting without the caret

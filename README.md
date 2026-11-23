@@ -1,6 +1,20 @@
-# OpenScreen Qwen3-ASR 0.3
+# OpenScreen Qwen3-ASR 0.3.2
 
 基于开源项目 OpenScreen（getopenscreen/openscreen）的 Fork 版本，适用于录屏讲解、教程制作及中文视频剪辑。以本地 Qwen3-ASR 替换原版 Whisper，优化中文语音识别与字幕生成，并支持独立双音轨、字幕编辑和视频导出。适用于 Apple 芯片 Mac（macOS 26+）。
+
+## Version 0.3.2 / 0.3.2 更新
+
+- Local speaker labeling with the optional shared FluidAudio runtime. Generate or regenerate labels independently, see analysis progress, and correct labels individually or in bulk.
+- Chinese captions favor complete sentences, wrap into two lines when needed, and flag ambiguous speakers for review. Existing projects can preview the new layout before applying it.
+- Retranscribe the selected audio source. Export source-specific SRT or TXT with optional speaker names. This version also includes the 0.3.1 Qwen recovery fix for incomplete transcripts.
+
+- 支持通过可选的 FluidAudio 共享运行时在本机标注说话人。可单独生成或重新生成，在工作台查看进度，并逐条或批量修改名称。
+- 中文字幕优先保留整句，必要时同条字幕换成两行。归属不清时在编辑器标为「待确认」。旧项目可先预览，再应用新版断句。
+- 支持重新转写当前音源，按音源导出 SRT 或 TXT，并可附说话人名称。包含 0.3.1 的 Qwen 不完整转写恢复修复。
+
+GitHub distributes source archives. Build locally on Apple Silicon with macOS 26 or later. See the [Chinese setup guide](README-QWEN.zh-CN.md).
+
+GitHub 提供源码归档。本地构建需要 Apple Silicon 和 macOS 26 或更高版本。参见[中文安装说明](README-QWEN.zh-CN.md)。
 
 ## Setup and sound previews / 补装与音效试听
 
@@ -29,6 +43,8 @@ An independent [OpenScreen](https://github.com/getopenscreen/openscreen) fork wi
 **支持的千问运行环境：Apple Silicon 芯片、macOS 26 或更高版本。** 固定版本的 MLX 0.32.2 wheel 要求 macOS 26。本版本不支持在 Windows、Linux 或 Intel Mac 上运行 Qwen 推理。录屏、编辑器、时间线、原生合成器、字幕、项目保存、导出以及 CLI/MCP 源码仍然保留；AI 对话和翻译功能仍需配置你自己的服务提供商。
 
 [中文安装说明](README-QWEN.zh-CN.md) · [Models and verified downloads](models/README.md) · [Third-party notices](THIRD-PARTY-NOTICES.md) · [Privacy and publication](PUBLICATION.md) · [Upstream README](README-UPSTREAM.md)
+
+完整的中文功能范围、运行要求、双音轨/双字幕行为和旧项目兼容规则见[《OpenScreen Qwen v0.3.0 功能说明书》](docs/OpenScreen-Qwen-v0.3.0-功能说明书.md)。
 
 ## Set up transcription on an installed app / 已安装应用的转录补装
 

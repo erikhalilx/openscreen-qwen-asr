@@ -499,6 +499,8 @@ impl SceneAnnotation {
 #[serde(rename_all = "camelCase")]
 pub struct SceneAnnotationText {
     pub content: String,
+    #[serde(default)]
+    pub prefix_style: Option<SceneTextPrefixStyle>,
     /// Chaînes CSS, parsées ici comme la couleur de fond (`parse_hex`) ; "transparent" = pas de
     /// remplissage.
     pub color: String,
@@ -527,6 +529,16 @@ pub struct SceneAnnotationText {
     pub vertical_align: Option<String>,
     #[serde(default)]
     pub animation: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SceneTextPrefixStyle {
+    /// Length in UTF-16 code units, as used by CoreText.
+    pub length: usize,
+    pub font_family: String,
+    pub font_weight: String,
+    pub color: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]

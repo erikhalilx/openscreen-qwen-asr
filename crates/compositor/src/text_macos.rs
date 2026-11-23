@@ -42,6 +42,7 @@ use std::path::PathBuf;
 #[derive(Clone, PartialEq)]
 pub struct TextSpec {
     pub content: String,
+    pub prefix: Option<TextPrefixStyle>,
     /// RGBA 0..1 (déjà parsé depuis la chaîne CSS côté appelant).
     pub color: [f32; 4],
     /// RGBA 0..1 ; alpha 0 = pas de fond (le CSS `transparent`).
@@ -60,6 +61,14 @@ pub struct TextSpec {
     pub valign: String,
     /// Taille de la boîte en px de sortie — la mise en page en dépend (retours à la ligne).
     pub box_px: [u32; 2],
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TextPrefixStyle {
+    pub length: usize,
+    pub font_family: String,
+    pub bold: bool,
+    pub color: [f32; 4],
 }
 
 impl TextSpec {
@@ -91,6 +100,14 @@ impl TextSpec {
         mix(self.valign.as_bytes());
         mix(&self.box_px[0].to_le_bytes());
         mix(&self.box_px[1].to_le_bytes());
+        if let Some(prefix) = &self.prefix {
+            mix(&prefix.length.to_le_bytes());
+            mix(prefix.font_family.as_bytes());
+            mix(&[prefix.bold as u8]);
+            for component in prefix.color {
+                mix(&component.to_bits().to_le_bytes());
+            }
+        }
         h
     }
 }
@@ -175,6 +192,17 @@ extern "C" {
         str_: CFTypeRef,
         attributes: CFTypeRef,
     ) -> CFTypeRef;
+    fn CFAttributedStringCreateMutableCopy(
+        alloc: CFTypeRef,
+        max_length: CFIndex,
+        source: CFTypeRef,
+    ) -> CFTypeRef;
+    fn CFAttributedStringSetAttribute(
+        attributed: CFTypeRef,
+        range: CFRange,
+        name: CFTypeRef,
+        value: CFTypeRef,
+    );
     fn CFURLCreateFromFileSystemRepresentation(
         alloc: CFTypeRef,
         buffer: *const u8,
@@ -591,27 +619,14 @@ impl TextRasterizer {
         Ok(texture)
     }
 
-    /// Le corps CoreText, isolé pour que `rasterize` puisse relâcher contexte et
-    /// colorspace sur TOUS les chemins de sortie, y compris les `?`.
-    unsafe fn draw_text(
-        &self,
-        ctx: CFTypeRef,
-        space: CFTypeRef,
-        spec: &TextSpec,
-        box_w: CGFloat,
-        box_h: CGFloat,
-    ) -> Result<()> {
-        let content =
-            cf_string(&spec.content).ok_or_else(|| anyhow!("CFStringCreateWithBytes NULL"))?;
-
+    unsafe fn font(&self, family: &str, bold: bool, italic: bool, size: CGFloat) -> Result<CFOwned> {
         // --- police ---
         // Une famille embarquée vient de SON fichier, graisse comprise. Les autres, par nom.
-        let size = spec.font_size_px.max(1.0) as CGFloat;
-        let shipped = self.shipped_font(&spec.font_family, spec.bold, size);
+        let shipped = self.shipped_font(family, bold, size);
         let base_font = match shipped {
             Some(font) => font,
             None => {
-                let family = cf_string(&spec.font_family);
+                let family = cf_string(family);
                 CFOwned::new(CTFontCreateWithName(
                     family.as_ref().map(|f| f.get()).unwrap_or(std::ptr::null()),
                     size,
@@ -620,16 +635,16 @@ impl TextRasterizer {
                 .ok_or_else(|| anyhow!("CTFontCreateWithName a renvoyé NULL"))?
             }
         };
-        let shipped = self.faces.iter().any(|f| f.family == spec.font_family);
+        let shipped = self.faces.iter().any(|f| f.family == family);
         // Gras/italique : une variante symbolique de la même famille. Si la famille n'a
         // pas la variante, CoreText renvoie NULL — on garde alors la police de base
         // plutôt que d'échouer sur un détail de style. Le gras d'une famille embarquée est
         // déjà son fichier gras.
         let mut traits = 0u32;
-        if spec.bold && !shipped {
+        if bold && !shipped {
             traits |= K_CT_FONT_TRAIT_BOLD;
         }
-        if spec.italic {
+        if italic {
             traits |= K_CT_FONT_TRAIT_ITALIC;
         }
         let styled_font = if traits != 0 {
@@ -649,7 +664,24 @@ impl TextRasterizer {
         } else {
             None
         };
-        let font = styled_font.as_ref().unwrap_or(&base_font);
+        Ok(styled_font.unwrap_or(base_font))
+    }
+
+    /// Le corps CoreText, isolé pour que `rasterize` puisse relâcher contexte et
+    /// colorspace sur TOUS les chemins de sortie, y compris les `?`.
+    unsafe fn draw_text(
+        &self,
+        ctx: CFTypeRef,
+        space: CFTypeRef,
+        spec: &TextSpec,
+        box_w: CGFloat,
+        box_h: CGFloat,
+    ) -> Result<()> {
+        let content =
+            cf_string(&spec.content).ok_or_else(|| anyhow!("CFStringCreateWithBytes NULL"))?;
+
+        let size = spec.font_size_px.max(1.0) as CGFloat;
+        let font = self.font(&spec.font_family, spec.bold, spec.italic, size)?;
 
         // --- couleur ---
         let components: [CGFloat; 4] = [
@@ -709,6 +741,25 @@ impl TextRasterizer {
             attrs.get(),
         ))
         .ok_or_else(|| anyhow!("CFAttributedStringCreate a renvoyé NULL"))?;
+
+        let attributed = if let Some(prefix) = &spec.prefix {
+            let length = prefix.length.min(spec.content.encode_utf16().count()) as CFIndex;
+            let range = CFRange { location: 0, length };
+            let styled = CFOwned::new(CFAttributedStringCreateMutableCopy(
+                std::ptr::null(), 0, attributed.get(),
+            )).ok_or_else(|| anyhow!("CFAttributedStringCreateMutableCopy NULL"))?;
+            let prefix_font = self.font(&prefix.font_family, prefix.bold, spec.italic, size)?;
+            let rgba = prefix.color.map(|component| component as CGFloat);
+            let prefix_color = CFOwned::new(CGColorCreate(space, rgba.as_ptr()))
+                .ok_or_else(|| anyhow!("CGColorCreate NULL"))?;
+            if length > 0 {
+                CFAttributedStringSetAttribute(styled.get(), range, kCTFontAttributeName, prefix_font.get());
+                CFAttributedStringSetAttribute(styled.get(), range, kCTForegroundColorAttributeName, prefix_color.get());
+            }
+            styled
+        } else {
+            attributed
+        };
 
         let framesetter = CFOwned::new(CTFramesetterCreateWithAttributedString(attributed.get()))
             .ok_or_else(|| anyhow!("CTFramesetterCreateWithAttributedString NULL"))?;
@@ -803,6 +854,7 @@ mod tests {
     fn spec(content: &str) -> TextSpec {
         TextSpec {
             content: content.into(),
+            prefix: None,
             color: [1.0, 1.0, 1.0, 1.0],
             background: [0.0, 0.0, 0.0, 0.0],
             font_size_px: 48.0,

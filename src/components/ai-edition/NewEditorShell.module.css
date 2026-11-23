@@ -2510,7 +2510,6 @@ textarea.control {
 }
 .paneHeadBtn:hover { background: color-mix(in oklab, var(--fg) 12%, transparent); color: var(--fg); }
 .paneHeadBtn:disabled { opacity: 0.5; cursor: not-allowed; }
-.transcriptExportRow { display: flex; justify-content: flex-end; padding: 0 var(--sp-4) 8px; }
 
 .srtExportMenu {
   display: flex;
@@ -2694,3 +2693,61 @@ textarea.control {
 }
 .paneButton:hover { background:color-mix(in oklab,var(--fg) 10%,transparent); }
 .paneButton:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+.speakerCueList {
+	margin: 0 var(--sp-4) 12px;
+}
+.speakerCueRow {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 4px 8px;
+	padding: 6px 0;
+	border-bottom: 1px solid var(--border);
+	font-size: 12px;
+}
+.speakerCueRow time {
+	color: var(--muted);
+	font-variant-numeric: tabular-nums;
+}
+.speakerCueRow > span {
+	flex-basis: 100%;
+	overflow-wrap: anywhere;
+}
+.speakerLabelField {
+	width: 120px;
+	padding: 2px 8px;
+	border: 1px solid var(--border);
+	border-radius: 12px;
+	background: var(--surface-2);
+	font: inherit;
+	color: var(--fg);
+}
+
+.speakerDetailsActions {
+	display: flex;
+	justify-content: flex-end;
+	margin: 0 var(--sp-4) 6px;
+}
+.replaceSpeakerForm, .replaceSpeakerForm label {
+	display: grid;
+	gap: 8px;
+}
+.replaceSpeakerForm > button {
+	justify-self: end;
+}
+.speakerChips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+.speakerChips button[aria-pressed="true"] {
+	border-color: var(--accent);
+	color: var(--accent);
+}
+
+.speakerDefaultRow {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}

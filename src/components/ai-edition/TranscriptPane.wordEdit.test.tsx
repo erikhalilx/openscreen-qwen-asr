@@ -12,7 +12,9 @@ import { cleanup, fireEvent, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@/contexts/I18nContext";
 import type { AxcutAsset, AxcutClip, AxcutTranscript, AxcutWord } from "@/lib/ai-edition/schema";
+import { useTranscriptionStore } from "@/lib/ai-edition/store/transcriptionStore";
 import { TranscriptPane } from "./RightPanes";
+import { SpeakerAnalysisStatus, useSpeakerAnalysis } from "./SpeakerBackfillButton";
 
 vi.mock("@/native/client", () => ({ nativeBridgeClient: { aiEdition: {} } }));
 vi.mock("sonner", () => ({ toast: { error: vi.fn() } }));
@@ -84,6 +86,33 @@ function renderPane(words?: AxcutWord[], busyAssetIds: string[] = []) {
 }
 
 afterEach(cleanup);
+
+it("retranscribes the active lane and disables the action during speaker analysis", () => {
+	const originalRequest = useTranscriptionStore.getState().request;
+	const request = vi.fn(async () => {});
+	useTranscriptionStore.setState({ request });
+	try {
+		const view = renderPane();
+		fireEvent.click(view.getByRole("button", { name: "Retranscribe" }));
+		expect(request).toHaveBeenCalledWith("asset_1");
+		view.unmount();
+
+		useSpeakerAnalysis.setState({ progress: { completed: 1, total: 2 } });
+		const busy = renderPane();
+		expect(busy.getByRole("button", { name: "Retranscribe" })).toBeDisabled();
+		const status = render(
+			<I18nProvider>
+				<SpeakerAnalysisStatus />
+			</I18nProvider>,
+		);
+		expect(status.getByRole("status")).toHaveTextContent("1/2");
+		busy.unmount();
+		status.unmount();
+	} finally {
+		useSpeakerAnalysis.setState({ progress: null });
+		useTranscriptionStore.setState({ request: originalRequest });
+	}
+});
 
 describe("telling the user the gestures exist", () => {
 	it("shows the editing hint line and the ? help when a transcript is on screen", () => {

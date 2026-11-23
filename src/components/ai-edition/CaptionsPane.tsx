@@ -34,16 +34,19 @@ import {
 	getCaptionSettings,
 	untranslatedUnits,
 } from "@/lib/ai-edition/captions";
+import { deriveCaptionCues } from "@/lib/ai-edition/captions/cues";
+import { captionDisplayCues } from "@/lib/ai-edition/captions/display";
 import {
 	availableRecordedCaptionSources,
 	getRecordedCaptionOptions,
 	type RecordedCaptionSource,
 } from "@/lib/ai-edition/captions/recordedSources";
-import { resolveCaptionLane } from "@/lib/ai-edition/captions/settings";
+import { resolveCaptionLane, SPEAKER_SEPARATORS } from "@/lib/ai-edition/captions/settings";
 import {
 	CAPTION_WORDS_PER_LINE_MAX,
 	CAPTION_WORDS_PER_LINE_MIN,
 } from "@/lib/ai-edition/captions/wordsPerLine";
+import { withTranscript } from "@/lib/ai-edition/document/transcript";
 import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import {
 	useAssetTranscriptions,
@@ -51,12 +54,13 @@ import {
 } from "@/lib/ai-edition/store/transcriptionStore";
 import { useCaptions } from "@/lib/ai-edition/store/useCaptions";
 import { lanePlacements } from "@/lib/ai-edition/timeline/aggregated-transcript";
+import { formatMs } from "@/lib/ai-edition/timeline/format";
 import { firstTimelineBusyView } from "@/lib/ai-edition/transcription/status";
 import { TEXT_FONT_FAMILIES } from "@/lib/textFonts";
 import { nativeBridgeClient } from "@/native";
-import { CaptionSrtExport } from "./CaptionSrtExport";
 import styles from "./NewEditorShell.module.css";
 import { QwenRuntimeNotice } from "./QwenRuntimeNotice";
+import { ReplaceSpeakerDialog } from "./ReplaceSpeakerDialog";
 import { ChoiceRow, SliderCell, Toggle } from "./RightPanes";
 import { TextColorField } from "./TextColorField";
 import { useTranscriptionLabel } from "./TranscriptionStatus";
@@ -121,7 +125,13 @@ function captionAnchorIcon(v: CaptionAnchorV, h: CaptionAnchorH) {
 	);
 }
 
-export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
+export function CaptionsPane({
+	onClose,
+	onSeek,
+}: {
+	onClose?: () => void;
+	onSeek?: (seconds: number) => void;
+} = {}) {
 	const t = useScopedT("settings");
 	const te = useScopedT("editor");
 	const tc = useScopedT("common");
@@ -129,6 +139,7 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 	const availableSources = availableRecordedCaptionSources(document);
 	const sourceOptions = getRecordedCaptionOptions(document);
 	const [editSource, setEditSource] = useState<RecordedCaptionSource>("system");
+	const [previewProject, setPreviewProject] = useState<string>();
 	const source =
 		availableSources.length &&
 		resolveCaptionLane(document, getCaptionSettings(document)) !== "voiceover"
@@ -151,6 +162,47 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 		setSources,
 	} = useCaptions(source);
 	const saveDocument = useProjectStore((s) => s.saveDocument);
+	const preview = useMemo(() => {
+		if (!document || document.chineseSentenceCaptions || previewProject !== document.project.id)
+			return null;
+		const draft = { ...document, chineseSentenceCaptions: true };
+		return captionDisplayCues(
+			deriveCaptionCues(
+				draft,
+				{ ...settings, enabled: true, language: null },
+				translations,
+				source,
+			),
+			draft,
+		);
+	}, [document, previewProject, settings, source, translations]);
+	const showSpeakerControls = document?.transcripts.some(
+		(transcript) =>
+			transcript.speakerTurns !== undefined ||
+			transcript.words.some((word) => word.speakerId !== undefined),
+	);
+	const speakerCues = useMemo(() => {
+		if (!document || !settings.showSpeakers || !showSpeakerControls) return [];
+		const lines = settings.enabled
+			? cues
+			: deriveCaptionCues(document, { ...settings, enabled: true }, translations, source);
+		const visibleIds = new Set(captionDisplayCues(lines, document).map((cue) => cue.id));
+		return lines.filter((cue) => cue.speakerRef !== undefined && visibleIds.has(cue.id));
+	}, [cues, document, settings, showSpeakerControls, source, translations]);
+	const saveSpeaker = async (ref: { assetId: string; startKey: string }, label: string) => {
+		const state = useProjectStore.getState();
+		const doc = state.document;
+		const transcript = doc?.transcripts.find((entry) => entry.assetId === ref.assetId);
+		if (!doc || !transcript) return;
+		const next = withTranscript(doc, {
+			...transcript,
+			captionSpeakerOverrides: {
+				...transcript.captionSpeakerOverrides,
+				[ref.startKey]: label.trim() || null,
+			},
+		});
+		await state.saveDocument(next, { history: true, historyBase: doc });
+	};
 	// Captions are a view of the transcript, and the transcript arrives on its
 	// own (transcriptionStore's background pass). The pane reads that state
 	// straight from the store rather than being handed a busy flag: it is the
@@ -276,7 +328,6 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 					<CaptionsIcon size={14} />
 				</span>
 				<h2>{t("facets.captions")}</h2>
-				<CaptionSrtExport />
 				{/* Its own provider, like `Toggle`: the pane renders without the app's root one in the
 				    tests. */}
 				{onClose ? (
@@ -308,6 +359,44 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 				}}
 			>
 				<QwenRuntimeNotice />
+				{document && hasTranscript && !document.chineseSentenceCaptions ? (
+					<div>
+						<button
+							type="button"
+							className={styles.paneHeadBtn}
+							aria-expanded={preview !== null}
+							onClick={() => setPreviewProject(preview ? undefined : document.project.id)}
+						>
+							{t("captions.previewChineseSentences")}
+						</button>
+						{preview ? (
+							<>
+								<ol className={styles.speakerCueList}>
+									{preview.map((cue) => (
+										<li key={cue.id}>
+											{formatMs(cue.startMs)}{" "}
+											{cue.speakerLabel ??
+												(cue.speakerNeedsReview ? t("captions.speakerNeedsReview") : "")}{" "}
+											{cue.text}
+										</li>
+									))}
+								</ol>
+								<button
+									type="button"
+									className={styles.paneHeadBtn}
+									onClick={() =>
+										void saveDocument(
+											{ ...document, chineseSentenceCaptions: true },
+											{ history: true, historyBase: document },
+										)
+									}
+								>
+									{t("captions.applyChineseSentences")}
+								</button>
+							</>
+						) : null}
+					</div>
+				) : null}
 				<div className={styles.paneRow}>
 					<span className={styles.label}>{t("captions.show")}</span>
 					<Toggle
@@ -450,6 +539,102 @@ export function CaptionsPane({ onClose }: { onClose?: () => void } = {}) {
 							{t("captions.removeLegacyAnnotations")}
 						</button>
 					</div>
+				) : null}
+
+				{showSpeakerControls ? (
+					<>
+						<div className={styles.paneRow}>
+							<span className={styles.label}>{t("captions.showSpeakers")}</span>
+							<Toggle
+								checked={settings.showSpeakers}
+								disabled={disabled}
+								onChange={(showSpeakers) => void set({ showSpeakers })}
+							/>
+						</div>
+						{settings.showSpeakers ? (
+							<>
+								<details open>
+									<summary className={styles.sectionLabel}>{t("captions.speakerDetails")}</summary>
+									<div className={styles.speakerDetailsActions}>
+										<ReplaceSpeakerDialog cues={speakerCues} />
+									</div>
+									<div className={styles.speakerCueList}>
+										{speakerCues.map(
+											(cue) =>
+												cue.speakerRef && (
+													<div key={cue.id} className={styles.speakerCueRow}>
+														<button
+															type="button"
+															className={styles.paneHeadBtn}
+															disabled={!onSeek}
+															onClick={() => onSeek?.(cue.startMs / 1000)}
+														>
+															{formatMs(cue.startMs)} – {formatMs(cue.endMs)}
+														</button>
+														<SpeakerLabelField
+															value={cue.speakerLabel ?? ""}
+															needsReview={cue.speakerNeedsReview}
+															onSave={(value) => void saveSpeaker(cue.speakerRef!, value)}
+														/>
+														<span>{cue.text}</span>
+													</div>
+												),
+										)}
+									</div>
+								</details>
+								<details>
+									<summary className={styles.sectionLabel}>{t("captions.speakerStyle")}</summary>
+									<div className={styles.field}>
+										<ChoiceRow<string>
+											label={t("captions.font")}
+											columns={2}
+											value={settings.speakerFontFamily ?? settings.fontFamily}
+											disabled={disabled}
+											options={TEXT_FONT_FAMILIES.map((font) => ({
+												value: font,
+												label: font,
+												icon: <span style={{ fontFamily: font }}>{font}</span>,
+												title: null,
+											}))}
+											onChange={(speakerFontFamily) => void set({ speakerFontFamily })}
+										/>
+									</div>
+									<div className={styles.paneRow}>
+										<span className={styles.label}>{t("captions.bold")}</span>
+										<Toggle
+											checked={(settings.speakerFontWeight ?? settings.fontWeight) === "bold"}
+											disabled={disabled}
+											onChange={(bold) => void set({ speakerFontWeight: bold ? "bold" : "normal" })}
+										/>
+									</div>
+									<div className={styles.paneRow}>
+										<span className={styles.label}>{t("captions.textColor")}</span>
+										<TextColorField
+											label={t("captions.textColor")}
+											value={settings.speakerColor ?? settings.color}
+											plate={settings.backgroundEnabled ? settings.backgroundColor : "transparent"}
+											disabled={disabled}
+											onChange={(speakerColor) => setLive({ speakerColor })}
+											onCommit={() => void commit()}
+										/>
+									</div>
+									<div className={styles.field}>
+										<ChoiceRow
+											label={t("captions.speakerSeparator")}
+											columns={2}
+											value={settings.speakerSeparator}
+											disabled={disabled}
+											options={SPEAKER_SEPARATORS.map((value, index) => ({
+												value,
+												label: t(`captions.speakerSeparators.${index}`),
+											}))}
+											onChange={(speakerSeparator) => void set({ speakerSeparator })}
+										/>
+									</div>
+								</details>
+							</>
+						) : null}
+					</>
 				) : null}
 
 				{/* ── Style ──────────────────────────────────────────────── */}
@@ -780,3 +965,36 @@ const selectStyle: React.CSSProperties = {
 	minWidth: 120,
 	cursor: "pointer",
 };
+
+function SpeakerLabelField({
+	value,
+	onSave,
+	needsReview,
+}: {
+	value: string;
+	onSave: (label: string) => void;
+	needsReview?: boolean;
+}) {
+	const t = useScopedT("settings");
+	const [draft, setDraft] = useState<string | null>(null);
+	return (
+		<input
+			type="text"
+			className={styles.speakerLabelField}
+			aria-label={t("captions.speakerLabel")}
+			placeholder={t(needsReview ? "captions.speakerNeedsReview" : "captions.speakerLabel")}
+			value={draft ?? value}
+			maxLength={80}
+			onChange={(event) => setDraft(event.currentTarget.value)}
+			onBlur={() => {
+				if (draft !== null && draft.trim() !== value) onSave(draft);
+				setDraft(null);
+			}}
+			onKeyDown={(event) => {
+				if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur();
+				if (event.key === "Escape") setDraft(null);
+				event.stopPropagation();
+			}}
+		/>
+	);
+}

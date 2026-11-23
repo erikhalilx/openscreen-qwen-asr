@@ -46,7 +46,8 @@ def restore_words(text, segments, offset, duration):
 def phrases_from_words(words):
     phrases, current = [], []
     for word in words:
-        if current and word["startSec"] - current[-1]["endSec"] >= 0.4:
+        if current and (word["startSec"] - current[-1]["endSec"] >= 0.4
+                        or word.get("speakerId") != current[-1].get("speakerId")):
             phrases.append(current)
             current = []
         current.append(word)
@@ -69,5 +70,6 @@ def phrases_from_words(words):
                        or (edge and is_cjk(edge[-1]) and is_cjk(token[0]))))
             out += ("" if not out or compact else " ") + token
         return out
-    return [{"text": join(p), "startSec": p[0]["startSec"], "endSec": p[-1]["endSec"]}
+    return [{"text": join(p), "startSec": p[0]["startSec"], "endSec": p[-1]["endSec"],
+             **({"speakerId": p[0]["speakerId"]} if "speakerId" in p[0] else {})}
             for p in phrases]

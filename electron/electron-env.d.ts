@@ -544,6 +544,13 @@ interface Window {
 		onRequestCloseConfirm: (callback: () => void) => () => void;
 		sendCloseConfirmResponse: (choice: "save" | "discard" | "cancel") => void;
 		stt: {
+			speakerSettings?: () => Promise<import("./stt/transcriptionContract").SttSpeakerSettings>;
+			setSpeakerDefault?: (
+				enabled: boolean,
+			) => Promise<import("./stt/transcriptionContract").SttSpeakerSettings>;
+			backfillSpeakers?: (
+				request: import("./stt/transcriptionContract").SttSpeakerBackfillRequest,
+			) => Promise<import("./stt/transcriptionContract").SttSpeakerBackfillResult>;
 			saveQwenInstaller?: () => Promise<boolean>;
 			qwenRuntimeSetup?: () => Promise<import("./stt/transcriptionContract").QwenRuntimeSetup>;
 			transcribe: (

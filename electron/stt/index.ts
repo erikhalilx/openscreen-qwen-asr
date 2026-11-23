@@ -1,5 +1,6 @@
 import path from "node:path";
 import { app, BrowserWindow, type IpcMain, net } from "electron";
+import { AppSettingsStore } from "../app-settings";
 import { planChunks } from "./chunking";
 import { extractMono16kPcm } from "./extractAudio";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./modelManager";
 import { QwenMlxManager } from "./qwenMlx";
 import { getQwenRuntimeSetup, saveQwenInstaller } from "./qwenRuntimeSetup";
+import { backfillSpeakers, getSpeakerSettings } from "./speakerAttribution";
 import type {
 	SttPhraseSegment,
 	SttStatusEvent,
@@ -567,6 +569,28 @@ export function _resetSttManagerForTests(): void {
  * `webContents` so two windows don't cross-talk.
  */
 export function registerSttIpc(ipcMain: IpcMain): void {
+	ipcMain.handle("stt:speaker-settings", () => getSpeakerSettings());
+	ipcMain.handle("stt:set-speaker-default", (_event, enabled: unknown) => {
+		if (typeof enabled !== "boolean")
+			throw new TypeError("Speaker attribution setting must be a boolean");
+		new AppSettingsStore(app.getPath("userData")).setSpeakerAttributionEnabled(enabled);
+		return getSpeakerSettings();
+	});
+	const backfills = new Map<number, AbortController>();
+	ipcMain.handle("stt:backfill-speakers", async ({ sender }, request: unknown) => {
+		if (backfills.has(sender.id)) throw new Error("Speaker analysis is already running");
+		const controller = new AbortController();
+		const id = sender.id;
+		const abort = () => controller.abort();
+		backfills.set(id, controller);
+		sender.once("destroyed", abort);
+		try {
+			return await backfillSpeakers(request, controller.signal);
+		} finally {
+			backfills.delete(id);
+			sender.removeListener("destroyed", abort);
+		}
+	});
 	ipcMain.handle("stt:qwen-runtime-setup", () => getQwenRuntimeSetup());
 	ipcMain.handle("stt:save-qwen-installer", (event) =>
 		saveQwenInstaller(BrowserWindow.fromWebContents(event.sender)),

@@ -80,7 +80,17 @@ function timestamp(timeMs: number): string {
 	)}:${String(seconds % 60).padStart(2, "0")},${String(ms % 1000).padStart(3, "0")}`;
 }
 
-export function captionsToSrt(cues: CaptionCue[]): string {
+function exportText(cue: CaptionCue, includeSpeaker: boolean): string {
+	const speaker = includeSpeaker ? cue.speakerLabel?.trim().replace(/\s+/g, " ") : "";
+	return speaker ? `${speaker}: ${cue.text.trim()}` : cue.text.trim();
+}
+
+export function captionsToText(cues: CaptionCue[], includeSpeaker = false): string {
+	const text = cues.filter((cue) => cue.text.trim()).map((cue) => exportText(cue, includeSpeaker));
+	return text.length ? `${text.join("\n")}\n` : "";
+}
+
+export function captionsToSrt(cues: CaptionCue[], includeSpeaker = false): string {
 	return cues
 		.filter(
 			(cue) =>
@@ -91,8 +101,7 @@ export function captionsToSrt(cues: CaptionCue[]): string {
 		)
 		.map((cue, index) => {
 			// Blank lines delimit SRT entries; they cannot occur inside one caption.
-			const text = cue.text
-				.trim()
+			const text = exportText(cue, includeSpeaker)
 				.replace(/\r\n|\r/g, "\n")
 				.replace(/\n\s*\n/g, "\n");
 			return `${index + 1}\r\n${timestamp(cue.startMs)} --> ${timestamp(cue.endMs)}\r\n${text.replace(/\n/g, "\r\n")}\r\n\r\n`;
@@ -100,10 +109,14 @@ export function captionsToSrt(cues: CaptionCue[]): string {
 		.join("");
 }
 
-export function captionSrtFileName(title: string, source: CaptionSrtSource): string {
+export function captionSrtFileName(
+	title: string,
+	source: CaptionSrtSource,
+	includeTimestamps = true,
+): string {
 	const base = title
 		.replace(/[\p{Cc}<>:"/\\|?*]/gu, "_")
 		.replace(/^[.\s]+|[.\s]+$/g, "")
 		.slice(0, 100);
-	return `${base || "captions"}-${source}.srt`;
+	return `${base || "captions"}-${source}.${includeTimestamps ? "srt" : "txt"}`;
 }

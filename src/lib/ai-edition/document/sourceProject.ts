@@ -41,6 +41,7 @@ export function openSourceProject(document: AxcutDocument): AxcutDocument {
 	}));
 	return syncRecordingAudio({
 		...fresh,
+		chineseSentenceCaptions: document.chineseSentenceCaptions,
 		project: { ...fresh.project, primaryAssetId: clips[0]?.assetId },
 		assets,
 		timeline: { ...fresh.timeline, clips },

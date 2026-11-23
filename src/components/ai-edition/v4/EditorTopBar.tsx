@@ -27,6 +27,7 @@ import { useUpdateBadge } from "@/hooks/useUpdateBadge";
 import { getAvailableLocales, getLocaleName } from "@/i18n/loader";
 import { moveMenuFocus } from "@/lib/menuKeyboard";
 import { formatFirstFixedBinding } from "@/lib/shortcuts";
+import { SpeakerAnalysisStatus } from "../SpeakerBackfillButton";
 import { StylePresetsMenu } from "../StylePresetsMenu";
 import styles from "./EditorShellV4.module.css";
 
@@ -38,6 +39,7 @@ export interface TopBarActions {
 	save: () => void;
 	export: () => void;
 	openSettings: () => void;
+	openTranscriptionSettings?: () => void;
 	renameProject: (title: string) => void;
 	toggleChat: () => void;
 	openProviderSettings: () => void;
@@ -200,6 +202,7 @@ export function EditorTopBar({
 					</button>
 				</Tooltip>
 			) : null}
+			<SpeakerAnalysisStatus />
 			<button
 				type="button"
 				className={styles.exportBtn}
@@ -308,6 +311,7 @@ function AppMenu({ actions }: { actions: TopBarActions }) {
 	const tCommon = useScopedT("common");
 	const tEditor = useScopedT("editor");
 	const tShortcuts = useScopedT("shortcuts");
+	const tSettings = useScopedT("settings");
 	const { theme, toggle: toggleTheme } = useTheme();
 	const { locale, setLocale } = useI18n();
 	const [open, setOpen] = useState(false);
@@ -453,6 +457,17 @@ function AppMenu({ actions }: { actions: TopBarActions }) {
 						<Keyboard size={15} />
 						{tShortcuts("title")}
 					</button>
+					{actions.openTranscriptionSettings && (
+						<button
+							type="button"
+							role="menuitem"
+							className={styles.appMenuRow}
+							onClick={run(actions.openTranscriptionSettings)}
+						>
+							{tSettings("captions.transcriptionDefaults")}
+						</button>
+					)}
+
 					{/* Settings surfaces together, above the separator. Both rows are labelled with the
 					    title of the dialog they open, so neither can drift from it — and unlike the AI
 					    panel's own entry points, this one is reachable in Media and Rec too, which is
