@@ -1,7 +1,8 @@
+import { execFileSync } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseQwenResponse, QwenMlxManager, qwenPaths } from "./qwenMlx";
 import { STT_TRANSCRIPTION_INCOMPLETE } from "./transcriptionContract";
 
@@ -36,6 +37,12 @@ describe("Qwen timestamp contract", () => {
 describe.skipIf(process.platform === "win32")("Qwen process lifecycle", () => {
 	let root: string;
 	let manager: QwenMlxManager;
+	let python: string;
+	beforeAll(() => {
+		python = execFileSync("python3", ["-c", "import sys; print(sys.executable)"], {
+			encoding: "utf8",
+		}).trim();
+	});
 	beforeEach(async () => {
 		root = await mkdtemp(path.join(os.tmpdir(), "qwen-worker-test-"));
 		await writeFile(path.join(root, "config.json"), "{}");
@@ -54,7 +61,7 @@ print(json.dumps({'version':1,'type':'result','result':${JSON.stringify(valid)}}
 		);
 		manager = new QwenMlxManager(
 			{
-				python: "python3",
+				python,
 				worker: path.join(root, "fake.py"),
 				model: root,
 				aligner: root,
