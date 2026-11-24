@@ -112,6 +112,8 @@ function renderTimeline(
 	assets: Array<Record<string, unknown>> = [NO_CAMERA_ASSET],
 	onRender?: ProfilerOnRenderCallback,
 	overrides: Record<string, unknown> = {},
+	canSeek?: () => boolean,
+	seekEpochRef?: { current: number },
 ) {
 	const tl = {
 		clips,
@@ -159,6 +161,8 @@ function renderTimeline(
 				// stays typed as the real API rather than widened to `any` (AGENTS.md).
 				tl={tl as unknown as ReturnType<typeof useTimeline>}
 				setCurrentTime={setCurrentTime}
+				canSeek={canSeek}
+				seekEpochRef={seekEpochRef}
 				playing={false}
 				onTogglePlay={vi.fn()}
 				onEditClip={vi.fn()}
@@ -331,6 +335,67 @@ describe("timeline tracks", () => {
 });
 
 describe("V4Timeline scrubbing", () => {
+	it("discards a queued scrub after a pause and resume during the drag", () => {
+		const frames = new Map<number, FrameRequestCallback>();
+		let nextFrameId = 1;
+		vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+			const frameId = nextFrameId++;
+			frames.set(frameId, callback);
+			return frameId;
+		});
+		vi.stubGlobal("cancelAnimationFrame", (frameId: number) => frames.delete(frameId));
+		const seekEpochRef = { current: 0 };
+		const { setCurrentTime } = renderTimeline(
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{},
+			undefined,
+			seekEpochRef,
+		);
+		const ruler = document.querySelector<HTMLElement>("[class*=tlRulerRow]");
+		expect(ruler).not.toBeNull();
+		fireEvent.pointerDown(ruler as HTMLElement, { button: 0, clientX: 90 });
+		setCurrentTime.mockClear();
+		fireEvent.pointerMove(window, { clientX: 540 });
+		seekEpochRef.current++;
+		const [[frameId, frame]] = frames;
+		frames.delete(frameId);
+		act(() => frame(0));
+		fireEvent.pointerUp(window);
+		expect(setCurrentTime).not.toHaveBeenCalled();
+	});
+
+	it.each([
+		"tlRulerRow",
+		"tlTracks",
+	])("keeps the playhead fixed on %s while seeking is blocked", (targetClass) => {
+		let allowed = false;
+		const { setCurrentTime, tl } = renderTimeline(
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			{},
+			() => allowed,
+		);
+		const target = document.querySelector(`[class*=${targetClass}]`) as HTMLElement;
+		const playhead = document.querySelector<HTMLElement>("[class*=tlPlayhead][style]");
+		expect(playhead).not.toBeNull();
+		const before = playhead?.style.left;
+		fireEvent.pointerDown(target, { button: 0, clientX: 450 });
+		fireEvent.pointerMove(window, { clientX: 540 });
+		fireEvent.pointerUp(window);
+		expect(setCurrentTime).not.toHaveBeenCalled();
+		expect(tl.clearSelection).not.toHaveBeenCalled();
+		expect(playhead?.style.left).toBe(before);
+		allowed = true;
+		fireEvent.pointerDown(target, { button: 0, clientX: 450 });
+		fireEvent.pointerUp(window);
+		expect(setCurrentTime).toHaveBeenCalledWith(900);
+	});
+
 	it("publishes at most one React scrub-state update per animation frame", () => {
 		const frames = new Map<number, FrameRequestCallback>();
 		let nextFrameId = 1;
@@ -786,6 +851,21 @@ describe("V4Timeline clip row", () => {
 		expect(pill.style.left).toBe(clipEls[1].style.left);
 	});
 
+	it.each([
+		"start",
+		"end",
+	] as const)("keeps narrow clip controls inside the viewport at its %s", (edge) => {
+		const clips =
+			edge === "end"
+				? [clip(0, TOTAL_SEC - 0.1), clip(TOTAL_SEC - 0.1, TOTAL_SEC)]
+				: [clip(0, 0.1), clip(0.1, TOTAL_SEC)];
+		const selected = clips[edge === "end" ? 1 : 0];
+		renderTimeline(clips, undefined, undefined, undefined, { clipSelection: selected.id });
+		const card = document.querySelector(`[data-clip-id="${selected.id}"]`);
+		expect(card).toHaveAttribute("data-controls-side", edge === "end" ? "left" : "right");
+		expect(screen.getByRole("button", { name: "toolbar.deleteClip" })).toBeInTheDocument();
+	});
+
 	it("shows each clip's edited duration on the card", () => {
 		renderTimeline(CLIPS);
 		// 600s / 300s / 900s of an 1800s source: each card reads the clip's own
@@ -883,6 +963,7 @@ describe("V4Timeline audio lane drag", () => {
 		loop: false,
 		fadeInMs: 0,
 		fadeOutMs: 0,
+		endOverflowMs: undefined as number | undefined,
 		muted: false,
 		label: "vo",
 		origin: "user" as const,
@@ -898,7 +979,15 @@ describe("V4Timeline audio lane drag", () => {
 		tracks?: Array<ReturnType<typeof makeTrack>>,
 	) {
 		const placeAudioTrack = vi.fn(
-			async (_id: string, _span: { startMs: number; endMs: number; offsetMs?: number }) => {
+			async (
+				_id: string,
+				_span: {
+					startMs: number;
+					endMs: number;
+					offsetMs?: number;
+					mode?: "move" | "resize" | "resize-start" | "slip";
+				},
+			) => {
 				/* the drag only awaits it */
 			},
 		);
@@ -1035,6 +1124,7 @@ describe("V4Timeline audio lane drag", () => {
 		expect(placeAudioTrack).toHaveBeenCalledTimes(1);
 		const [id, placement] = placeAudioTrack.mock.calls[0];
 		expect(id).toBe("trk1");
+		expect(placement.mode).toBe("move");
 		// The span slides whole: head moves, length is unchanged.
 		expect(placement.startMs / 1000).toBeCloseTo(100 + secForPx(90), 3);
 		expect((placement.endMs - placement.startMs) / 1000).toBeCloseTo(60, 3);
@@ -1053,6 +1143,7 @@ describe("V4Timeline audio lane drag", () => {
 		expect(placeAudioTrack).toHaveBeenCalledTimes(1);
 		const [, placement] = placeAudioTrack.mock.calls[0];
 		const movedSec = placement.startMs / 1000 - 100;
+		expect(placement.mode).toBe("resize-start");
 		expect(movedSec).toBeGreaterThan(0);
 		// The head moved and the source in-point advanced by the same amount.
 		expect((placement.offsetMs ?? 0) / 1000).toBeCloseTo(movedSec, 3);
@@ -1067,6 +1158,20 @@ describe("V4Timeline audio lane drag", () => {
 		window.dispatchEvent(new MouseEvent("pointerup", { clientX: 90 }));
 		const [, placement] = placeAudioTrack.mock.calls[0];
 		expect(placement.offsetMs).toBe(0);
+	});
+
+	it("bounds a slip by the whole music window, including its clipped tail", () => {
+		const { pill, placeAudioTrack } = renderAudio({ endMs: 110_000, endOverflowMs: 10_000 });
+		fireEvent.pointerDown(pill, { clientX: 0, altKey: true });
+		window.dispatchEvent(new MouseEvent("pointermove", { clientX: 400 }));
+		window.dispatchEvent(new MouseEvent("pointerup", { clientX: 400 }));
+		const [, placement] = placeAudioTrack.mock.calls[0];
+		expect(placement).toMatchObject({
+			mode: "slip",
+			startMs: 100_000,
+			endMs: 110_000,
+			offsetMs: 40_000,
+		});
 	});
 
 	it("caps the out-point at the source length when the track does not loop", () => {

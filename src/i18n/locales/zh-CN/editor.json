@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "导出失败。",
 		"writingFile": "正在写入文件…",
 		"renderingFrames": "正在渲染帧",
+		"renderingGif": "正在导出 GIF",
 		"framesEta": "{{current}} / {{total}} 帧 · 预计剩余 {{eta}} 秒",
 		"preparingEncoder": "正在准备编码器…",
 		"close": "关闭",
@@ -346,7 +347,15 @@
 		"openHint": "打开",
 		"browseFiles": "浏览文件…",
 		"deleteProject": "删除项目",
-		"confirmDelete": "删除此项目？您的录制文件会保留。"
+		"confirmDelete": "删除此项目？您的录制文件会保留。",
+		"confirmDeleteProject": "删除此项目？",
+		"alsoTrash": "同时将其录制文件移到废纸篓（{{size}}）",
+		"alsoRecycle": "同时将其录制文件移到回收站（{{size}}）",
+		"recordingsKeptFor": "{{projects}} 使用的录制文件会保留。",
+		"recordingsKeptUnreadable": "部分项目无法读取，因此会保留此项目的录制文件。",
+		"trashFailed": "无法将录制文件移到废纸篓。要永久删除吗？",
+		"recycleFailed": "无法将录制文件移到回收站。要永久删除吗？",
+		"deletePermanently": "永久删除"
 	},
 	"editClipDialog": {
 		"title": "编辑片段",
@@ -357,6 +366,10 @@
 		"duration": "最终时长",
 		"reset": "重置",
 		"apply": "应用",
+		"rotation": "旋转",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "将画面上下颠倒，例如用于倒装的摄像头",
 		"pickClipTitle": "选择要编辑的片段",
 		"clipLabel": "片段 {{index}}"
 	},

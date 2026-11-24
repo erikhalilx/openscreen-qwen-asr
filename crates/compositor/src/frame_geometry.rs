@@ -1906,6 +1906,8 @@ pub struct FrameGeometryInput<'a> {
 /// qui traversent.
 pub struct FrameGeometry {
     pub scene_preset: Option<String>,
+    /// A transparent camera must reveal the wallpaper, not hidden screen footage.
+    pub show_screen: bool,
     /// Continuous PiP shadow weight through a layout change.
     pub webcam_shadow: f32,
     pub mb_taps: f32,
@@ -1981,6 +1983,11 @@ pub struct FrameGeometry {
     /// Layouts en bloc : le slot de l'écran, un conteneur qui le MASQUE (cf. `ScreenMask`).
     /// `None` ailleurs, et le rendu est celui d'avant, à l'octet.
     pub screen_mask: Option<ScreenMask>,
+    /// The clip being composed is turned by 180°. Everything above is planned in display
+    /// space; only the screen layer's texture sampling turns, through `screen_src`.
+    pub screen_turn: bool,
+    /// `[u_max, v_max]` of the screen texture: the valid area `screen_src` mirrors within.
+    pub screen_uv_max: [f32; 2],
 }
 
 /// Le conteneur d'un layout en bloc (côte à côte, haut/bas) : un masque fixe, overflow hidden.
@@ -2062,6 +2069,18 @@ pub fn annotation_dst_in(anchor: [f32; 4], x: f32, y: f32, w: f32, h: f32) -> [f
 }
 
 impl FrameGeometry {
+    /// The texture rect to sample for a display-space screen rect. Upright: unchanged.
+    /// Turned: mirrored inside the valid area, which reverses both bounds — the shaders
+    /// interpolate linearly from `src.xy` to `src.zw`, so that IS the half turn. `cut` and
+    /// everything planned from it stay in display space.
+    pub fn screen_src(&self, uv: [f32; 4]) -> [f32; 4] {
+        if !self.screen_turn {
+            return uv;
+        }
+        let [um, vm] = self.screen_uv_max;
+        [um - uv[0], vm - uv[1], um - uv[2], vm - uv[3]]
+    }
+
     /// Le quad de l'écran incliné pour une boîte de `s_px` px, `None` quand l'écran est droit.
     /// LE point de passage de l'écran, de son ombre, du curseur et du masque de flou : tous
     /// doivent porter la même séparation base / dynamique, sinon ils se décollent.
@@ -2232,7 +2251,8 @@ impl FrameGeometry {
         let s_px = [self.s_dst[2] * render_px[0], self.s_dst[3] * render_px[1]];
         let flat = LayerCB {
             dst: [0.0, 0.0, 1.0, 1.0],
-            src: self.cut,
+            // Reread from the screen texture: a turned clip samples it with reversed bounds.
+            src: self.screen_src(self.cut),
             quad_px: s_px,
             radius_px: self.s_radius,
             mode: 18.0,
@@ -3159,9 +3179,19 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         // focus auto) : un plan ne bouge que sous un pointeur qu'on voit. Preview et export
         // chargent la piste dans tous les cas (le focus auto la suit), cette porte fait le reste.
         let parallax_track = cursor_for_zoom.filter(|_| scene.is_some_and(|s| s.cursor.show));
-        let active_crop = scene.and_then(|scene| {
-            scene.crop_by_clip.get(scene.active_clip_index).copied().flatten()
-        });
+        // A turned clip is planned in what the viewer sees: its crop (stored in source
+        // coordinates) is mirrored here, its cursor track is mirrored where it is loaded, and
+        // only the screen layer's sampling maps back to the texture (`screen_src`).
+        let screen_turn = scene.is_some_and(|s| s.screen_turned());
+        let active_crop = scene
+            .and_then(|scene| scene.crop_by_clip.get(scene.active_clip_index).copied().flatten())
+            .map(|c| {
+                if screen_turn {
+                    SceneCrop { x: 1.0 - c.x - c.width, y: 1.0 - c.y - c.height, ..c }
+                } else {
+                    c
+                }
+            });
         if !zoom_regions.is_empty() {
             // L'orbite en focus auto lit le curseur dans l'image SOURCE recadrée — pas dans la
             // coupe zoomée, qu'un focus auto recentre sur lui — et ignore ce qu'une coupe retire.
@@ -3676,9 +3706,17 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
                 },
             };
 
+    // An opaque full-frame camera used to cover the screen by accident. Cutout makes
+    // that footage visible again, so stop drawing it once either camera-only path settles.
+    let show_screen = !lp.has_webcam || (cam_progress < 1.0 && match sampled_layout.as_ref() {
+        Some(sample) => sample.preset != "camera-only" || sample.progress < 1.0,
+        None => scene_preset.as_deref() != Some("camera-only"),
+    });
     FrameGeometry {
+        show_screen,
         webcam_shadow: sampled_layout.as_ref().map(|s| s.webcam_shadow)
-            .unwrap_or_else(|| if matches!(scene_preset.as_deref(), Some("dual-frame") | Some("vertical-stack") | Some("camera-only")) { 0.0 } else { 1.0 }),
+            .unwrap_or_else(|| if matches!(scene_preset.as_deref(), Some("dual-frame") | Some("vertical-stack") | Some("camera-only")) { 0.0 } else { 1.0 })
+            * input.scene.and_then(|scene| scene.effects.webcam_shadow).unwrap_or(0.6).clamp(0.0, 1.0) / 0.6,
         scene_preset,
         mb_taps,
         mb_amount,
@@ -3712,6 +3750,8 @@ pub fn plan_frame(input: &FrameGeometryInput) -> FrameGeometry {
         shape_fade,
         window_frame,
         screen_mask,
+        screen_turn,
+        screen_uv_max: [u_max, v_max],
     }
 }
 
@@ -3974,6 +4014,9 @@ pub fn effect_pointer(g: &FrameGeometry, input: &CursorPlanInput) -> EffectPoint
 /// courant (zoom serré, hors écran), ou sprite réduit à rien au creux d'un click bounce
 /// extrême — un état normal en lecture, pas une erreur.
 pub fn plan_cursor(g: &FrameGeometry, input: &CursorPlanInput) -> Option<CursorPlan> {
+    if !g.show_screen {
+        return None;
+    }
     let (rw, rh) = (input.render_px[0], input.render_px[1]);
 
     // Caché par l'application (`visible: false`) : rien de ce plan n'est dessiné, ni le sprite,
@@ -4880,17 +4923,23 @@ mod tests {
             layout_region("no-webcam", 5.0, 10.0, None)];
         let cfg = crate::config::all().pop().expect("compositor config");
         let mut input = golden_input(&scene, &cfg);
+        input.live.has_webcam = true;
         input.timeline_t_override = Some(2.0);
         let camera = plan_frame(&input);
         assert_eq!(camera.scene_preset.as_deref(), Some("camera-only"));
         assert!((camera.w_dst[2] - 1.0).abs() < 0.001);
         assert!((camera.w_dst[3] - 1.0).abs() < 0.001);
         assert_eq!(camera.w_radius, 0.0);
+        assert!(!camera.show_screen, "camera-only must hide the footage even with a transparent camera");
+        input.live.has_webcam = false;
+        assert!(plan_frame(&input).show_screen, "footage without a camera must keep its screen");
+        input.live.has_webcam = true;
         input.timeline_t_override = Some(5.0);
         let screen = plan_frame(&input);
         assert_eq!(screen.scene_preset.as_deref(), Some("no-webcam"));
         assert_eq!(screen.w_dst[2], 0.0);
         assert_eq!(screen.w_dst[3], 0.0);
+        assert!(screen.show_screen);
     }
 
     #[test]
@@ -4935,6 +4984,13 @@ mod tests {
         scene.layout_regions = vec![region];
         assert!((scene.layout_at(3.1).unwrap().layout.webcam_rect.unwrap().width - 0.6).abs() < 0.001);
         assert_eq!(scene.layout_at(3.5).unwrap().layout.webcam_rect.unwrap().width, 1.0);
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let mut input = golden_input(&scene, &cfg);
+        input.live.has_webcam = true;
+        input.timeline_t_override = Some(3.1);
+        assert!(plan_frame(&input).show_screen, "the incoming camera has not covered the screen yet");
+        input.timeline_t_override = Some(3.5);
+        assert!(!plan_frame(&input).show_screen, "the settled camera-only passage hides the footage");
         assert!(scene.layout_at(10.0).is_none());
         let other = scene.for_clip_window(1, 0.0, 10.0);
         assert!(other.layout_at(3.1).is_none());
@@ -5185,6 +5241,19 @@ mod tests {
             timeline_t_override: Some(1.5),
             // Distinct de `source_t` et de `frame / FPS` : un croisement des trois se verrait.
             programme_time: Some(2.25),
+        }
+    }
+
+    #[test]
+    fn webcam_shadow_preserves_old_scenes_and_scales_independently() {
+        let mut scene = golden_scene();
+        let cfg = crate::config::all().pop().expect("compositor config");
+        let baseline = plan_frame(&golden_input(&scene, &cfg));
+        for (strength, scale) in [(0.0, 0.0), (0.3, 0.5), (0.6, 1.0), (0.9, 1.5)] {
+            scene.effects.webcam_shadow = Some(strength);
+            let frame = plan_frame(&golden_input(&scene, &cfg));
+            assert!((frame.webcam_shadow - baseline.webcam_shadow * scale).abs() < 1e-5);
+            assert_eq!(frame.w_dst, baseline.w_dst);
         }
     }
 
@@ -7221,6 +7290,124 @@ mod tests {
         }
     }
 
+    /// A single-clip scene at zoom 1 with the cursor shown, its clip `rotation` (0 or 180)
+    /// and its crop (`null` or a crop object, verbatim JSON).
+    fn turn_scene(rotation: u16, crop: &str) -> Scene {
+        let mut scene = Scene::from_json(&format!(
+            r##"{{
+            "clips":[{{"screenPath":"/s.mp4","webcamPath":"","sourceStartSec":0,"sourceEndSec":10,"webcamOffsetSec":0,"hasAudio":false}}],
+            "layout":{{"preset":"no-webcam","webcamSize":1,"webcamShape":"rounded","webcamMirror":false,"webcamPosition":null,
+                      "webcamReactiveZoom":false}},
+            "effects":{{"padding":0.5,"blur":false,"shadow":0.5,"roundnessFrac":0.02,"motionBlur":0}},
+            "background":{{"kind":"color","color":"#1e1e2e"}},
+            "zoomRegions":[],
+            "cursor":{{"show":true,"size":1,"smoothing":0,"motionBlur":0,"clickBounce":1,"clipToBounds":false,"theme":"default"}},
+            "cropByClip":[{crop}],
+            "output":{{"width":1920,"height":1080,"fps":60}}
+        }}"##
+        ))
+        .expect("turn scene");
+        scene.rotation_by_clip = vec![rotation];
+        scene
+    }
+
+    #[test]
+    fn upright_clip_keeps_screen_src_identity() {
+        let g = framed_plan(&turn_scene(0, "null"));
+        assert!(!g.screen_turn);
+        assert_eq!(g.screen_src(g.cut), g.cut);
+        // An absent field is upright too.
+        let mut absent = turn_scene(0, "null");
+        absent.rotation_by_clip.clear();
+        let g = framed_plan(&absent);
+        assert!(!g.screen_turn);
+        assert_eq!(g.screen_src(g.cut), g.cut);
+    }
+
+    #[test]
+    fn turned_clip_reverses_the_source_bounds_inside_the_valid_area() {
+        let g = framed_plan(&turn_scene(180, "null"));
+        assert!(g.screen_turn);
+        assert_eq!(g.screen_uv_max, [1920.0 / 1920.0, 1080.0 / 1088.0]);
+        // The display-space cut is the upright one: only the sampling turns.
+        assert_eq!(g.cut, framed_plan(&turn_scene(0, "null")).cut);
+        let [a0, b0, a1, b1] = g.screen_src(g.cut);
+        assert!(a0 > a1 && b0 > b1, "bounds reversed: {:?}", [a0, b0, a1, b1]);
+        for v in [a0, a1] {
+            assert!((0.0..=g.screen_uv_max[0]).contains(&v), "u {v}");
+        }
+        for v in [b0, b1] {
+            assert!((0.0..=g.screen_uv_max[1]).contains(&v), "v {v}");
+        }
+        // Full frame: the whole valid area, corner to opposite corner.
+        assert!((a0 - 1.0).abs() < 1e-6 && a1.abs() < 1e-6, "u {a0}..{a1}");
+        assert!((b0 - 1080.0 / 1088.0).abs() < 1e-6 && b1.abs() < 1e-6, "v {b0}..{b1}");
+    }
+
+    #[test]
+    fn turned_crop_selects_the_same_source_pixels() {
+        let crop = r#"{"x":0.1,"y":0.2,"width":0.5,"height":0.3}"#;
+        let g = framed_plan(&turn_scene(180, crop));
+        // Planned in display space: the crop is mirrored, x 0.4..0.9, y 0.5..0.8.
+        let (um, vm) = (g.screen_uv_max[0], g.screen_uv_max[1]);
+        assert!((g.cut[0] / um - 0.4).abs() < 1e-5 && (g.cut[2] / um - 0.9).abs() < 1e-5, "cut {:?}", g.cut);
+        assert!((g.cut[1] / vm - 0.5).abs() < 1e-5 && (g.cut[3] / vm - 0.8).abs() < 1e-5, "cut {:?}", g.cut);
+        // ...and the texture rect sampled is exactly the stored crop, reversed.
+        let [a0, b0, a1, b1] = g.screen_src(g.cut);
+        assert!((a1 / um - 0.1).abs() < 1e-5 && (a0 / um - 0.6).abs() < 1e-5, "u {a0}..{a1}");
+        assert!((b1 / vm - 0.2).abs() < 1e-5 && (b0 / vm - 0.5).abs() < 1e-5, "v {b0}..{b1}");
+        // The screen box keeps the crop's shape either way.
+        assert_eq!(g.s_dst, framed_plan(&turn_scene(0, crop)).s_dst);
+    }
+
+    #[test]
+    fn screen_trail_rereads_a_turned_clip_turned() {
+        let g = framed_plan(&turn_scene(180, "null"));
+        assert_eq!(g.screen_trail_cb(RENDER, false).src, g.screen_src(g.cut));
+        let upright = framed_plan(&turn_scene(0, "null"));
+        assert_eq!(upright.screen_trail_cb(RENDER, false).src, upright.cut);
+    }
+
+    #[test]
+    fn cursor_of_a_turned_clip_lands_on_the_turned_content() {
+        let cfg = crate::config::all().pop().expect("au moins une config");
+        let center = |rotation: u16, track: &'static crate::cursor::CursorTrack| -> ([f32; 2], [f32; 4]) {
+            let scene = turn_scene(rotation, "null");
+            let g = framed_plan(&scene);
+            let mut live = live_params_from_scene(&scene);
+            live.cursor_model3d = false;
+            let plan = plan_cursor(
+                &g,
+                &CursorPlanInput {
+                    render_px: RENDER,
+                    u_max: 1.0,
+                    v_max: 1080.0 / 1088.0,
+                    cfg: &cfg,
+                    live,
+                    scene: Some(&scene),
+                    track,
+                    t: 1.5,
+                },
+            )
+            .expect("cursor in view");
+            match plan.placement {
+                CursorPlacement::Upright { center } => (center, g.s_dst),
+                _ => panic!("upright screen, flat sprite"),
+            }
+        };
+        let (x, y) = (0.2f32, 0.3f32);
+        // Upright: the cursor sits at (x, y) of the screen box.
+        let (c, d) = center(0, parked_track(x, y));
+        let want = [d[0] + x * d[2], d[1] + y * d[3]];
+        assert!((c[0] - want[0]).abs() < 1e-5 && (c[1] - want[1]).abs() < 1e-5, "{c:?} vs {want:?}");
+        // Turned: the track is turned where it is loaded, so the cursor sits where the turned
+        // picture shows that source point, (1 - x, 1 - y) of the screen box.
+        let turned: &'static crate::cursor::CursorTrack = Box::leak(Box::new(parked_track(x, y).turned()));
+        let (c, d) = center(180, turned);
+        let want = [d[0] + (1.0 - x) * d[2], d[1] + (1.0 - y) * d[3]];
+        assert!((c[0] - want[0]).abs() < 1e-5 && (c[1] - want[1]).abs() < 1e-5, "{c:?} vs {want:?}");
+    }
+
     /// Le curseur est sur le métrage : le slot le rogne aussi.
     #[test]
     fn the_cursor_is_clipped_to_the_slot() {
@@ -8485,6 +8672,7 @@ mod tests {
     /// Écran droit plein cadre, sans zoom : le curseur y tombe toujours dans le rect source.
     fn full_frame_geometry() -> FrameGeometry {
         FrameGeometry {
+            show_screen: true,
             scene_preset: None,
             webcam_shadow: 1.0,
             mb_taps: 1.0,
@@ -8515,6 +8703,8 @@ mod tests {
             shape_fade: 0.0,
             window_frame: None,
             screen_mask: None,
+            screen_turn: false,
+            screen_uv_max: [1.0, 1.0],
         }
     }
 

@@ -51,7 +51,14 @@ vi.mock("@/contexts/I18nContext", () => ({
 
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { EditorDialogsProvider } from "@/contexts/EditorDialogsContext";
+import { createEmptyDocument } from "@/lib/ai-edition/schema";
+import { useProjectStore } from "@/lib/ai-edition/store/projectStore";
 import { NewEditorShell } from "./NewEditorShell";
+
+let nativeOpen: () => void = () => undefined;
+let nativeNew: () => void = () => undefined;
+let nativeClose: () => void = () => undefined;
+const originalSave = useProjectStore.getState().saveDocument;
 
 function renderShell() {
 	return render(
@@ -70,9 +77,18 @@ function pressOnBody(init: KeyboardEventInit) {
 
 beforeEach(() => {
 	openConfig.mockClear();
+	useProjectStore.setState({ document: null, projectId: null, dirty: false });
 	// No preload in jsdom, and no scrolling either; the chat transcript pins itself to the
 	// bottom on every render.
 	(window as unknown as { electronAPI?: unknown }).electronAPI = {
+		onMenuLoadProject: (listener: () => void) => {
+			nativeOpen = listener;
+			return () => undefined;
+		},
+		onMenuNewProject: (listener: () => void) => {
+			nativeNew = listener;
+			return () => undefined;
+		},
 		onAiEditionChatEvent: () => () => {
 			/* unsubscribe */
 		},
@@ -82,8 +98,9 @@ beforeEach(() => {
 		setHasUnsavedChanges: () => {
 			/* no window close guard */
 		},
-		onRequestCloseConfirm: () => () => {
-			/* unsubscribe */
+		onRequestCloseConfirm: (listener: () => void) => {
+			nativeClose = listener;
+			return () => undefined;
 		},
 		onRequestSaveBeforeClose: () => () => {
 			/* unsubscribe */
@@ -116,6 +133,12 @@ beforeEach(() => {
 
 afterEach(() => {
 	cleanup();
+	useProjectStore.setState({
+		document: null,
+		projectId: null,
+		dirty: false,
+		saveDocument: originalSave,
+	});
 	(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
 });
 
@@ -132,6 +155,168 @@ async function openShellModal() {
 }
 
 describe("NewEditorShell shortcuts, with a dialog over the editor", () => {
+	it("reads current dirty state when a native command arrives before React updates its listeners", async () => {
+		const document = createEmptyDocument({ projectId: "proj_just_edited", title: "Unsaved" });
+		renderShell();
+		await act(async () => {
+			useProjectStore.setState({ document, projectId: document.project.id, dirty: true });
+			nativeOpen();
+		});
+		expect(screen.getByRole("dialog")).toHaveTextContent("unsavedChanges.modal.openTitle");
+	});
+	it.each([
+		"cancel",
+		"save",
+		"discard",
+	] as const)("handles %s before a native project switch after a failed save", async (choice) => {
+		const document = createEmptyDocument({ projectId: "proj_failed_save", title: "Unsaved" });
+		const saveDocument = vi.fn(async () => false);
+		useProjectStore.setState({
+			document,
+			projectId: document.project.id,
+			dirty: true,
+			saveDocument,
+		});
+		renderShell();
+		await act(async () => {
+			nativeOpen();
+		});
+		const label =
+			choice === "cancel"
+				? "actions.cancel"
+				: `unsavedChanges.modal.${choice === "save" ? "saveAndContinue" : "discard"}`;
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: label }));
+		});
+		expect(useProjectStore.getState().document).toBe(document);
+		expect(useProjectStore.getState().dirty).toBe(true);
+		expect(saveDocument).toHaveBeenCalledTimes(choice === "save" ? 1 : 0);
+		if (choice === "discard")
+			expect(screen.getByRole("dialog")).toHaveTextContent("openProjectDialog.title");
+		else expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+	});
+
+	it("ignores a competing native project request while Save is pending", async () => {
+		const document = createEmptyDocument({ projectId: "proj_slow_save", title: "Unsaved" });
+		let finishSave: ((saved: boolean) => void) | undefined;
+		const saveDocument = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finishSave = resolve;
+				}),
+		);
+		useProjectStore.setState({
+			document,
+			projectId: document.project.id,
+			dirty: true,
+			saveDocument,
+		});
+		renderShell();
+		await act(async () => {
+			nativeOpen();
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "unsavedChanges.modal.saveAndContinue" }));
+		});
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		await act(async () => {
+			nativeNew();
+		});
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		await act(async () => {
+			useProjectStore.setState({ dirty: false });
+			finishSave?.(true);
+		});
+		expect(screen.getAllByRole("dialog")).toHaveLength(1);
+		expect(screen.getByRole("dialog")).toHaveTextContent("openProjectDialog.title");
+	});
+
+	it.each([
+		"prompt",
+		"save",
+	] as const)("allows a new project request after a native close replaces its %s", async (phase) => {
+		const document = createEmptyDocument({ projectId: "proj_close_replaces", title: "Unsaved" });
+		let finishSave: ((saved: boolean) => void) | undefined;
+		const saveDocument = vi.fn(
+			() =>
+				new Promise<boolean>((resolve) => {
+					finishSave = resolve;
+				}),
+		);
+		useProjectStore.setState({
+			document,
+			projectId: document.project.id,
+			dirty: true,
+			saveDocument,
+		});
+		renderShell();
+		await act(async () => {
+			nativeOpen();
+		});
+		if (phase === "save")
+			await act(async () => {
+				fireEvent.click(
+					screen.getByRole("button", { name: "unsavedChanges.modal.saveAndContinue" }),
+				);
+			});
+		await act(async () => {
+			nativeClose();
+		});
+		expect(screen.getByRole("dialog")).toHaveTextContent("unsavedChanges.modal.closeTitle");
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "actions.cancel" }));
+		});
+		if (phase === "save")
+			await act(async () => {
+				useProjectStore.setState({ dirty: false });
+				finishSave?.(true);
+			});
+		expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+		await act(async () => {
+			nativeNew();
+		});
+		expect(screen.getAllByRole("dialog")).toHaveLength(1);
+		expect(screen.getByRole("dialog")).toHaveTextContent(
+			phase === "save" ? "newProjectDialog.title" : "unsavedChanges.modal.newTitle",
+		);
+	});
+
+	it("saves only once before continuing to a project dialog", async () => {
+		const document = createEmptyDocument({ projectId: "proj_save_once", title: "Unsaved" });
+		const saveDocument = vi.fn(async () => {
+			useProjectStore.setState({ dirty: false });
+			return true;
+		});
+		useProjectStore.setState({
+			document,
+			projectId: document.project.id,
+			dirty: true,
+			saveDocument,
+		});
+		renderShell();
+		await act(async () => {
+			pressOnBody({ key: "o", ctrlKey: true });
+		});
+		await act(async () => {
+			fireEvent.click(screen.getByRole("button", { name: "unsavedChanges.modal.saveAndContinue" }));
+		});
+		expect(saveDocument).toHaveBeenCalledOnce();
+		expect(saveDocument).toHaveBeenCalledWith(document, { history: true, protectLiveEdits: true });
+		expect(screen.getByRole("dialog")).toHaveTextContent("openProjectDialog.title");
+	});
+	it.each([
+		"open",
+		"new",
+	] as const)("guards the native %s command while edits are unsaved", async (action) => {
+		const document = createEmptyDocument({ projectId: "proj_unsaved_native", title: "Unsaved" });
+		useProjectStore.setState({ document, projectId: document.project.id, dirty: true });
+		renderShell();
+		await act(async () => {
+			(action === "open" ? nativeOpen : nativeNew)();
+		});
+		expect(screen.getByRole("dialog")).toHaveTextContent(`unsavedChanges.modal.${action}Title`);
+		expect(useProjectStore.getState().document).toBe(document);
+	});
 	it("routes ? to the shortcuts dialog while nothing is open", () => {
 		renderShell();
 

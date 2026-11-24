@@ -10,6 +10,7 @@ import {
 	resetClickPlayhead,
 	takeCrossedClickHits,
 } from "@/lib/ai-edition/clickSound";
+import { type ClipRotation, turnCropRegion } from "@/lib/ai-edition/clipRotation";
 import {
 	resolveFadeSecs,
 	takesByHeadFragment,
@@ -27,7 +28,7 @@ import type {
 } from "@/lib/ai-edition/schema";
 import { audioGainScalar } from "@/lib/ai-edition/store/editorSettings";
 import { useEditorSettings } from "@/lib/ai-edition/store/useEditorSettings";
-import { removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
+import { removedHeadSec, removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
 import { findActiveSpeedRegion, type SpeedRegion } from "@/lib/ai-edition/timeline/speed";
 import {
 	consumedSourceSec,
@@ -271,27 +272,34 @@ export function resolveTimelineAudioPlayback(
 	/** The fragment's own span in seconds — how long it plays on the timeline,
 	 *  which is independent of how much file is left after the offset. */
 	spanSec: number,
+	/** Seconds of the track's head a cut removed (`removedHeadSec`): the file plays on
+	 *  from past them, as the export's mix entry does (#1522). */
+	headSec = 0,
 ) {
+	const playbackSpanSec =
+		spanSec + (track.kind === "music" ? (track.endOverflowMs ?? 0) / 1000 : 0);
 	const offset = Math.max(0, track.offsetMs / 1000);
-	const sourceEnd = track.durationSec > 0 ? track.durationSec : offset + spanSec;
+	const sourceEnd = track.durationSec > 0 ? track.durationSec : offset + playbackSpanSec;
 	// The window the file has left after the offset; the fragment stops at
 	// whichever runs out first, its span or the file.
 	const windowLen = Math.max(0, sourceEnd - offset);
 	const local = outputTimeSec - outputStartSec;
-	const active = local >= 0 && local < spanSec;
+	const active = local >= 0 && local < playbackSpanSec;
 	if (track.loop && windowLen > 0) {
 		// Fold into the repeating window, exactly as the export's per-repeat mix
 		// entries do, so preview and render stay in phase.
 		return {
-			targetTimeSec: offset + (local > 0 ? local % windowLen : 0),
+			targetTimeSec: offset + ((Math.max(0, local) + headSec) % windowLen),
 			shouldPlay: active,
 		};
 	}
+	const from = offset + headSec;
+	const end = track.durationSec > 0 ? track.durationSec : from + playbackSpanSec;
 	return {
-		targetTimeSec: Math.min(Math.max(offset, offset + local), sourceEnd),
+		targetTimeSec: Math.min(Math.max(from, from + local), end),
 		// A file shorter than its span goes silent at the end rather than
 		// restarting: seeking a finished element back would stutter it every frame.
-		shouldPlay: active && local < windowLen,
+		shouldPlay: active && local < end - from,
 	};
 }
 
@@ -304,11 +312,12 @@ export function timelineAudioFadeAt(
 	spanSec: number,
 ): number {
 	if (track.muted) return 0;
-	const { fadeInSec, fadeOutSec } = resolveFadeSecs(track.fadeInMs, track.fadeOutMs, spanSec);
+	const fadeSpanSec = spanSec + (track.kind === "music" ? (track.endOverflowMs ?? 0) / 1000 : 0);
+	const { fadeInSec, fadeOutSec } = resolveFadeSecs(track.fadeInMs, track.fadeOutMs, fadeSpanSec);
 	let v = 1;
 	if (fadeInSec > 0 && localSec < fadeInSec) v = Math.min(v, Math.max(0, localSec / fadeInSec));
 	if (fadeOutSec > 0) {
-		const remaining = spanSec - localSec;
+		const remaining = fadeSpanSec - localSec;
 		if (remaining < fadeOutSec) v = Math.min(v, Math.max(0, remaining / fadeOutSec));
 	}
 	return v;
@@ -469,6 +478,7 @@ interface VirtualPreviewProps {
 		videoHeight: number,
 	) => void;
 	onVideoElement?: (element: HTMLVideoElement | null) => void;
+	cancelPendingPlaybackRef?: React.MutableRefObject<(() => void) | null>;
 	videoStyle?: React.CSSProperties;
 	/** Called with the id of the asset that failed, not as a bare "the preview is
 	 *  broken" signal: only ONE source is mounted at a time (`activeSource`), so
@@ -490,6 +500,8 @@ interface VirtualPreviewProps {
 	 * identity ({x:0,y:0,width:1,height:1}) renders the full frame, unchanged
 	 * from before crop support existed. */
 	cropRegion?: CropRegion | null;
+	/** The active clip's rotation; 180 turns the picture, `cropRegion` staying in source coordinates. */
+	rotation?: ClipRotation;
 }
 
 const NO_TRIM_RANGES: AxcutTrimRange[] = [];
@@ -508,11 +520,13 @@ export function VirtualPreview({
 	onTimeChange,
 	onLoadedMetadata,
 	onVideoElement,
+	cancelPendingPlaybackRef,
 	videoStyle,
 	onVideoError,
 	onVideoRecovered,
 	retryToken,
 	cropRegion,
+	rotation = 0,
 }: VirtualPreviewProps) {
 	const { settings } = useEditorSettings();
 	const playbackTrimRanges = playUneditedTimeline ? NO_TRIM_RANGES : trimRanges;
@@ -525,17 +539,22 @@ export function VirtualPreview({
 	// PreviewCanvas's screenSize) box, so this stays correct at any size
 	// without measuring pixels. Identity crop reduces to 100%/100%/0/0 — the
 	// exact same box the video rendered in before crop support existed.
-	const region = cropRegion ?? DEFAULT_CROP_REGION;
+	// A turned clip: the element is turned about its own centre, so positioning it by the
+	// mirrored crop puts exactly the stored crop inside the frame.
+	const storedRegion = cropRegion ?? DEFAULT_CROP_REGION;
+	const region = rotation === 180 ? turnCropRegion(storedRegion) : storedRegion;
+	const turnStyle: React.CSSProperties = rotation === 180 ? { transform: "rotate(180deg)" } : {};
 	const isIdentityCrop =
 		region.x === 0 && region.y === 0 && region.width === 1 && region.height === 1;
 	const cropVideoStyle: React.CSSProperties = isIdentityCrop
-		? {}
+		? turnStyle
 		: {
 				position: "absolute",
 				width: `${100 / region.width}%`,
 				height: `${100 / region.height}%`,
 				left: `${(-region.x * 100) / region.width}%`,
 				top: `${(-region.y * 100) / region.height}%`,
+				...turnStyle,
 			};
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const primaryAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -566,6 +585,19 @@ export function VirtualPreview({
 	// The seek that arrived while another was still running (see applySourceTime).
 	const pendingScrubTargetRef = useRef<number | null>(null);
 	const pendingSeekRef = useRef<{ sourceTimeSec: number; play: boolean } | null>(null);
+	// Play intent of the scheduled reload (see reloadActiveSource). Read when its
+	// timer fires, so a pause or stop during the backoff can clear it.
+	const retryPlayRef = useRef(false);
+	useEffect(() => {
+		if (!cancelPendingPlaybackRef) return;
+		cancelPendingPlaybackRef.current = () => {
+			if (pendingSeekRef.current) pendingSeekRef.current.play = false;
+			retryPlayRef.current = false;
+		};
+		return () => {
+			cancelPendingPlaybackRef.current = null;
+		};
+	}, [cancelPendingPlaybackRef]);
 	// When each AUTOMATIC reload happened. The budget is "reloads inside
 	// RELOAD_WINDOW_MS", so it expires by itself: a dead file burns it in
 	// seconds, while the occasional transient across a long editing session
@@ -1122,7 +1154,13 @@ export function VirtualPreview({
 								targetTimeSec: track.offsetMs / 1000,
 								shouldPlay: false,
 							})
-						: resolveTimelineAudioPlayback(outputTimeSec, outputStartSec, track, spanSec);
+						: resolveTimelineAudioPlayback(
+								outputTimeSec,
+								outputStartSec,
+								track,
+								spanSec,
+								removedHeadSec(removedRef.current, track.startMs / 1000),
+							);
 				// Fades measure against the SOURCE the walk consumes, never the take's ruler
 				// extent: an insertion grows the extent without adding a second of file, and
 				// a fade-out measured on it would start early here and nowhere else.
@@ -1502,7 +1540,7 @@ export function VirtualPreview({
 	}, []);
 
 	const seekToVirtualTime = useCallback(
-		(nextVirtualTimeSec: number, preservePlayback = false, forceResume = false) => {
+		(nextVirtualTimeSec: number, preservePlayback?: boolean, forceResume = false) => {
 			const position = locateVirtualPosition(clips, nextVirtualTimeSec);
 			if (!position) {
 				videoRef.current?.pause();
@@ -1532,7 +1570,14 @@ export function VirtualPreview({
 			// race against the rAF tick's own boundary check: the native `ended`
 			// event fires first, stops playback outright, and the multi-clip
 			// timeline never advances — the "stops at clip end" bug.
-			const shouldContinuePlayback = preservePlayback && (forceResume || !videoRef.current?.paused);
+			// A scrub can publish again before the replacement video's metadata
+			// arrives. That element starts paused; keep the queued intent instead of
+			// turning pointerup or the next drag position into a request to stop.
+			// An explicit false still cancels the queued resume.
+			const shouldContinuePlayback =
+				preservePlayback === undefined
+					? (pendingSeekRef.current?.play ?? !videoRef.current?.paused)
+					: preservePlayback && (forceResume || !videoRef.current?.paused);
 
 			if (isAssetSwitch) {
 				if (!shouldContinuePlayback) {
@@ -1563,6 +1608,10 @@ export function VirtualPreview({
 					sourceTimeSec: position.sourceTimeSec,
 					play: shouldContinuePlayback,
 				};
+				updateVirtualTime(position.virtualTimeSec);
+				// Metadata owns the pending seek and resume. Calling play now would
+				// queue a browser autoplay that a later paused seek cannot cancel.
+				return;
 			}
 			updateVirtualTime(position.virtualTimeSec);
 			applySourceTime(video, position.sourceTimeSec);
@@ -1604,6 +1653,7 @@ export function VirtualPreview({
 				window.clearTimeout(retryTimerRef.current);
 				retryTimerRef.current = null;
 			}
+			retryPlayRef.current = play;
 			recoveringRef.current = true;
 			updateLoadState("loading");
 			retryTimerRef.current = window.setTimeout(() => {
@@ -1632,7 +1682,7 @@ export function VirtualPreview({
 						position && clipIsOnThisSource ? position.sourceTimeSec : lastGoodSourceTimeRef.current;
 					pendingSeekRef.current = {
 						sourceTimeSec: Number.isFinite(resumeSec) ? resumeSec : 0,
-						play,
+						play: retryPlayRef.current,
 					};
 				}
 				// The restore itself rides the cross-asset path `onLoadedMetadata`

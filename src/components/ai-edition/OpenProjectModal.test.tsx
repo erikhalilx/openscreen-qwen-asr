@@ -1,10 +1,15 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@/contexts/I18nContext";
+import type { AiEditionProjectRecordingsResult } from "@/native/contracts";
 import { OpenProjectModal } from "./Modals";
+
+// The Trash is called the Recycle Bin on Windows: pin the platform rather than inherit the host's.
+const platform = vi.hoisted(() => ({ current: "darwin" as NodeJS.Platform }));
+vi.mock("@/utils/platformUtils", () => ({ getPlatform: () => platform.current }));
 
 function renderWithI18n(ui: ReactElement) {
 	return render(<I18nProvider>{ui}</I18nProvider>);
@@ -15,27 +20,53 @@ const projects = [
 	{ id: "proj_two", title: "Second project", updatedAt: "2026-08-13T10:00:00.000Z" },
 ];
 
-function renderModal(overrides: { onSelect?: () => void; onDelete?: () => void } = {}) {
+const noRecordings: AiEditionProjectRecordingsResult = {
+	success: true,
+	count: 0,
+	sizeBytes: 0,
+	keptFor: [],
+	unreadable: 0,
+};
+
+function renderModal(
+	overrides: {
+		onSelect?: () => void;
+		onDelete?: (...args: unknown[]) => Promise<{ trashFailed?: boolean } | undefined>;
+		recordings?: AiEditionProjectRecordingsResult;
+		activeProjectId?: string | null;
+	} = {},
+) {
 	const onSelect = overrides.onSelect ?? vi.fn();
-	const onDelete = overrides.onDelete ?? vi.fn();
+	const onDelete = vi.fn(overrides.onDelete ?? (async () => undefined));
+	const loadRecordings = vi.fn(async () => overrides.recordings ?? noRecordings);
 	renderWithI18n(
 		<OpenProjectModal
 			open={true}
 			onClose={vi.fn()}
 			projects={projects}
-			activeProjectId={null}
+			activeProjectId={overrides.activeProjectId ?? null}
 			onSelect={onSelect}
 			onDelete={onDelete}
+			loadRecordings={loadRecordings}
 			onBrowse={vi.fn()}
 		/>,
 	);
-	return { onSelect, onDelete };
+	return { onSelect, onDelete, loadRecordings };
 }
+
+const ownRecordings: AiEditionProjectRecordingsResult = {
+	success: true,
+	count: 2,
+	sizeBytes: 24 * 1024 * 1024,
+	keptFor: [],
+	unreadable: 0,
+};
 
 describe("OpenProjectModal delete", () => {
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+		platform.current = "darwin";
 	});
 
 	it("asks before deleting instead of deleting on the first click", () => {
@@ -53,7 +84,83 @@ describe("OpenProjectModal delete", () => {
 		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[1]);
 		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
 
-		expect(onDelete).toHaveBeenCalledWith("proj_two");
+		expect(onDelete).toHaveBeenCalledWith("proj_two", "keep");
+	});
+
+	it("offers to trash the project's recordings, off by default", async () => {
+		const { onDelete, loadRecordings } = renderModal({ recordings: ownRecordings });
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+		expect(loadRecordings).toHaveBeenCalledWith("proj_one");
+		const toggle = await screen.findByRole("button", {
+			name: /move its recordings to the trash \(24 MB\)/i,
+		});
+		expect(toggle).toHaveAttribute("aria-pressed", "false");
+		expect(screen.queryByText(/recordings are kept/i)).not.toBeInTheDocument();
+
+		fireEvent.click(toggle);
+		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+		await waitFor(() => expect(onDelete).toHaveBeenCalledWith("proj_one", "trash"));
+	});
+
+	it("keeps the open project's recordings, which the preview holds", () => {
+		const { onDelete, loadRecordings } = renderModal({
+			recordings: ownRecordings,
+			activeProjectId: "proj_one",
+		});
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+		expect(loadRecordings).not.toHaveBeenCalled();
+		expect(screen.getByText(/recordings are kept/i)).toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+		expect(onDelete).toHaveBeenCalledWith("proj_one", "keep");
+	});
+
+	it("says Recycle Bin on Windows", async () => {
+		platform.current = "win32";
+		renderModal({ recordings: ownRecordings });
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+
+		expect(await screen.findByText(/recycle bin \(24 MB\)/i)).toBeInTheDocument();
+	});
+
+	it("names the projects whose recordings are kept", async () => {
+		renderModal({ recordings: { ...ownRecordings, keptFor: ["Demo v2"] } });
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+
+		expect(await screen.findByText(/used by Demo v2 are kept/i)).toBeInTheDocument();
+	});
+
+	it("offers no Trash and says why when a project file could not be read", async () => {
+		const { onDelete } = renderModal({ recordings: { ...noRecordings, unreadable: 1 } });
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+
+		expect(await screen.findByText(/couldn't be read/i)).toBeInTheDocument();
+		expect(screen.queryByRole("button", { name: /move its recordings/i })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+		await waitFor(() => expect(onDelete).toHaveBeenCalledWith("proj_one", "keep"));
+	});
+
+	it("keeps the confirmation open for retry when the Trash refuses", async () => {
+		const { onDelete } = renderModal({
+			recordings: ownRecordings,
+			onDelete: async (_id, disposal) => (disposal === "trash" ? { trashFailed: true } : undefined),
+		});
+
+		fireEvent.click(screen.getAllByRole("button", { name: /delete project/i })[0]);
+		fireEvent.click(await screen.findByRole("button", { name: /move its recordings/i }));
+		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+
+		await waitFor(() => expect(screen.getByRole("button", { name: /^delete$/i })).toBeEnabled());
+		expect(screen.queryByRole("button", { name: /delete permanently/i })).not.toBeInTheDocument();
+		fireEvent.click(screen.getByRole("button", { name: /^delete$/i }));
+		await waitFor(() => expect(onDelete).toHaveBeenCalledTimes(2));
+		expect(onDelete).toHaveBeenLastCalledWith("proj_one", "trash");
 	});
 
 	it("cancels back to the row", () => {
@@ -82,6 +189,12 @@ describe("OpenProjectModal keyboard (#1135)", () => {
 	afterEach(() => {
 		cleanup();
 		vi.clearAllMocks();
+	});
+
+	// v2.3.0-rc.1 e2e: after Ctrl+O the typing went nowhere and Enter opened the current project.
+	it("puts the focus in the search box as it opens", () => {
+		renderModal();
+		expect(screen.getByRole("searchbox")).toHaveFocus();
 	});
 
 	it("opens the only match of a search on Enter", () => {

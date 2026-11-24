@@ -74,6 +74,7 @@ const recorderState = vi.hoisted(() => ({
 		setSystemAudioEnabled: vi.fn(),
 		cursorCaptureMode: "editable-overlay",
 		setCursorCaptureMode: vi.fn(),
+		presenterOverlay: null as { active: boolean; cameraInterrupted: boolean } | null,
 		softwareEncoderFallbackNoticeVisible: false,
 		dismissSoftwareEncoderFallbackNotice: vi.fn(),
 		recordingPrefsLoaded: true,
@@ -361,6 +362,7 @@ function resetLaunchMocks() {
 	recorderState.value.setCursorCaptureMode.mockClear();
 	recorderState.value.softwareEncoderFallbackNoticeVisible = false;
 	recorderState.value.dismissSoftwareEncoderFallbackNotice.mockClear();
+	recorderState.value.presenterOverlay = null;
 	recorderState.value.recording = false;
 	recorderState.value.canPauseRecording = false;
 	recorderState.value.microphoneEnabled = false;
@@ -2441,5 +2443,79 @@ describe("LaunchWindow toasts", () => {
 				height: 480,
 			});
 		});
+	});
+	it("does not show an informational notice when only the system overlay is active", () => {
+		recorderState.value.recording = true;
+		recorderState.value.presenterOverlay = { active: true, cameraInterrupted: false };
+		renderLaunchWindow();
+		expect(screen.queryByTestId("presenter-overlay-notice")).not.toBeInTheDocument();
+	});
+
+	it("keeps the camera warning visible after the system overlay stops", async () => {
+		recorderState.value.recording = true;
+		recorderState.value.presenterOverlay = { active: false, cameraInterrupted: true };
+		renderLaunchWindow();
+		await waitFor(() =>
+			expect(screen.getByTestId("presenter-overlay-notice")).toHaveTextContent(
+				"presenterOverlay.interruptedDescription",
+			),
+		);
+		expect(recorderState.value.toggleRecording).not.toHaveBeenCalled();
+		expect(recorderState.value.cancelRecording).not.toHaveBeenCalled();
+	});
+
+	it("does not keep the in-take warning after recording ends", () => {
+		recorderState.value.presenterOverlay = { active: false, cameraInterrupted: true };
+		renderLaunchWindow();
+		expect(screen.queryByTestId("presenter-overlay-notice")).not.toBeInTheDocument();
+	});
+});
+
+describe("macOS floating camera preview control", () => {
+	beforeEach(() => {
+		platformState.value = "darwin";
+		resetLaunchMocks();
+	});
+
+	it("keeps hide/show available during recording without changing camera capture", () => {
+		recorderState.value.webcamEnabled = true;
+		recorderState.value.recording = true;
+		renderLaunchWindow();
+		const button = screen.getByTestId("launch-camera-preview-button");
+		expect(button).toHaveAttribute("aria-pressed", "true");
+		fireEvent.click(button);
+		expect(button).toHaveAttribute("aria-pressed", "false");
+		fireEvent.click(button);
+		expect(button).toHaveAttribute("aria-pressed", "true");
+		expect(recorderState.value.setWebcamEnabled).not.toHaveBeenCalled();
+	});
+
+	it("hides the preview control when the camera is off", () => {
+		const view = renderLaunchWindow();
+		expect(screen.queryByTestId("launch-camera-preview-button")).not.toBeInTheDocument();
+		recorderState.value.webcamEnabled = true;
+		view.rerender(
+			<TooltipProvider>
+				<LaunchWindow />
+			</TooltipProvider>,
+		);
+		expect(screen.getByTestId("launch-camera-preview-button")).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		recorderState.value.webcamEnabled = false;
+		view.rerender(
+			<TooltipProvider>
+				<LaunchWindow />
+			</TooltipProvider>,
+		);
+		expect(screen.queryByTestId("launch-camera-preview-button")).not.toBeInTheDocument();
+	});
+
+	it("does not offer the preview on Windows", () => {
+		platformState.value = "win32";
+		recorderState.value.webcamEnabled = true;
+		renderLaunchWindow();
+		expect(screen.queryByTestId("launch-camera-preview-button")).not.toBeInTheDocument();
 	});
 });

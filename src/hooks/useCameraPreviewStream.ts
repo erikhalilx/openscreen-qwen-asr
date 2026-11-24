@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { getPlatform } from "@/utils/platformUtils";
 import { webcamVideoConstraints } from "./webcamCaptureTarget";
 
 export interface CameraPreviewStreamOptions {
@@ -35,7 +36,7 @@ export function useCameraPreviewStream({ enabled, deviceId }: CameraPreviewStrea
 				// user's 4K choice would be the opposite mistake, since this renders
 				// into a thumbnail a couple of hundred pixels wide and the recorder
 				// opens its own stream anyway.
-				video: webcamVideoConstraints(deviceId, "1080p"),
+				video: webcamVideoConstraints(deviceId, "1080p", getPlatform()),
 				audio: false,
 			})
 			.then((s) => {

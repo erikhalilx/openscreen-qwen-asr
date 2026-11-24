@@ -16,6 +16,8 @@ import { ShortcutBinding } from "../src/lib/shortcuts";
 import {
 	type AboutFacts,
 	COPYRIGHT,
+	DEV_OPEN_APP_SHORTCUT,
+	DEV_PRODUCT_NAME,
 	formatAboutDetail,
 	PRODUCT_NAME,
 	usesNativeAboutPanel,
@@ -36,10 +38,12 @@ import {
 	shouldStartBackgroundUpdateTimer,
 	type UpdateBadge,
 } from "./background-update";
+import { bringToFront } from "./bringToFront";
 import { parseCliArgs } from "./cli/args";
 import { runCli } from "./cli/cliMain";
 import { disableHttpCacheForDevServer } from "./dev-http-cache";
-import { mainLogBuffer } from "./diagnostics/main-log-buffer";
+import { mainLogFile } from "./diagnostics/main-log-file";
+import { formatQwenDiagnosticLog } from "./diagnostics/qwen-diagnostic-log";
 import { buildEditMenuSubmenu, type EditorUndoRedoChannel, routeEditorUndoRedo } from "./edit-menu";
 import {
 	loadAndRegisterGlobalShortcut,
@@ -97,18 +101,21 @@ const LOCAL_QWEN_FORK = true;
 // Development/QA also stays separate from the installed application's active projects.
 const localTestName = "OpenScreen Qwen 测试版";
 const isLocalTest = app.isPackaged && app.getName() === localTestName;
-app.setName(isLocalTest ? localTestName : "OpenScreen Qwen");
+const isLocalDev = app.isPackaged && app.getName() === DEV_PRODUCT_NAME;
+app.setName(isLocalDev ? DEV_PRODUCT_NAME : isLocalTest ? localTestName : PRODUCT_NAME);
 app.setPath(
 	"userData",
 	!app.isPackaged && process.env.ELECTRON_USER_DATA_DIR
 		? path.resolve(process.env.ELECTRON_USER_DATA_DIR)
 		: path.join(
 				app.getPath("appData"),
-				isLocalTest
-					? "OpenScreen-Qwen-Test"
-					: app.isPackaged
-						? "OpenScreen-Qwen"
-						: "OpenScreen-Qwen-Dev",
+				isLocalDev
+					? "OpenScreen-Qwen-Dev-Package"
+					: isLocalTest
+						? "OpenScreen-Qwen-Test"
+						: app.isPackaged
+							? "OpenScreen-Qwen"
+							: "OpenScreen-Qwen-Dev",
 			),
 );
 
@@ -116,13 +123,30 @@ app.setPath(
 // HUD/tray/menu. Parsed before any GUI side effects; see electron/cli/.
 const cliCommand = parseCliArgs(process.argv, app.isPackaged ? 1 : 2);
 
-// On every app launch, not only under OPENSCREEN_DIAGNOSTIC: these lines are the
-// `mainProcessLogs` of "Save Diagnostics", and a user who saves a bundle from the tray
-// started the app where no such variable can be set. Installed here, before anything
-// below logs, rather than once the app is ready. Never in a CLI run, whose stdout is
-// its own protocol.
-if (!cliCommand) {
-	mainLogBuffer.install();
+// CLI runs skip the single-instance lock so `openscreen export/record` works
+// while the GUI app is open. They share its userData, but not its Chromium
+// profile: runCli gives each run its own sessionData (see cli/sessionData.ts).
+const hasSingleInstanceLock = cliCommand ? false : app.requestSingleInstanceLock();
+
+// On every app launch, not only under OPENSCREEN_DIAGNOSTIC: a user who saves a
+// bundle from the tray started the app where no such variable can be set. Installed
+// here, before anything below logs. Only the instance holding the lock writes, so a
+// second launch never rotates the file under the running one, and never in a CLI run,
+// whose stdout is its own protocol.
+if (hasSingleInstanceLock) {
+	// The lock is per userData, but macOS's default logs folder is per app name: an
+	// instance on another userData gets its own folder, or two would share one file.
+	const userData = app.getPath("userData");
+	if (userData === path.join(app.getPath("appData"), app.getName())) {
+		app.setAppLogsPath();
+	} else {
+		app.setAppLogsPath(path.join(userData, "logs"));
+	}
+	mainLogFile.install(
+		app.getPath("logs"),
+		`launch ${app.getVersion()} pid ${process.pid}`,
+		formatQwenDiagnosticLog,
+	);
 }
 
 // Use Screen & System Audio Recording permissions instead of the CoreAudio Tap API on macOS.
@@ -205,7 +229,8 @@ const isMac = process.platform === "darwin";
 const trayIconSize = isMac ? 16 : 24;
 
 // Tray Icons
-const defaultTrayIcon = getTrayIcon("openscreen.png", trayIconSize);
+const defaultTrayIcon = getTrayIcon(isMac ? "trayTemplate.png" : "openscreen.png", trayIconSize);
+if (isMac) defaultTrayIcon.setTemplateImage(true);
 const recordingTrayIcon = getTrayIcon("rec-button.png", trayIconSize);
 
 function createWindow() {
@@ -219,21 +244,12 @@ function createWindow() {
 
 function showMainWindow() {
 	if (mainWindow && !mainWindow.isDestroyed()) {
-		if (mainWindow.isMinimized()) {
-			mainWindow.restore();
-		}
-		mainWindow.show();
-		mainWindow.focus();
+		bringToFront(mainWindow);
 		return;
 	}
 
 	createWindow();
 }
-
-// CLI runs skip the single-instance lock so `openscreen export/record` works
-// while the GUI app is open. They share its userData, but not its Chromium
-// profile: runCli gives each run its own sessionData (see cli/sessionData.ts).
-const hasSingleInstanceLock = cliCommand ? false : app.requestSingleInstanceLock();
 
 if (cliCommand) {
 	runCli(cliCommand);
@@ -1301,6 +1317,7 @@ app.on("before-quit", (event) => {
 
 app.on("will-quit", () => {
 	unregisterAllGlobalShortcuts();
+	mainLogFile.flush();
 });
 
 const appReady = !cliCommand && hasSingleInstanceLock ? app.whenReady() : null;
@@ -1495,6 +1512,12 @@ appReady?.then(async () => {
 		runAboutDialog();
 	});
 
+	// The editor's wordmark menu: the same Save Diagnostics as the tray and the app menu, which
+	// the editor has no bar for on Windows and Linux. Not awaited, like About above.
+	ipcMain.handle("save-diagnostics", () => {
+		runSaveDiagnostics();
+	});
+
 	ipcMain.handle("check-for-updates", async () => {
 		// The renderer hides the button on a package-manager channel, and while recording. A
 		// renderer is not where those rules get to be enforced.
@@ -1562,7 +1585,10 @@ appReady?.then(async () => {
 	// Native STT (whisper.cpp + forced alignment) — single instance per app.
 	registerSttIpc(ipcMain);
 
-	await loadAndRegisterGlobalShortcut(showMainWindow);
+	await loadAndRegisterGlobalShortcut(
+		showMainWindow,
+		isLocalDev ? DEV_OPEN_APP_SHORTCUT : undefined,
+	);
 
 	// --bench=<query>: run the export bench instead of the app. Opens the real
 	// editor window (same webPreferences, same preload) pointed at the bench

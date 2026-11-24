@@ -26,6 +26,7 @@ import {
 } from "../../src/lib/ai-edition/schema";
 import type { CliSourcesResult } from "../../src/lib/cliContracts";
 import { pickRecordingSource } from "../../src/lib/cliSourcePick";
+import { desktopSourceTimeoutMessage } from "../../src/lib/desktopSourceTimeout";
 import {
 	type NativeLinuxRecordingRequest,
 	portalCursorMode,
@@ -33,6 +34,7 @@ import {
 import {
 	collectMacCaptureExcludedWindowIds,
 	type NativeMacRecordingRequest,
+	updateMacPresenterOverlayState,
 } from "../../src/lib/nativeMacRecording";
 import type { NativeWindowsRecordingRequest } from "../../src/lib/nativeWindowsRecording";
 import {
@@ -51,7 +53,7 @@ import {
 	type ProjectFileResult,
 	type ProjectPathResult,
 } from "../../src/native/contracts";
-import { PRODUCT_NAME } from "../about";
+import { DEV_OPEN_APP_SHORTCUT, DEV_PRODUCT_NAME, PRODUCT_NAME } from "../about";
 import {
 	compactSessionNow,
 	configureChatPersistence,
@@ -69,9 +71,14 @@ import { DocumentService } from "../ai-edition/document-service";
 import { LlmConfigStore } from "../ai-edition/llm-config-store";
 import { StylePresetService } from "../ai-edition/style-preset-service";
 import { AppSettingsStore } from "../app-settings";
+import { writeFileReplacing } from "../atomic-rename";
+import { bringToFront } from "../bringToFront";
+import { CameraPreviewController } from "../cameraPreview";
 import { createRunnerHost } from "../cli/runnerHost";
 import { hideCountdownOverlay } from "../countdownOverlay";
-import { isDiagnosticModeEnabled, mainLogBuffer } from "../diagnostics/main-log-buffer";
+import { isDiagnosticModeEnabled, mainLogFile } from "../diagnostics/main-log-file";
+import { summarizeCaptureOutput } from "../diagnostics/qwen-diagnostic-log";
+import { createZip } from "../diagnostics/zip";
 import { mainT } from "../i18n";
 import { getInstallChannel } from "../install-channel";
 import {
@@ -163,7 +170,12 @@ import {
 	shouldPersistSelectedSource,
 } from "../recording-source-settings";
 import { getSttManager } from "../stt";
-import { createRunnerWindow } from "../windows";
+import {
+	createCameraPreviewWindow,
+	createRunnerWindow,
+	getCameraPreviewWindow,
+	resizeCameraPreviewWindow,
+} from "../windows";
 import {
 	assertWindowsUpdateIdle,
 	isWindowsUpdatePending,
@@ -892,6 +904,7 @@ const nativeMacCaptureOutputs = new WeakMap<ChildProcessWithoutNullStreams, stri
  * because the HUD that ran the stop closes as the editor opens.
  */
 let nativeMacRecordingWarning: { screenVideoPath: string; message: string } | null = null;
+let nativeMacPresenterOverlay = { active: false, cameraInterrupted: false };
 /** True while stop-native-mac-recording runs: the take is ending on purpose. */
 let nativeMacStopInFlight = false;
 // Global frame the macOS cursor is normalised against (see getSelectedSourceBounds).
@@ -1665,6 +1678,7 @@ function attachNativeMacCaptureOutputDrain(
 	proc: ChildProcessWithoutNullStreams,
 	onTakeEnded: () => void,
 	onSystemAudioUnavailable: () => void,
+	onPresenterOverlayChanged: (active: boolean) => void,
 ) {
 	let lineBuffer = "";
 	// Hooked here rather than on `nativeMacCaptureEvents`, which the start wait
@@ -1673,6 +1687,8 @@ function attachNativeMacCaptureOutputDrain(
 		() => nativeMacCaptureProcess === proc && !nativeMacStopInFlight,
 		onTakeEnded,
 		onSystemAudioUnavailable,
+		onPresenterOverlayChanged,
+		() => nativeMacCaptureProcess === proc,
 	);
 	const drain = (chunk: Buffer) => {
 		const text = chunk.toString();
@@ -1929,10 +1945,11 @@ async function resolveMediaLinksForVideo(videoPath: string): Promise<{
 }
 
 /**
- * Writes the diagnostic bundle a bug report needs: app/OS facts, the native
- * helpers' raw stdout/stderr (which is where `[stop-timing]` and
- * `encoder-selection` land — see nativeWindowsCaptureStop.ts), and the main
- * process's own recent console output. Shared by the renderer's IPC call and
+ * Writes the diagnostic bundle a bug report needs, as a `.zip`: `diagnostic.json` with
+ * app/OS facts, the native helpers' raw stdout/stderr (which is where `[stop-timing]` and
+ * `encoder-selection` land — see nativeWindowsCaptureStop.ts) and the tail of the main
+ * process's log, next to that log's files whole (`main.log`, and `main.old.log` once it
+ * has rotated), which reach back into earlier launches. Shared by the renderer's IPC call and
  * the menu/tray "Save Diagnostics" entry point in main.ts, which has no
  * renderer-side `projectState`/`logs` to offer and does not need to.
  */
@@ -1944,14 +1961,17 @@ export async function exportDiagnosticFile(payload: {
 }) {
 	const { filePath, canceled } = await dialog.showSaveDialog({
 		title: "Save Diagnostic File",
-		defaultPath: `openscreen-diagnostic-${Date.now()}.json`,
-		filters: [{ name: "JSON", extensions: ["json"] }],
+		defaultPath: `openscreen-diagnostic-${Date.now()}.zip`,
+		filters: [{ name: "ZIP", extensions: ["zip"] }],
 	});
 
 	if (canceled || !filePath) return { success: false, canceled: true };
 
 	const HELPER_OUTPUT_MAX_BYTES = 64 * 1024;
+	const MAIN_PROCESS_LOGS_MAX_BYTES = 256 * 1024;
 	const tail = (s: string, max: number) => (s.length <= max ? s : s.slice(s.length - max));
+	// Read before `logFileError` below, so a failed read is reported in the same bundle.
+	const logFiles = mainLogFile.readFiles();
 
 	const diagnostic = {
 		timestamp: new Date().toISOString(),
@@ -1968,20 +1988,25 @@ export async function exportDiagnosticFile(payload: {
 		nodeVersion: process.versions.node,
 		electronVersion: process.versions.electron,
 		chromeVersion: process.versions.chrome,
-		error: payload.error,
-		stack: payload.stack,
-		projectState: payload.projectState,
-		recentLogs: payload.logs,
+		hasReportedError: Boolean(payload.error),
+		hasStack: Boolean(payload.stack),
+		hasProjectState: Boolean(payload.projectState),
+		rendererLogCount: payload.logs.length,
 		helperOutput: {
-			windows: tail(nativeWindowsCaptureOutput, HELPER_OUTPUT_MAX_BYTES),
-			mac: tail(nativeMacCaptureOutput, HELPER_OUTPUT_MAX_BYTES),
-			linux: tail(lastLinuxCaptureSession?.helperOutput ?? "", HELPER_OUTPUT_MAX_BYTES),
+			windows: summarizeCaptureOutput(tail(nativeWindowsCaptureOutput, HELPER_OUTPUT_MAX_BYTES)),
+			mac: summarizeCaptureOutput(tail(nativeMacCaptureOutput, HELPER_OUTPUT_MAX_BYTES)),
+			linux: summarizeCaptureOutput(
+				tail(lastLinuxCaptureSession?.helperOutput ?? "", HELPER_OUTPUT_MAX_BYTES),
+			),
 		},
-		mainProcessLogs: mainLogBuffer.snapshot(),
+		mainProcessLogs: mainLogFile.readTail(MAIN_PROCESS_LOGS_MAX_BYTES),
+		logFileAvailable: Boolean(mainLogFile.filePath),
+		logFileError: Boolean(mainLogFile.lastError),
 	};
 
 	try {
-		await fs.writeFile(filePath, JSON.stringify(diagnostic, null, 2), "utf-8");
+		const json = Buffer.from(JSON.stringify(diagnostic, null, 2), "utf-8");
+		await fs.writeFile(filePath, createZip([{ name: "diagnostic.json", data: json }, ...logFiles]));
 		return { success: true, path: filePath };
 	} catch (error) {
 		console.error("Failed to write diagnostic file:", error);
@@ -2066,8 +2091,7 @@ export function registerIpcHandlers(
 					shouldEnumerateSourceTypesSeparately(process.platform, process.env),
 				),
 				GET_SOURCES_TIMEOUT_MS,
-				`Desktop source enumeration did not return within ${GET_SOURCES_TIMEOUT_MS}ms. ` +
-					"This usually means the display or GPU stack cannot be reached — check that a display server is available.",
+				desktopSourceTimeoutMessage(GET_SOURCES_TIMEOUT_MS),
 			);
 		} catch (error) {
 			if (diagnostic) {
@@ -2181,7 +2205,8 @@ export function registerIpcHandlers(
 	 * pick would record them unless the picker is told to leave them out.
 	 */
 	function macPickerExcludedWindowIds() {
-		const appWindowSourceIds = [getMainWindow(), getNotesWindow()]
+		ensureMacCameraPreviewWindow();
+		const appWindowSourceIds = [getMainWindow(), getNotesWindow(), getCameraPreviewWindow()]
 			.filter((window): window is BrowserWindow => !!window && !window.isDestroyed())
 			.map((window) => window.getMediaSourceId());
 		return collectMacCaptureExcludedWindowIds(appWindowSourceIds);
@@ -2513,10 +2538,46 @@ export function registerIpcHandlers(
 		return { opened: true };
 	});
 
+	const cameraPreview = new CameraPreviewController(
+		createCameraPreviewWindow,
+		resizeCameraPreviewWindow,
+		(owner) => BrowserWindow.fromWebContents(owner),
+	);
+	// destroy() bypasses the preview close-to-hide handler during application shutdown.
+	app.on("before-quit", () => cameraPreview.dispose());
+	function ensureMacCameraPreviewWindow() {
+		const hud = getMainWindow();
+		if (
+			process.platform === "darwin" &&
+			hud &&
+			!hud.isDestroyed() &&
+			new URL(hud.webContents.getURL()).searchParams.get("windowType") === "hud-overlay"
+		) {
+			cameraPreview.ensure(hud.webContents);
+		}
+	}
+	ipcMain.handle("camera-preview:configure", (event, enabled: unknown, visible: unknown) => {
+		if (
+			process.platform !== "darwin" ||
+			event.sender !== getMainWindow()?.webContents ||
+			new URL(event.sender.getURL()).searchParams.get("windowType") !== "hud-overlay"
+		)
+			return;
+		cameraPreview.configure(event.sender, enabled === true, visible === true);
+	});
+
+	ipcMain.handle("camera-preview:frame", (event, jpeg: unknown, aspectRatio: unknown) =>
+		cameraPreview.frame(event.sender, jpeg, aspectRatio),
+	);
+	ipcMain.handle("camera-preview:hide", (event) => cameraPreview.hide(event.sender));
+	ipcMain.handle("camera-preview:resize", (event, diameter: unknown) =>
+		cameraPreview.resize(event.sender, diameter),
+	);
+
 	ipcMain.handle("open-notes", async () => {
-		const notesSelectorWin = getNotesWindow();
-		if (notesSelectorWin) {
-			notesSelectorWin.focus();
+		const notesWindow = getNotesWindow();
+		if (notesWindow) {
+			bringToFront(notesWindow);
 			return { opened: true };
 		}
 
@@ -3209,6 +3270,7 @@ export function registerIpcHandlers(
 				normalizeCursorCaptureMode(request.cursor?.mode) ?? "editable-overlay";
 			// A source from Apple's picker records through the session that holds the pick,
 			// and needs no Screen Recording grant -- so nothing here may go near one.
+			ensureMacCameraPreviewWindow();
 			const pickerSession = isMacPickerSourceId(request.source.sourceId) ? macPickerSession : null;
 			// Normally caught by `get-selected-source` first; this is the last word (#965).
 			pickerSession?.forgetSelectionUnlessExcluding(macPickerExcludedWindowIds());
@@ -3260,7 +3322,7 @@ export function registerIpcHandlers(
 				pick?.bounds ?? request.source.bounds ?? sourceDisplay?.bounds ?? getSelectedSourceBounds();
 			const captureExcludedWindowSourceIds: string[] = [];
 			if (request.source.type === "display") {
-				for (const window of [getMainWindow(), getNotesWindow()]) {
+				for (const window of [getMainWindow(), getNotesWindow(), getCameraPreviewWindow()]) {
 					if (window && !window.isDestroyed()) {
 						captureExcludedWindowSourceIds.push(window.getMediaSourceId());
 					}
@@ -3320,6 +3382,7 @@ export function registerIpcHandlers(
 			nativeMacIsPaused = false;
 			nativeMacStopInFlight = false;
 			nativeMacRecordingWarning = null;
+			nativeMacPresenterOverlay = { active: false, cameraInterrupted: false };
 			// Before the cursor session samples. A legacy window otherwise normalises
 			// its opening samples against the display, and a picker window would keep
 			// the picker's frame after the helper has reported the content rect it is
@@ -3359,6 +3422,20 @@ export function registerIpcHandlers(
 					const hudWindow = getMainWindow();
 					if (hudWindow && !hudWindow.isDestroyed()) {
 						hudWindow.webContents.send("native-mac-system-audio-unavailable");
+					}
+				},
+				(active) => {
+					nativeMacPresenterOverlay = updateMacPresenterOverlayState(
+						nativeMacPresenterOverlay,
+						active,
+						request.webcam.enabled,
+					);
+					const hudWindow = getMainWindow();
+					if (hudWindow && !hudWindow.isDestroyed()) {
+						hudWindow.webContents.send("native-mac-presenter-overlay-changed", {
+							recordingId,
+							...nativeMacPresenterOverlay,
+						});
 					}
 				},
 			);
@@ -3402,6 +3479,7 @@ export function registerIpcHandlers(
 				path: outputPath,
 				helperPath,
 				startedAtMs: captureStartedAtMs,
+				presenterOverlay: { ...nativeMacPresenterOverlay },
 				microphoneDefaulted,
 				microphoneUnavailable,
 				microphoneNotFound,
@@ -3809,6 +3887,11 @@ export function registerIpcHandlers(
 					durationSec: salvage.durationSec,
 					truncatedBytes: salvage.truncatedBytes,
 				});
+			}
+			if (nativeMacPresenterOverlay.cameraInterrupted) {
+				warning = [warning, mainT("common", "presenterOverlay.interruptedDescription")]
+					.filter(Boolean)
+					.join("\n\n");
 			}
 			nativeMacRecordingWarning = warning ? { screenVideoPath, message: warning } : null;
 
@@ -4350,8 +4433,10 @@ export function registerIpcHandlers(
 			}
 
 			const normalizedPath = path.normalize(filePath);
-			await fs.mkdir(path.dirname(normalizedPath), { recursive: true });
-			await fs.writeFile(normalizedPath, Buffer.from(videoData));
+			// Staged and renamed over the destination: a failed write keeps the file already
+			// there, such as the export a silent remux rewrites (#1104), and a replaced file
+			// keeps its permissions.
+			await writeFileReplacing(normalizedPath, Buffer.from(videoData));
 
 			return {
 				success: true,
@@ -5093,7 +5178,9 @@ export function registerIpcHandlers(
 			const data = await fs.readFile(SHORTCUTS_FILE, "utf-8");
 			return JSON.parse(data);
 		} catch {
-			return null;
+			return app.isPackaged && app.getName() === DEV_PRODUCT_NAME
+				? { openApp: DEV_OPEN_APP_SHORTCUT }
+				: null;
 		}
 	});
 
@@ -5338,6 +5425,11 @@ export function registerIpcHandlers(
 			}
 		},
 		getAiEditionDocuments: () => aiEditionDocuments,
+		getRecordingsDirs: () => ({
+			// Custom recording locations can be shared by different installations or libraries.
+			dirs: appRecording || editorHasUnsavedChanges?.() ? [] : [DEFAULT_RECORDINGS_DIR],
+			registryDir: DEFAULT_RECORDINGS_DIR,
+		}),
 		getStylePresets: () => stylePresets,
 		getAiEditionLlmConfig,
 		runAiEditionChat: (projectId, sessionId, message, document, sink, signal) =>

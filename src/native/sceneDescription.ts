@@ -26,6 +26,7 @@ import { DEFAULT_CROP_REGION, getZoomScale } from "@/components/video-editor/typ
 import { annotationFontSizeFraction } from "@/lib/ai-edition/annotationScale";
 import { deriveRecordedCaptionRegions } from "@/lib/ai-edition/captions/recordedSources";
 import { clickSoundForDocument } from "@/lib/ai-edition/clickSound";
+import { clipRotation } from "@/lib/ai-edition/clipRotation";
 import { takesByHeadFragment } from "@/lib/ai-edition/document/audioTracks";
 import { createId } from "@/lib/ai-edition/document/ids";
 import { legacyCameraRegions, materializeLayouts } from "@/lib/ai-edition/document/layout";
@@ -41,7 +42,7 @@ import { nativeShaderEffectValue } from "@/lib/ai-edition/shaderEffects";
 import { getEditorSettings } from "@/lib/ai-edition/store/editorSettings";
 import { assetCameraSource } from "@/lib/ai-edition/timeline/camera";
 import { resolveClipSourceEndSec } from "@/lib/ai-edition/timeline/clipDuration";
-import { removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
+import { removedHeadSec, removedRawSpans } from "@/lib/ai-edition/timeline/programme-time";
 import { takeProgramme } from "@/lib/ai-edition/timeline/take-programme";
 import {
 	coalesceRegionsForRuler,
@@ -433,6 +434,8 @@ export interface SceneEffects {
 	blur: number;
 	/** 0..1 drop-shadow strength. */
 	shadow: number;
+	/** Camera shadow strength, 0..1; absent payloads retain the historical medium shadow. */
+	webcamShadow?: number;
 	/**
 	 * Roundness slider, as a fraction of a fixed 1080 px reference (`ROUNDNESS_REFERENCE_PX`).
 	 *
@@ -610,6 +613,11 @@ export interface SceneDescription {
 	 * `crop` field, which lost per-clip crops on multi-clip documents.
 	 */
 	cropByClip: Array<{ x: number; y: number; width: number; height: number } | null>;
+	/**
+	 * Half turn of each clip's main picture, same order as `clips`. 0 = upright. The
+	 * compositor turns the screen layer; crop, cursor and zoom stay in their own spaces.
+	 */
+	rotationByClip: Array<0 | 180>;
 	/** Output frame. `fps` null = use the first clip's source fps. */
 	output: { width: number; height: number; fps: number | null };
 	/** Webcam background effect. Omitted when the mode is "none". */
@@ -986,7 +994,7 @@ export function buildSceneDescription(
 				projectRawTimelineSecToPlayback(
 					projectedClips,
 					document.timeline.trimRanges,
-					track.endMs / 1000,
+					(track.endMs + (track.kind === "music" ? (track.endOverflowMs ?? 0) : 0)) / 1000,
 				) -
 				projectRawTimelineSecToPlayback(
 					projectedClips,
@@ -1056,33 +1064,41 @@ export function buildSceneDescription(
 					};
 				});
 			}
+			// A bed whose head sits under a cut loses that head with the video (#1522); the
+			// preview applies the same skip in `resolveTimelineAudioPlayback`.
+			const headSec = removedHeadSec(removed, track.startMs / 1000);
 			if (!track.loop) {
+				const fromSec = offsetSec + headSec;
+				const leftSec = sourceDurationSec > 0 ? windowSec - headSec : windowSec;
+				if (leftSec <= 0) return [];
 				return [
 					{
 						...base,
 						startSec,
-						trimStartSec: offsetSec,
+						trimStartSec: fromSec,
 						// Always concrete: the compositor preallocates its decode window
 						// from it. Whichever runs out first — the span or the file.
-						trimEndSec: offsetSec + Math.min(windowSec, spanSec),
+						trimEndSec: fromSec + Math.min(leftSec, spanSec),
 					},
 				];
 			}
 			// A looping track is one mix entry per repeat: the mixer overlays entries
-			// independently, so the repeats are just more of them. The last one is cut
-			// short wherever the span ends.
+			// independently, so the repeats are just more of them. The first one starts at
+			// the phase the cut head left, the last one is cut short wherever the span ends.
 			const entries = [];
-			for (let played = 0; played < spanSec && entries.length < 1000; played += windowSec) {
-				const thisSec = Math.min(windowSec, spanSec - played);
+			for (let played = 0; played < spanSec && entries.length < 1000; ) {
+				const phaseSec = played === 0 ? headSec % windowSec : 0;
+				const thisSec = Math.min(windowSec - phaseSec, spanSec - played);
 				entries.push({
 					...base,
 					startSec: startSec + played,
-					trimStartSec: offsetSec,
-					trimEndSec: offsetSec + thisSec,
+					trimStartSec: offsetSec + phaseSec,
+					trimEndSec: offsetSec + phaseSec + thisSec,
 					// The fades belong to the track's edges, not to every repeat.
 					fadeInSec: played === 0 ? base.fadeInSec : 0,
 					fadeOutSec: played + thisSec >= spanSec ? base.fadeOutSec : 0,
 				});
+				played += thisSec;
 			}
 			return entries;
 		},
@@ -1132,6 +1148,7 @@ export function buildSceneDescription(
 			};
 		},
 	);
+	const rotationByClip = visibleClips.map((clip) => clipRotation(clip));
 
 	// Zoom + Full Camera + speed regions are authored in RAW virtual (timeline) ms
 	// in the document — the ruler where trims still occupy their space — but the
@@ -1536,6 +1553,7 @@ export function buildSceneDescription(
 			padding: settings.padding / 100,
 			blur: settings.backgroundBlur,
 			shadow: settings.shadowIntensity,
+			webcamShadow: settings.webcamShadowIntensity,
 			// The slider is in pixels of a 1080 reference, whatever the source resolution —
 			// see `roundnessFrac`. No padding and no frame: the footage meets the scene's edges,
 			// with no background to round against, so the corners go square and the stored value
@@ -1739,6 +1757,7 @@ export function buildSceneDescription(
 				clipIndex: region.clipIndex,
 			})),
 		cropByClip,
+		rotationByClip,
 		...(sceneShaderEffects.length > 0 ? { shaderEffects: sceneShaderEffects } : {}),
 		output: { ...pickOutputDims(document, settings.aspectRatio), fps: null },
 		// Omitted rather than sent as `{mode:"none"}`: the Rust side defaults the field, and

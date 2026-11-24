@@ -210,11 +210,13 @@ export async function whenRegistryIdle(baseDir?: string): Promise<void> {
 
 async function updateRegistry(
 	baseDir: string,
-	mutator: (file: MediaLinksRegistryFile) => MediaLinksRegistryFile,
+	mutator: (
+		file: MediaLinksRegistryFile,
+	) => MediaLinksRegistryFile | Promise<MediaLinksRegistryFile>,
 ): Promise<void> {
 	await withWriteLock(baseDir, async () => {
 		const current = await readRegistry(baseDir);
-		await writeRegistry(baseDir, mutator(current));
+		await writeRegistry(baseDir, await mutator(current));
 	});
 }
 
@@ -253,6 +255,35 @@ export async function registerMediaLinks(
 				? file.entries.map((e, i) => (i === existingIndex ? { ...e, ...entry } : e))
 				: [...file.entries, entry];
 		return { version: 1, entries };
+	});
+}
+
+/** Drops the entries of deleted recordings, matched by the path they were last seen at. */
+export async function forgetMediaLinks(
+	baseDir: string,
+	deletedPaths: readonly string[],
+): Promise<void> {
+	if (deletedPaths.length === 0) return;
+	const canonicalDirs = new Map<string, Promise<string>>();
+	const canonicalPath = async (file: string) => {
+		const dir = path.dirname(path.resolve(file));
+		let canonicalDir = canonicalDirs.get(dir);
+		if (!canonicalDir) {
+			canonicalDir = fs.realpath(dir).catch(() => dir);
+			canonicalDirs.set(dir, canonicalDir);
+		}
+		// The file itself may already be in the Trash. Its directory still resolves aliases
+		// such as /var and /private/var to the same location.
+		return path.join(await canonicalDir, path.basename(file));
+	};
+	const deleted = new Set(await Promise.all(deletedPaths.map(canonicalPath)));
+	await updateRegistry(baseDir, async (file) => {
+		const entries = await Promise.all(
+			file.entries.map(async (entry) =>
+				deleted.has(await canonicalPath(entry.lastKnownPath)) ? null : entry,
+			),
+		);
+		return { version: 1, entries: entries.filter((entry) => entry !== null) };
 	});
 }
 

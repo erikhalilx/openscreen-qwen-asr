@@ -232,6 +232,19 @@ describe("separate recorded sources", () => {
 	});
 });
 
+describe("camera shadow scene contract", () => {
+	it("serializes independent camera shadow strength for preview and export", () => {
+		for (const strength of [0, 0.3, 0.6, 0.9]) {
+			const scene = buildSceneDescription(
+				makeDoc({ legacyEditor: { webcamShadowIntensity: strength, shadowIntensity: 0.3 } }),
+			);
+			expect(scene.effects.webcamShadow).toBe(strength);
+			expect(scene.effects.shadow).toBe(0.3);
+		}
+		expect(buildSceneDescription(makeDoc()).effects.webcamShadow).toBe(0.6);
+	});
+});
+
 describe("buildSceneDescription.background", () => {
 	it('"#123456" → color', () => {
 		const doc = makeDoc({ legacyEditor: { wallpaper: "#123456" } });
@@ -2918,6 +2931,31 @@ describe("buildSceneDescription.audioTracks", () => {
 		]);
 	});
 
+	it("shifts a bed placed after a cut by the cut's length", () => {
+		const entries = buildSceneDescription(
+			cutDoc([{ ...voice, kind: "music", startMs: 7000, endMs: 10_000 }]),
+		).audioTracks;
+		expect(entries).toMatchObject([{ startSec: 5, trimStartSec: 0, trimEndSec: 3 }]);
+	});
+
+	it("drops the head a cut takes off a bed that starts inside it (#1522)", () => {
+		// Raw 5..10 with 4..6 cut: the bed's first second went with the video, so the file
+		// plays on from 1s at output 4, and raw 6 still hears what it heard before the cut.
+		const bed = { ...voice, kind: "music" as const, startMs: 5000, endMs: 10_000 };
+		expect(buildSceneDescription(cutDoc([bed])).audioTracks).toMatchObject([
+			{ startSec: 4, trimStartSec: 1, trimEndSec: 5 },
+		]);
+		// Looping over a 3s file: the first repeat starts at the same 1s phase.
+		const doc = cutDoc([{ ...bed, loop: true }]);
+		doc.assets = doc.assets.map((a) => (a.id === "aud" ? { ...a, durationSec: 3 } : a));
+		expect(
+			buildSceneDescription(doc).audioTracks.map((e) => [e.startSec, e.trimStartSec, e.trimEndSec]),
+		).toEqual([
+			[4, 1, 3],
+			[6, 0, 2],
+		]);
+	});
+
 	it("leaves a LOOPING voiceover on the music path, which step 6 will forbid outright", () => {
 		// The window comes from the ASSET's duration, so the short file has to be there.
 		const doc = cutDoc([{ ...voice, loop: true, endMs: 10_000 }]);
@@ -3243,5 +3281,47 @@ describe("buildSceneDescription.shaderEffects", () => {
 			],
 		});
 		expect(buildSceneDescription(doc).shaderEffects).toBeUndefined();
+	});
+});
+
+// --- rotationByClip ----------------------------------------------------------
+
+describe("buildSceneDescription.rotationByClip", () => {
+	it("emits rotationByClip parallel to cropByClip", () => {
+		const asset = makeAsset({ id: "a", originalPath: "/a.mp4" });
+		const upright = makeClip({
+			id: "c1",
+			assetId: "a",
+			sourceStartSec: 0,
+			sourceEndSec: 4,
+			timelineStartSec: 0,
+			timelineEndSec: 4,
+		});
+		const turned = makeClip({
+			id: "c2",
+			assetId: "a",
+			sourceStartSec: 4,
+			sourceEndSec: 8,
+			timelineStartSec: 4,
+			timelineEndSec: 8,
+			rotation: 180,
+		});
+		const scene = buildSceneDescription(makeDoc({ assets: [asset], clips: [upright, turned] }));
+		expect(scene.rotationByClip).toEqual([0, 180]);
+		expect(scene.rotationByClip).toHaveLength(scene.cropByClip.length);
+	});
+
+	it("emits all zeros when no clip is turned", () => {
+		const asset = makeAsset({ id: "a", originalPath: "/a.mp4" });
+		const clip = makeClip({
+			id: "c1",
+			assetId: "a",
+			sourceStartSec: 0,
+			sourceEndSec: 4,
+			timelineStartSec: 0,
+			timelineEndSec: 4,
+		});
+		const scene = buildSceneDescription(makeDoc({ assets: [asset], clips: [clip] }));
+		expect(scene.rotationByClip).toEqual([0]);
 	});
 });

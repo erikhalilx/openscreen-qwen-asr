@@ -26,10 +26,14 @@ import {
 	isAudioExportFormat,
 } from "@/lib/cliContracts";
 import { GIF_SIZE_PRESETS, type GifSizePreset } from "@/lib/exporter";
-import { extractAudio, isolateAudioTrack } from "@/lib/exporter/audioExport";
+import {
+	AUDIO_RENDER_VIDEO_BITRATE,
+	extractRenderedAudio,
+	isolateAudioTrack,
+} from "@/lib/exporter/audioExport";
 import { calculateMp4ExportSettings } from "@/lib/exporter/mp4ExportSettings";
 import { outputFrameCount } from "@/lib/exporter/outputFrameCount";
-import { mixVoiceoverIntoVideo } from "@/lib/exporter/voiceoverMix";
+import { mixVoiceoverIntoExportedVideo } from "@/lib/exporter/voiceoverMix";
 import { exportGifNative, exportMultiNative, nativeBridgeClient } from "@/native";
 import { buildNativeClipList, buildSceneDescription } from "@/native/sceneDescription";
 import { type ExportProject, loadDocumentProject } from "./exportProject";
@@ -182,7 +186,7 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 		}
 
 		if (audioFormat) {
-			// The audio of the MP4 this project exports to, rendered at the smallest size: the
+			// The audio of the MP4 this project exports to, its picture at a token bitrate: the
 			// picture is thrown away, the frame rate stays the one the audio is laid out on.
 			const renderPath = audioRenderPath(outPath);
 			const dims = dimsFor("medium");
@@ -191,12 +195,10 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 				height: dims.height,
 				fps: mp4FrameRate,
 				codec: "h264",
-				bitrate: dims.bitrate,
+				bitrate: AUDIO_RENDER_VIDEO_BITRATE,
 			});
 			window.electronAPI.cliProgress({ percentage: 100, phase: "extracting-audio" });
-			const rendered = await fetch(toFileUrl(renderPath));
-			if (!rendered.ok) throw new Error(`Failed to read the rendered video back: ${renderPath}`);
-			const audio = await extractAudio(await rendered.blob(), audioFormat);
+			const audio = await extractRenderedAudio(toFileUrl(renderPath), audioFormat);
 			const saveResult = await window.electronAPI.writeExportToPath(audio, outPath);
 			if (!saveResult.success) {
 				throw new Error(saveResult.message ?? `Failed to write the audio to ${outPath}`);
@@ -217,25 +219,16 @@ async function runExport(request: CliExportRequest): Promise<CliDoneResult> {
 
 		if (request.audioPath) {
 			window.electronAPI.cliProgress({ percentage: 100, phase: "mixing-voiceover" });
-			const [videoResponse, audioResponse] = await Promise.all([
-				fetch(toFileUrl(outPath)),
-				fetch(toFileUrl(request.audioPath)),
-			]);
-			if (!videoResponse.ok) {
-				throw new Error(`Failed to read the exported video back for mixing: ${outPath}`);
-			}
+			const audioResponse = await fetch(toFileUrl(request.audioPath));
 			if (!audioResponse.ok) {
 				throw new Error(`Failed to read voiceover file: ${request.audioPath}`);
 			}
-			const mixed = await mixVoiceoverIntoVideo(await videoResponse.blob(), {
+			const mixed = await mixVoiceoverIntoExportedVideo(toFileUrl(outPath), {
 				voiceoverData: await audioResponse.arrayBuffer(),
 				mode: request.audioMode,
 				offsetSec: request.audioOffsetSec,
 			});
-			const saveResult = await window.electronAPI.writeExportToPath(
-				await mixed.arrayBuffer(),
-				outPath,
-			);
+			const saveResult = await window.electronAPI.writeExportToPath(mixed, outPath);
 			if (!saveResult.success) {
 				throw new Error(saveResult.message ?? `Failed to write mixed output to ${outPath}`);
 			}
