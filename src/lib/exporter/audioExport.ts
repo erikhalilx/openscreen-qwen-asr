@@ -8,7 +8,7 @@
 
 import {
 	ALL_FORMATS,
-	BlobSource,
+	BufferSource,
 	BufferTarget,
 	Conversion,
 	Input,
@@ -33,16 +33,47 @@ export function isolateAudioTrack(document: AxcutDocument, audioId: string): Axc
 	return { ...document, audioTracks };
 }
 
-/** The audio stream of an exported MP4, as a WAV (decoded) or an M4A (the AAC copied as is). */
-export async function extractAudio(video: Blob, format: AudioExportFormat): Promise<ArrayBuffer> {
-	const input = new Input({ source: new BlobSource(video), formats: ALL_FORMATS });
+/** The bitrate the audio export's render encodes its picture at: the picture is thrown away,
+ *  and it is what keeps the render's bytes close to the size of its audio. */
+export const AUDIO_RENDER_VIDEO_BITRATE = 250_000;
+
+/** The audio of the MP4 rendered at `renderUrl`, as a WAV or an M4A.
+ *
+ *  The render is read as bytes, never as a Blob. A Blob that size is paged to disk by
+ *  Chromium's blob storage, which refuses once the profile's volume runs low on space, and
+ *  `blob()` then rejects with "TypeError: Failed to fetch": an 11 MB render failed so with
+ *  1.8 GB free on a 75 GB disk (v2.3.0-rc.1 Linux pass). */
+export async function extractRenderedAudio(
+	renderUrl: string,
+	format: AudioExportFormat,
+): Promise<ArrayBuffer> {
+	const rendered = await fetch(renderUrl);
+	if (!rendered.ok) throw new Error(`Failed to read the rendered video back: ${renderUrl}`);
+	return extractAudio(await rendered.arrayBuffer(), format);
+}
+
+/** The audio stream of an exported MP4, as a WAV (decoded) or an M4A (the AAC copied as is,
+ *  never re-encoded). */
+export async function extractAudio(
+	video: ArrayBuffer,
+	format: AudioExportFormat,
+): Promise<ArrayBuffer> {
+	const input = new Input({ source: new BufferSource(video), formats: ALL_FORMATS });
 	try {
 		const target = new BufferTarget();
 		const output = new Output({
 			format: format === "wav" ? new WavOutputFormat() : new Mp4OutputFormat(),
 			target,
 		});
-		const conversion = await Conversion.init({ input, output, video: { discard: true } });
+		// The render's AAC starts at -23 ms: the encoder's 1024-sample priming, which the MP4 hides
+		// behind an edit list. Mediabunny cuts negative timestamps by default, and cutting means
+		// decoding and re-encoding; Chromium on Linux has no AAC encoder, so the M4A came out as
+		// Opus. Starting the M4A at the first packet keeps the copy path. Mediabunny writes no edit
+		// list, so the M4A opens on those 23 ms of priming; the WAV, decoded, still drops them.
+		const audioTrack = format === "m4a" ? await input.getPrimaryAudioTrack() : null;
+		const audioStart = audioTrack ? await audioTrack.getFirstTimestamp() : 0;
+		const trim = audioStart < 0 ? { start: audioStart } : undefined;
+		const conversion = await Conversion.init({ input, output, video: { discard: true }, trim });
 		if (!conversion.isValid) {
 			throw new Error("The rendered video has no audio to export");
 		}

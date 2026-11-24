@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "Export selhal.",
 		"writingFile": "Zapisování souboru…",
 		"renderingFrames": "Renderování snímků",
+		"renderingGif": "Exportování GIF",
 		"framesEta": "{{current}} / {{total}} snímků · Zbývá {{eta}}s",
 		"preparingEncoder": "Příprava enkodéru…",
 		"close": "Zavřít",
@@ -346,7 +347,15 @@
 		"openHint": "pro otevření",
 		"browseFiles": "Procházet soubory…",
 		"deleteProject": "Smazat projekt",
-		"confirmDelete": "Smazat tento projekt? Vaše nahrávky budou zachovány."
+		"confirmDelete": "Smazat tento projekt? Vaše nahrávky budou zachovány.",
+		"confirmDeleteProject": "Smazat tento projekt?",
+		"alsoTrash": "Přesunout také jeho nahrávky do koše ({{size}})",
+		"alsoRecycle": "Přesunout také jeho nahrávky do koše ({{size}})",
+		"recordingsKeptFor": "Nahrávky používané projektem {{projects}} zůstanou zachovány.",
+		"recordingsKeptUnreadable": "Některé projekty nešlo přečíst, proto nahrávky tohoto projektu zůstanou zachovány.",
+		"trashFailed": "Nahrávky se nepodařilo přesunout do koše. Smazat je trvale?",
+		"recycleFailed": "Nahrávky se nepodařilo přesunout do koše. Smazat je trvale?",
+		"deletePermanently": "Smazat trvale"
 	},
 	"editClipDialog": {
 		"title": "Upravit klip",
@@ -357,6 +366,10 @@
 		"duration": "Výsledná délka",
 		"reset": "Obnovit",
 		"apply": "Použít",
+		"rotation": "Otočení",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "Otočit obraz vzhůru nohama, např. u kamery namontované obráceně",
 		"pickClipTitle": "Vyberte klip k úpravě",
 		"clipLabel": "Klip {{index}}"
 	},

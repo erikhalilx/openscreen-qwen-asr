@@ -61,14 +61,17 @@ export function registerOpenAppShortcut(binding: ShortcutBinding, onTrigger: () 
 	return success;
 }
 
-export async function loadAndRegisterGlobalShortcut(onTrigger: () => void): Promise<void> {
+export async function loadAndRegisterGlobalShortcut(
+	onTrigger: () => void,
+	fallback: ShortcutBinding = DEFAULT_OPEN_APP_BINDING,
+): Promise<void> {
 	try {
 		const data = await fs.readFile(SHORTCUTS_FILE, "utf-8");
 		const shortcuts = JSON.parse(data);
-		const binding = shortcuts.openApp || DEFAULT_OPEN_APP_BINDING;
+		const binding = shortcuts.openApp || fallback;
 		registerOpenAppShortcut(binding, onTrigger);
 	} catch {
-		registerOpenAppShortcut(DEFAULT_OPEN_APP_BINDING, onTrigger);
+		registerOpenAppShortcut(fallback, onTrigger);
 	}
 }
 

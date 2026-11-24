@@ -34,6 +34,7 @@ import {
 	type ZoomFocus,
 } from "@/components/video-editor/types";
 import { useScopedT } from "@/contexts/I18nContext";
+import { clipRotation } from "@/lib/ai-edition/clipRotation";
 import { materializeLayouts, sampleLayoutRegionsAt } from "@/lib/ai-edition/document/layout";
 import {
 	isFormatFillActive,
@@ -108,6 +109,7 @@ interface PreviewCanvasProps {
 	onSeek: (sec: number) => void;
 	onLoadedMetadata: (sec: number, assetId: string) => void;
 	onVideoElement: (el: HTMLVideoElement | null) => void;
+	cancelPendingPlaybackRef?: React.MutableRefObject<(() => void) | null>;
 	currentTimeSec: number;
 	/** Receives the id of the asset whose <video> gave up, plus the MediaError
 	 *  detail for the card. Transient failures are reloaded inside VirtualPreview
@@ -233,6 +235,7 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 		[props.clips, props.currentTimeSec],
 	);
 	const cropRegion: CropRegion = activeClip?.cropRegion ?? DEFAULT_CROP_REGION;
+	const rotation = activeClip ? clipRotation(activeClip) : 0;
 
 	// P4 — the layout preset is global (one panel for the whole timeline) but the camera
 	// is per clip, so the layout has to be resolved against the clip under the playhead.
@@ -407,6 +410,7 @@ export function PreviewCanvas(props: PreviewCanvasProps) {
 		onVideoElement: relayIsPlaying,
 		onLoadedMetadata: relayLoadedMetadata,
 		cropRegion,
+		rotation,
 	};
 
 	const handleWebcamPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {

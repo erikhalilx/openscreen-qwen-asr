@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "Export fehlgeschlagen.",
 		"writingFile": "Datei wird geschrieben…",
 		"renderingFrames": "Bilder werden gerendert",
+		"renderingGif": "GIF wird exportiert",
 		"framesEta": "{{current}} / {{total}} Bilder · noch {{eta}} s",
 		"preparingEncoder": "Encoder wird vorbereitet…",
 		"close": "Schließen",
@@ -346,7 +347,15 @@
 		"openHint": "zum Öffnen",
 		"browseFiles": "Dateien durchsuchen…",
 		"deleteProject": "Projekt löschen",
-		"confirmDelete": "Dieses Projekt löschen? Deine Aufnahmen bleiben erhalten."
+		"confirmDelete": "Dieses Projekt löschen? Deine Aufnahmen bleiben erhalten.",
+		"confirmDeleteProject": "Dieses Projekt löschen?",
+		"alsoTrash": "Auch die Aufnahmen in den Papierkorb legen ({{size}})",
+		"alsoRecycle": "Auch die Aufnahmen in den Papierkorb verschieben ({{size}})",
+		"recordingsKeptFor": "Aufnahmen, die {{projects}} verwendet, bleiben erhalten.",
+		"recordingsKeptUnreadable": "Einige Projekte konnten nicht gelesen werden, daher bleiben die Aufnahmen dieses Projekts erhalten.",
+		"trashFailed": "Die Aufnahmen konnten nicht in den Papierkorb gelegt werden. Endgültig löschen?",
+		"recycleFailed": "Die Aufnahmen konnten nicht in den Papierkorb verschoben werden. Endgültig löschen?",
+		"deletePermanently": "Endgültig löschen"
 	},
 	"editClipDialog": {
 		"title": "Clip bearbeiten",
@@ -357,6 +366,10 @@
 		"duration": "Endgültige Dauer",
 		"reset": "Zurücksetzen",
 		"apply": "Anwenden",
+		"rotation": "Drehung",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "Bild auf den Kopf stellen, z. B. für eine über Kopf montierte Kamera",
 		"pickClipTitle": "Wähle einen Clip zum Bearbeiten",
 		"clipLabel": "Clip {{index}}"
 	},

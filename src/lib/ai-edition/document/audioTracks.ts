@@ -50,11 +50,24 @@ export function anchorAudioTrackFragments(
 	makeId: () => string,
 ): AxcutAudioTrack[] {
 	const groupId = trackGroupId(track);
-	const anchored = anchorRegionsWithDerivedMs([track], clips, makeId) as AxcutAudioTrack[];
+	const { endOverflowMs = 0, ...payload } = track;
+	const requestedEndMs = track.endMs + (track.kind === "music" ? endOverflowMs : 0);
+	const anchored = anchorRegionsWithDerivedMs(
+		[{ ...payload, endMs: requestedEndMs }],
+		clips,
+		makeId,
+	) as AxcutAudioTrack[];
 	if (anchored.length === 0) return [];
 	// Fragments come back in clip order, which is the order they play.
 	let elapsedMs = 0;
 	const last = anchored.length - 1;
+	const programmeEndMs = Math.round(
+		Math.max(0, ...clips.map((clip) => clip.timelineEndSec)) * 1000,
+	);
+	const overflowMs =
+		track.kind === "music" && anchored[last].endMs === programmeEndMs
+			? Math.max(0, Math.round(requestedEndMs - programmeEndMs))
+			: 0;
 	return anchored.map((fragment, index) => {
 		const spanMs = Math.max(0, fragment.endMs - fragment.startMs);
 		const next: AxcutAudioTrack = {
@@ -66,6 +79,7 @@ export function anchorAudioTrackFragments(
 			offsetMs: track.loop ? track.offsetMs : track.offsetMs + elapsedMs,
 			fadeInMs: index === 0 ? track.fadeInMs : 0,
 			fadeOutMs: index === last ? track.fadeOutMs : 0,
+			...(index === last && overflowMs > 0 ? { endOverflowMs: overflowMs } : {}),
 		};
 		elapsedMs += spanMs;
 		return next;
@@ -89,6 +103,52 @@ export function reanchorAudioTracks(
 	return joinContiguousTakes(collapseTracksToPills(splitDetachedTakes(tracks, clips))).flatMap(
 		(track) => anchorAudioTrackFragments(track, clips, makeId),
 	);
+}
+
+/** Shortening the programme does not choose a new end for its trailing music. */
+export function preserveMusicTailsAfterClipEdit(
+	before: AxcutAudioTrack[],
+	after: AxcutAudioTrack[],
+	clips: AxcutClip[],
+): AxcutAudioTrack[] {
+	const previousById = new Map(before.map((track) => [track.id, track]));
+	const tailsByGroup = new Map<string, AxcutAudioTrack>();
+	for (const track of before) {
+		const key = trackGroupId(track);
+		const tail = tailsByGroup.get(key);
+		if (!tail || track.endMs > tail.endMs) tailsByGroup.set(key, track);
+	}
+	const survivingIds = new Set(after.map((track) => track.id));
+	const programmeEndMs = Math.round(
+		Math.max(0, ...clips.map((clip) => clip.timelineEndSec)) * 1000,
+	);
+	return after.map((track) => {
+		const previous = previousById.get(track.id);
+		if (
+			track.kind !== "music" ||
+			!previous ||
+			previous.assetId !== track.assetId ||
+			Math.round(track.endMs) !== programmeEndMs
+		)
+			return track;
+		const tail = tailsByGroup.get(trackGroupId(track));
+		const tailRemoved = tail && !survivingIds.has(tail.id);
+		const endpoint = tailRemoved ? tail : previous;
+		// A loop keeps one source offset on every fragment. Measure its missing tail
+		// from the surviving fragment's old head; a non-loop's offset already advances.
+		const previousSpanMs = Math.max(
+			0,
+			endpoint.endMs - (tailRemoved && track.loop ? previous.startMs : endpoint.startMs),
+		);
+		const sourceEndMs = endpoint.offsetMs + previousSpanMs + (endpoint.endOverflowMs ?? 0);
+		const endOverflowMs = Math.max(
+			0,
+			Math.round(sourceEndMs - track.offsetMs - Math.max(0, track.endMs - track.startMs)),
+		);
+		if (endOverflowMs === (track.endOverflowMs ?? 0) && track.fadeOutMs === endpoint.fadeOutMs)
+			return track;
+		return { ...track, endOverflowMs: endOverflowMs || undefined, fadeOutMs: endpoint.fadeOutMs };
+	});
 }
 
 /**
@@ -115,7 +175,7 @@ function splitDetachedTakes(tracks: AxcutAudioTrack[], clips: AxcutClip[]): Axcu
 		let head = ordered[0];
 		return ordered.map((fragment, index) => {
 			const previous = ordered[index - 1];
-			if (previous && !hangsTogether(previous, fragment, assetOf)) head = fragment;
+			if (previous && !hangsTogether(previous, fragment, assetOf, clips)) head = fragment;
 			return { ...fragment, trackId: head.id };
 		});
 	});
@@ -133,11 +193,15 @@ function hangsTogether(
 	left: AxcutAudioTrack,
 	right: AxcutAudioTrack,
 	assetOf: Map<string, string>,
+	clips: AxcutClip[],
 ): boolean {
 	const runsOn =
 		Math.abs(left.offsetMs - right.offsetMs) <= 1 ||
 		(!right.loop && Math.abs(left.offsetMs + (left.endMs - left.startMs) - right.offsetMs) <= 1);
-	return runsOn && (Math.abs(left.endMs - right.startMs) <= 1 || mediaRunsOn(left, right, assetOf));
+	return (
+		runsOn &&
+		(Math.abs(left.endMs - right.startMs) <= 1 || mediaRunsOn(left, right, assetOf, clips))
+	);
 }
 
 /** One stretch of one media, cut in two: what an inserted word leaves either side of it. */
@@ -145,13 +209,23 @@ function mediaRunsOn(
 	left: AxcutAudioTrack,
 	right: AxcutAudioTrack,
 	assetOf: Map<string, string>,
+	clips: AxcutClip[],
 ): boolean {
 	if (!hasCompleteClipAnchor(left) || !hasCompleteClipAnchor(right)) return false;
 	const assetId = assetOf.get(left.clipId);
 	return (
 		assetId !== undefined &&
 		assetId === assetOf.get(right.clipId) &&
-		Math.abs(left.sourceEndSec - right.sourceStartSec) < 0.001
+		Math.abs(left.sourceEndSec - right.sourceStartSec) < 0.001 &&
+		// Source continuity alone also holds after duplicating footage between these
+		// fragments, even when that copy absorbs the right clip. Only generated words
+		// extend the existing take across the gap; ordinary footage gets no imported audio.
+		clips.every(
+			(clip) =>
+				clip.timelineEndSec <= left.endMs / 1000 + 0.001 ||
+				clip.timelineStartSec >= right.startMs / 1000 - 0.001 ||
+				isGeneratedAssetId(clip.assetId),
+		)
 	);
 }
 
@@ -169,7 +243,12 @@ function joinContiguousTakes(pills: AxcutAudioTrack[]): AxcutAudioTrack[] {
 	for (const pill of ordered) {
 		const previous = out[out.length - 1];
 		if (previous && takesJoin(previous, pill)) {
-			out[out.length - 1] = { ...previous, endMs: pill.endMs, fadeOutMs: pill.fadeOutMs };
+			out[out.length - 1] = {
+				...previous,
+				endMs: pill.endMs,
+				fadeOutMs: pill.fadeOutMs,
+				endOverflowMs: pill.endOverflowMs,
+			};
 			continue;
 		}
 		out.push(pill);
@@ -235,6 +314,7 @@ export function collapseTracksToPills(tracks: AxcutAudioTrack[]): AxcutAudioTrac
 			endMs: tail.endMs,
 			fadeInMs: head.fadeInMs,
 			fadeOutMs: tail.fadeOutMs,
+			endOverflowMs: tail.endOverflowMs,
 		};
 	});
 }
@@ -505,6 +585,7 @@ export function firstFreeHeadMs(
  *
  * The mode is the gesture, and each resolves an overlap differently:
  *   - "resize" stops the dragged EDGE at the neighbour, keeping the head still.
+ *   - "resize-start" trims the head while retaining an automatically clipped tail.
  *   - "move" keeps the DURATION and parks the pill against the wall. A take must never be
  *     silently cropped because it was dragged somewhere crowded.
  *   - "create" queues behind whatever is already there.
@@ -519,15 +600,21 @@ export function placeAudioTrackInDocument(
 	doc: AxcutDocument,
 	pill: AxcutAudioTrack,
 	makeId: () => string,
-	mode: "move" | "resize" | "create",
+	mode: "move" | "resize" | "resize-start" | "create",
 ): AxcutDocument {
 	const groupId = trackGroupId(pill);
 	const lane = audioLanePills(doc.audioTracks, pill.kind);
-	const others = lane.filter((other) => trackGroupId(other) !== groupId);
-	const spanMs = Math.max(0, pill.endMs - pill.startMs);
+	const others = lane
+		.filter((other) => trackGroupId(other) !== groupId)
+		.map((other) => ({
+			...other,
+			endMs: other.endMs + (other.kind === "music" ? (other.endOverflowMs ?? 0) : 0),
+		}));
+	const overflowMs = mode !== "resize" && pill.kind === "music" ? (pill.endOverflowMs ?? 0) : 0;
+	const spanMs = Math.max(0, pill.endMs - pill.startMs) + overflowMs;
 
 	let startMs = pill.startMs;
-	let endMs = pill.endMs;
+	let endMs = pill.endMs + overflowMs;
 	if (mode === "create") {
 		startMs = firstFreeHeadMs(others, pill.startMs, spanMs);
 		endMs = startMs + spanMs;
@@ -538,15 +625,18 @@ export function placeAudioTrackInDocument(
 		// Where the pill sat before the edit is what says which side of a neighbour it is on.
 		const before = lane.find((other) => trackGroupId(other) === groupId) ?? pill;
 		const clamped = clampSpanAgainstNeighbours(
-			{ start: pill.startMs, end: pill.endMs },
+			{ start: startMs, end: endMs },
 			others.map((other) => ({ start: other.startMs, end: other.endMs })),
-			{ start: before.startMs, end: before.endMs },
+			{
+				start: before.startMs,
+				end: before.endMs + (before.kind === "music" ? (before.endOverflowMs ?? 0) : 0),
+			},
 		);
 		startMs = clamped.start;
 		endMs = clamped.end;
 	}
 
-	const placed = { ...pill, startMs, endMs };
+	const placed = { ...pill, startMs, endMs, endOverflowMs: undefined };
 	const fragments = anchorAudioTrackFragments(placed, doc.timeline.clips, makeId);
 	if (fragments.length === 0) return doc;
 	const kept = doc.audioTracks.filter((track) => trackGroupId(track) !== groupId);
@@ -574,7 +664,9 @@ export function separateAudioLanes(tracks: AxcutAudioTrack[]): AxcutAudioTrack[]
 			tracks.filter((track) => !track.recordingSource),
 			kind,
 		)) {
-			const spanMs = Math.max(0, pill.endMs - pill.startMs);
+			const spanMs =
+				Math.max(0, pill.endMs - pill.startMs) +
+				(pill.kind === "music" ? (pill.endOverflowMs ?? 0) : 0);
 			const startMs = Math.max(pill.startMs, cursor);
 			if (startMs !== pill.startMs) shift.set(trackGroupId(pill), startMs - pill.startMs);
 			cursor = startMs + spanMs;

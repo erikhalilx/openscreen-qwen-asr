@@ -75,9 +75,12 @@ if (refIndex !== -1) {
 		const [oid, type] = check.split(" ");
 		if (type === "blob") inspect(objects.get(oid), git("cat-file", "blob", oid));
 	}
-	// This pre-existing origin/main commit was already public before 0.3.2.
-	// Retain its history, excluding only its author/committer fields from the identity scan.
-	const existingPublicCommit = "ba588bbf226ed875ecd4d1d3602849796dacdccc";
+	// These commits were already public on origin/main before this release.
+	// Exclude only their author/committer fields from the identity scan.
+	const existingPublicCommits = new Set([
+		"ba588bbf226ed875ecd4d1d3602849796dacdccc",
+		"44067caad77efbdd9ac9d9f45259c2745a594696",
+	]);
 	for (const entry of git("log", "--format=%H%x00%an%n%ae%n%cn%n%ce%x00%B%x00", `${base}..${ref}`)
 		.toString()
 		.split("\0")
@@ -89,7 +92,7 @@ if (refIndex !== -1) {
 		const [sha, identity, body] = entry;
 		inspect(
 			"fork commit metadata",
-			Buffer.from(sha === existingPublicCommit ? body : identity + body),
+			Buffer.from(existingPublicCommits.has(sha) ? body : identity + body),
 		);
 	}
 } else {

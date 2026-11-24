@@ -10,6 +10,7 @@ import {
 	portalOwnsSourceSelection,
 } from "@/lib/nativeLinuxRecording";
 import {
+	type NativeMacPresenterOverlayState,
 	type NativeMacRecordingRequest,
 	parseMacDisplayIdFromSourceId,
 	parseMacWindowIdFromSourceId,
@@ -88,6 +89,7 @@ const AUDIO_BITRATE_VOICE = 128_000;
 const AUDIO_BITRATE_SYSTEM = 192_000;
 
 type UseScreenRecorderReturn = {
+	webcamPreviewStream: MediaStream | null;
 	recording: boolean;
 	paused: boolean;
 	saving: boolean;
@@ -119,6 +121,7 @@ type UseScreenRecorderReturn = {
 	setWebcamEnabled: (enabled: boolean) => Promise<boolean>;
 	cursorCaptureMode: CursorCaptureMode;
 	setCursorCaptureMode: (mode: CursorCaptureMode) => void;
+	presenterOverlay: NativeMacPresenterOverlayState | null;
 	softwareEncoderFallbackNoticeVisible: boolean;
 	dismissSoftwareEncoderFallbackNotice: (dontShowAgain?: boolean) => void;
 	recordingPrefsLoaded: boolean;
@@ -236,6 +239,18 @@ export async function finalizeWebcamAsset(
 	}
 }
 
+function discardUnstartedRecorder(handle: RecorderHandle) {
+	try {
+		if (handle.recorder.state !== "inactive") handle.recorder.stop();
+	} catch (error) {
+		console.warn("Failed to stop the incomplete recording:", error);
+	}
+	void handle.recordedBlobPromise
+		.catch(() => undefined)
+		.then(() => handle.discard())
+		.catch((error) => console.warn("Failed to discard the incomplete recording:", error));
+}
+
 export function useScreenRecorder(): UseScreenRecorderReturn {
 	const t = useScopedT("editor");
 	const tLaunch = useScopedT("launch");
@@ -289,6 +304,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	useEffect(() => {
 		let cancelled = false;
 		let receivedNewerSnapshot = false;
+		let appliedCameraSelection: {
+			deviceId: string | undefined;
+			deviceName: string | undefined;
+		} | null = null;
 		const applyPrefs = (prefs: {
 			systemAudioVolume?: number;
 			microphoneVolume?: number;
@@ -313,8 +332,24 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				new URLSearchParams(window.location.search).get("windowType") === "cli-record";
 			if (!isCliRecord) {
 				setWebcamEnabledState(prefs.camEnabled);
-				setWebcamDeviceId(prefs.camDeviceId ?? undefined);
-				setWebcamDeviceName(prefs.camDeviceName ?? undefined);
+				const deviceId = prefs.camDeviceId ?? undefined;
+				const deviceName = prefs.camDeviceName ?? undefined;
+				// The HUD resolves a stored default (null) to a concrete device locally.
+				// An audio-only save republishes that same null: applying it again would
+				// reset the resolved device, stop its stream, and visibly blink the preview.
+				const isMacHud =
+					window.electronAPI?.getPlatform?.() === "darwin" &&
+					new URLSearchParams(window.location.search).get("windowType") === "hud-overlay";
+				if (
+					!isMacHud ||
+					!appliedCameraSelection ||
+					appliedCameraSelection.deviceId !== deviceId ||
+					appliedCameraSelection.deviceName !== deviceName
+				) {
+					setWebcamDeviceId(deviceId);
+					setWebcamDeviceName(deviceName);
+					appliedCameraSelection = { deviceId, deviceName };
+				}
 			}
 			setWebcamQuality(webcamQualityFrom(prefs.camQuality));
 			setSystemAudioEnabled(prefs.systemAudioEnabled);
@@ -354,11 +389,25 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	const webcamRecorder = useRef<RecorderHandle | null>(null);
 	const nativeWindowsRecording = useRef<NativeWindowsRecordingHandle | null>(null);
 	const nativeMacRecording = useRef<NativeMacRecordingHandle | null>(null);
+	const startingNativeMacRecordingId = useRef<number | null>(null);
+	const [presenterOverlay, setPresenterOverlay] = useState<NativeMacPresenterOverlayState | null>(
+		null,
+	);
+	useEffect(
+		() =>
+			window.electronAPI?.onNativeMacPresenterOverlayChanged?.((event) => {
+				const id = nativeMacRecording.current?.recordingId ?? startingNativeMacRecordingId.current;
+				if (id !== event.recordingId) return;
+				setPresenterOverlay({ active: event.active, cameraInterrupted: event.cameraInterrupted });
+			}),
+		[],
+	);
 	const nativeLinuxRecording = useRef<NativeLinuxRecordingHandle | null>(null);
 	const stream = useRef<MediaStream | null>(null);
 	const screenStream = useRef<MediaStream | null>(null);
 	const microphoneStream = useRef<MediaStream | null>(null);
 	const webcamStream = useRef<MediaStream | null>(null);
+	const [webcamPreviewStream, setWebcamPreviewStream] = useState<MediaStream | null>(null);
 	const mixingContext = useRef<AudioContext | null>(null);
 	const recordingId = useRef<number>(0);
 	const accumulatedDurationMs = useRef(0);
@@ -503,6 +552,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	useEffect(() => {
 		if (!webcamEnabled) return;
 
+		const platform = window.electronAPI?.getPlatform?.();
+		const showsFloatingPreview =
+			platform === "darwin" &&
+			new URLSearchParams(window.location.search).get("windowType") === "hud-overlay";
 		let cancelled = false;
 		let acquiredStream: MediaStream | null = null;
 		const thisAcquireId = ++webcamAcquireId.current;
@@ -512,7 +565,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			try {
 				const stream = await navigator.mediaDevices.getUserMedia({
 					audio: false,
-					video: webcamVideoConstraints(webcamDeviceId, webcamQuality),
+					video: webcamVideoConstraints(webcamDeviceId, webcamQuality, platform),
 				});
 
 				if (cancelled || thisAcquireId !== webcamAcquireId.current) {
@@ -527,6 +580,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				stream.getVideoTracks().forEach((track) => {
 					track.onended = () => {
 						webcamStream.current = null;
+						if (showsFloatingPreview) setWebcamPreviewStream(null);
 						if (!restarting.current) {
 							setWebcamEnabledState(false);
 							toast.error(t("recording.cameraDisconnected"));
@@ -534,6 +588,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					};
 				});
 				webcamStream.current = stream;
+				if (showsFloatingPreview) setWebcamPreviewStream(stream);
 				webcamReady.current = true;
 			} catch (cameraError) {
 				if (isRecoverableWebcamConstraintError(cameraError, webcamDeviceName)) {
@@ -573,6 +628,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					track.stop();
 				});
 				webcamStream.current = null;
+				if (showsFloatingPreview) setWebcamPreviewStream(null);
 			}
 		};
 	}, [webcamEnabled, webcamDeviceId, webcamDeviceName, webcamQuality, t]);
@@ -1330,6 +1386,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		recordMicrophone: boolean,
 		countdownRunToken?: number,
 	) => {
+		let nativeWebcamRecorder: RecorderHandle | null = null;
 		try {
 			const platform = window.electronAPI.getPlatform();
 			if (platform !== "darwin") {
@@ -1354,11 +1411,12 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			}
 
 			const activeRecordingId = Date.now();
+			startingNativeMacRecordingId.current = activeRecordingId;
+			setPresenterOverlay(null);
 			const sourceType = selectedSource.id.startsWith("window:") ? "window" : "display";
 			const displayId =
 				Number(selectedSource.display_id) || parseMacDisplayIdFromSourceId(selectedSource.id);
 			const windowId = parseMacWindowIdFromSourceId(selectedSource.id);
-			let nativeWebcamRecorder: RecorderHandle | null = null;
 			// createRecorderHandle() calls MediaRecorder.start() synchronously, so the
 			// webcam clip's first frame is captured right now -- before the native
 			// ScreenCaptureKit helper below has even been spawned. Stamp that instant
@@ -1434,7 +1492,9 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 					},
 				},
 				webcam: {
-					enabled: webcamEnabled,
+					// Report an independent camera only when its recorder actually started.
+					// The UI toggle can remain on after camera startup fails or is unavailable.
+					enabled: Boolean(nativeWebcamRecorder),
 					// Same pairing rule as the Windows path; here the stream is still
 					// open, so the identity can be read at the point of use.
 					...readWebcamDeviceIdentity(),
@@ -1456,6 +1516,10 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			if (!isCountdownRunActive(countdownRunToken)) {
 				await window.electronAPI.stopNativeMacRecording(true);
 				return true;
+			}
+			if (result.presenterOverlay) {
+				// A live transition received while start was pending is newer than this snapshot.
+				setPresenterOverlay((current) => current ?? result.presenterOverlay ?? null);
 			}
 			if (result.microphoneDefaulted) {
 				toast.error(t("recording.microphoneDefaulted"));
@@ -1484,6 +1548,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 				),
 			};
 			webcamRecorder.current = nativeWebcamRecorder;
+			nativeWebcamRecorder = null;
 			accumulatedDurationMs.current = 0;
 			// From the file's first frame, not from this reply, so the timer reads what the
 			// file holds however late the reply arrives (#901).
@@ -1494,8 +1559,12 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			setElapsedSeconds(0);
 			return true;
 		} catch (error) {
+			setPresenterOverlay(null);
 			console.error("Native macOS capture failed:", error);
 			throw error;
+		} finally {
+			startingNativeMacRecordingId.current = null;
+			if (nativeWebcamRecorder) discardUnstartedRecorder(nativeWebcamRecorder);
 		}
 	};
 
@@ -2208,18 +2277,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 			webcamRecorder.current = null;
 			allowAutoFinalize.current = false;
 			for (const failed of failedRecorders) {
-				if (!failed) continue;
-				try {
-					if (failed.recorder.state !== "inactive") failed.recorder.stop();
-				} catch (stopError) {
-					console.warn("Failed to stop the incomplete recording:", stopError);
-				}
-				void failed.recordedBlobPromise
-					.catch(() => undefined)
-					.then(() => failed.discard())
-					.catch((discardError) =>
-						console.warn("Failed to discard the incomplete recording:", discardError),
-					);
+				if (failed) discardUnstartedRecorder(failed);
 			}
 			teardownMedia();
 		} finally {
@@ -2562,6 +2620,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 	};
 
 	return {
+		webcamPreviewStream,
 		recording,
 		paused,
 		saving,
@@ -2592,6 +2651,7 @@ export function useScreenRecorder(): UseScreenRecorderReturn {
 		setWebcamEnabled,
 		cursorCaptureMode,
 		setCursorCaptureMode,
+		presenterOverlay,
 		softwareEncoderFallbackNoticeVisible,
 		dismissSoftwareEncoderFallbackNotice,
 		recordingPrefsLoaded,

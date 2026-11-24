@@ -222,10 +222,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		if let picked {
 			target = makeCaptureTarget(picked: picked)
 		} else {
-			let content = try await SCShareableContent.excludingDesktopWindows(
-				false,
-				onScreenWindowsOnly: true
-			)
+			let content = try await shareableContent()
 			target = try makeCaptureTarget(from: content)
 			if recordsSystemAudioFromDisplay, let display = content.displays.first {
 				let filter = SCContentFilter(display: display, excludingApplications: [], exceptingWindows: [])
@@ -454,6 +451,22 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		}
 	}
 
+	/// The effect belongs to the screen stream, never the auxiliary audio stream.
+	@available(macOS 14.0, *)
+	func outputVideoEffectDidStart(for stream: SCStream) {
+		guard stream === self.stream else { return }
+		emit(["event": "warning", "code": "presenter-overlay-started",
+			"message": "macOS Presenter Overlay started."])
+	}
+
+	/// Stopping the effect does not establish that a separate camera track recovered.
+	@available(macOS 14.0, *)
+	func outputVideoEffectDidStop(for stream: SCStream) {
+		guard stream === self.stream else { return }
+		emit(["event": "warning", "code": "presenter-overlay-stopped",
+			"message": "macOS Presenter Overlay stopped."])
+	}
+
 	func stream(_ stream: SCStream, didStopWithError error: Error) {
 		// Losing the audio-only stream costs the take its system audio, not the take.
 		if stream === systemAudioStream {
@@ -662,6 +675,24 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 		)
 	}
 
+	/// On-screen windows, unless one of the app windows to exclude is hidden right now (a
+	/// camera preview the user may show mid-take): then every window, so the filter already
+	/// holds it when it appears instead of waiting for the next exclusion-refresh poll.
+	private func shareableContent() async throws -> SCShareableContent {
+		let onScreen = try await SCShareableContent.excludingDesktopWindows(
+			false,
+			onScreenWindowsOnly: true
+		)
+		let visibleWindowIDs = Set(onScreen.windows.map(\.windowID))
+		if (request.excludedWindowIds ?? []).allSatisfy(visibleWindowIDs.contains) {
+			return onScreen
+		}
+		return try await SCShareableContent.excludingDesktopWindows(
+			false,
+			onScreenWindowsOnly: false
+		)
+	}
+
 	/// The app's own windows (HUD, notes) plus the system ones a demo never wants.
 	private func excludedWindowIDs(in content: SCShareableContent) -> [UInt32] {
 		let candidates = content.windows.map {
@@ -704,10 +735,7 @@ final class ScreenCaptureRecorder: NSObject, SCStreamOutput, SCStreamDelegate {
 			while !Task.isCancelled {
 				try? await Task.sleep(nanoseconds: 250_000_000)
 				guard let self, let stream = self.stream,
-					let content = try? await SCShareableContent.excludingDesktopWindows(
-						false,
-						onScreenWindowsOnly: true
-					),
+					let content = try? await self.shareableContent(),
 					let display = content.displays.first(where: { $0.displayID == displayID })
 				else {
 					continue

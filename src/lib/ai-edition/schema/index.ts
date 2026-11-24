@@ -254,6 +254,9 @@ export const clipSchema = z
 		// that as the identity region {x:0,y:0,width:1,height:1} rather than
 		// storing the identity explicitly, so untouched clips stay lean.
 		cropRegion: clipCropRegionSchema.optional(),
+		// Absent means upright. Only a half turn exists; 0 is never stored, so untouched
+		// clips stay lean (same rule as cropRegion).
+		rotation: z.literal(180).optional(),
 	})
 	.refine((data) => data.timelineEndSec >= data.timelineStartSec, {
 		message: "timelineEndSec must be greater than or equal to timelineStartSec",
@@ -694,6 +697,9 @@ export const shaderEffectRangeSchema = endGteStart(
 // (`startMs`..`endMs`) is where it plays, so the tail trim is implied by the
 // span and does not need storing twice. A file longer than its span is cut off
 // at the span unless `loop` is set, in which case it repeats.
+// Music automatically clipped by the programme keeps its unfilmed remainder in
+// `endOverflowMs`, on the last fragment. That remainder still belongs to its
+// requested span and fade envelope; an explicit right-edge trim replaces it.
 //
 // The anchor ventilates one user-visible track into one fragment PER CLIP it
 // covers. Fragments of the same track share `trackId`, and each carries its own
@@ -724,6 +730,9 @@ export const audioTrackSchema = endGteStart(
 		loop: z.boolean().default(false),
 		fadeInMs: z.number().int().nonnegative().default(0),
 		fadeOutMs: z.number().int().nonnegative().default(0),
+		// Music automatically clipped at the programme edge retains its requested tail.
+		// Stored on the last fragment only; choosing a new right edge clears it.
+		endOverflowMs: z.number().int().nonnegative().optional(),
 		muted: z.boolean().default(false),
 		label: z.string().default(""),
 		origin: z.enum(["system", "agent", "user"]).default("user"),

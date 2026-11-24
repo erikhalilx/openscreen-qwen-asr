@@ -25,6 +25,8 @@
 //!     -fps_mode vfr -c:v libopenh264 -g 60 -pix_fmt yuv420p video_gap.mp4
 //!   ffmpeg -i screen_colors.mp4 -c copy -output_ts_offset 1 offset_start.mp4
 //!   ffmpeg -i video_gap.mp4 -c copy -output_ts_offset 1 offset_gap.mp4
+//!   ffmpeg -i screen_colors.mp4 -vf "select='not(mod(n,60))'" \
+//!     -fps_mode vfr -c:v libopenh264 -g 60 -pix_fmt yuv420p sparse_colors.mp4
 //! The gap fixture must retain timestamps: video frames stop at 0.983 s and
 //! resume at 3.000 s. An equivalent H.264 encoder is sufficient if libopenh264
 //! is unavailable.
@@ -141,6 +143,33 @@ fn gif_frame_palettes(bytes: &[u8]) -> Vec<Vec<[u8; 3]>> {
     palettes
 }
 
+/// Each image's delay in centiseconds, from the Graphics Control Extension
+/// before it, walking the blocks as `gif_frame_palettes` does.
+fn gif_frame_delays(bytes: &[u8]) -> Vec<u16> {
+    let skip_sub_blocks = |mut p: usize| {
+        while p < bytes.len() && bytes[p] != 0 {
+            p += 1 + bytes[p] as usize;
+        }
+        p + 1
+    };
+    let table_len = |packed: u8| if packed & 0x80 == 0 { 0 } else { 3 * (1usize << ((packed & 0x07) + 1)) };
+    let mut delays = Vec::new();
+    let mut p = 6 + 7 + table_len(bytes[10]);
+    while p < bytes.len() {
+        match bytes[p] {
+            0x21 => {
+                if bytes[p + 1] == 0xF9 {
+                    delays.push(u16::from_le_bytes([bytes[p + 4], bytes[p + 5]]));
+                }
+                p = skip_sub_blocks(p + 2);
+            }
+            0x2C => p = skip_sub_blocks(p + 10 + table_len(bytes[p + 9]) + 1),
+            _ => break,
+        }
+    }
+    delays
+}
+
 /// Mean `R - B` across a palette. The fixture's first second is pure red
 /// (large positive) and its last is white (≈ 0), so this single number
 /// separates "covered the timeline" from "stuck on frame 0".
@@ -210,6 +239,52 @@ fn mp4_export_frame_count_follows_output_fps() {
     );
     let probed = pipeline::probe_frame_count(&out.to_string_lossy()).expect("probe");
     assert_eq!(probed, 120, "muxed file disagrees with the reported count");
+}
+
+/// The last frame must survive in the file, not only in the walk. VideoToolbox returned it
+/// without a duration, the MP4 edit list ended on its pts, and a player dropped it whenever that
+/// pts fell on a whole millisecond: 30 fps exports of these two lengths played 276 of 277 and
+/// 1176 of 1177 frames (v2.3.0-rc.2 macOS pass, D4).
+#[test]
+fn mp4_export_keeps_the_last_frame_in_the_file() {
+    let Some(dir) = media_dir() else {
+        eprintln!("skipped: set OPENSCREEN_TEST_MEDIA");
+        return;
+    };
+    let gpu = Gpu::create(false).expect("gpu");
+    let params = ExportParams {
+        width: 640,
+        height: 360,
+        fps: Some(30),
+        codec: ExportCodec::H264,
+        bit_rate: None,
+    };
+    for programme_sec in [9.229979, 39.229979] {
+        // Whole fixtures back to back, the remainder in a last clip.
+        let whole = (programme_sec / SOURCE_SEC).floor() as usize;
+        let mut clips: Vec<ClipSource> = (0..whole).map(|_| whole_clip(&dir)).collect();
+        let mut last = whole_clip(&dir);
+        last.source_end_sec = programme_sec - whole as f64 * SOURCE_SEC;
+        clips.push(last);
+
+        let outputs = TestOutputDir::new("last-frame");
+        let out = outputs.0.join("out.mp4");
+        let comp = Compositor::new_sized(&gpu, params.width, params.height).expect("compositor");
+        let stats = pipeline::run_composited_multi(
+            &clips,
+            &out.to_string_lossy(),
+            &gpu,
+            &comp,
+            &Cfg::c8(),
+            &params,
+            &mut |_| {},
+        )
+        .expect("mp4 export");
+        let expected = ((programme_sec - 0.001) * 30.0).ceil() as u64;
+        assert_eq!(stats.frames, expected, "walk at P = {programme_sec}");
+        let probed = pipeline::probe_frame_count(&out.to_string_lossy()).expect("probe");
+        assert_eq!(probed, expected, "frames a player decodes at P = {programme_sec}");
+    }
 }
 
 /// A camera that ended before its requested offset must fail the whole export,
@@ -478,6 +553,98 @@ fn mp4_export_bounds_tail_recovery_and_reports_the_correct_source() {
     std::fs::remove_dir_all(out_dir).expect("remove test outputs");
 }
 
+/// A static screen may have a nearby preceding frame but no new frame for a second.
+/// Starting a cut between those updates must hold the preceding image, then adopt
+/// the next image when it is due, both in frame inspection and a real MP4 export.
+#[test]
+fn mp4_export_recovers_a_nearby_frame_before_a_sparse_clip_start() {
+    let Some(dir) = media_dir() else {
+        eprintln!("skipped: set OPENSCREEN_TEST_MEDIA");
+        return;
+    };
+    let sparse = dir.join("sparse_colors.mp4");
+    assert!(
+        sparse.exists(),
+        "generate sparse_colors.mp4 using the fixture header recipe"
+    );
+    let outputs = TestOutputDir::new("sparse-clip-start");
+    let gpu = Gpu::create(false).expect("gpu");
+    let comp = Compositor::new_sized(&gpu, 640, 360).expect("compositor");
+    let params = ExportParams {
+        width: 640,
+        height: 360,
+        fps: Some(30),
+        codec: ExportCodec::H264,
+        bit_rate: None,
+    };
+    for has_camera in [false, true] {
+        for after_valid_clip in [false, true] {
+            let mut clip = whole_clip(&dir);
+            clip.screen = sparse.to_string_lossy().into_owned();
+            if !has_camera {
+                clip.webcam.clear();
+            }
+            // Frames at 1.0 s (green) and 2.0 s (blue), with the cut at 1.25 s.
+            clip.source_start_sec = 1.25;
+            clip.source_end_sec = 2.5;
+            let mut clips = Vec::new();
+            if after_valid_clip {
+                let first = ClipSource {
+                    screen: clip.screen.clone(),
+                    webcam: clip.webcam.clone(),
+                    source_start_sec: 0.0,
+                    source_end_sec: 0.5,
+                    ..whole_clip(&dir)
+                };
+                clips.push(first);
+            }
+            clips.push(clip);
+            let first_frame = if after_valid_clip { 15 } else { 0 };
+            let frames = unsafe {
+                openscreen_compositor::timeline_walk::render_frames(
+                    &clips,
+                    &gpu,
+                    &comp,
+                    &Cfg::c8(),
+                    30,
+                    &[first_frame, first_frame + 22, first_frame + 23],
+                )
+            }
+            .expect("inspect a clip starting between sparse screen updates");
+            assert_eq!(frames.len(), 3);
+            for (i, frame) in frames.iter().enumerate() {
+                let center = ((frame.height / 2 * frame.width + frame.width / 2) * 4) as usize;
+                let rgb = &frame.rgba[center..center + 3];
+                let expected_channel = if i < 2 { 1 } else { 2 };
+                assert!(
+                    rgb[expected_channel] > rgb[0].saturating_add(40),
+                    "frame {i}: {rgb:?}"
+                );
+                assert!(
+                    rgb[expected_channel] > rgb[3 - expected_channel].saturating_add(40),
+                    "frame {i}: {rgb:?}"
+                );
+            }
+            let out = outputs.0.join("out.mp4");
+            let stats = pipeline::run_composited_multi(
+                &clips,
+                &out.to_string_lossy(),
+                &gpu,
+                &comp,
+                &Cfg::c8(),
+                &params,
+                &mut |_| {},
+            )
+            .expect("export a clip starting between sparse screen updates");
+            assert_eq!(stats.frames, first_frame + 38);
+            assert_eq!(
+                pipeline::probe_frame_count(&out.to_string_lossy()).expect("probe"),
+                stats.frames
+            );
+        }
+    }
+}
+
 /// A seek inside a multi-second hole must not show a frame from the future.
 /// Exercise both source roles and preservation after an earlier valid clip.
 #[test]
@@ -612,6 +779,65 @@ fn mp4_export_accepts_a_nonzero_first_video_timestamp() {
     }
 }
 
+/// A recorded camera ends a few hundred ms before the screen (its length is the HUD's
+/// wall clock, the screen file runs to the native stop). The export must hold the last
+/// camera frame to the end of the clip, as the preview does, not cut the clip there:
+/// otherwise each take loses its tail and every later clip starts early.
+#[test]
+fn mp4_export_holds_a_camera_that_ends_before_the_screen() {
+    let Some(dir) = media_dir() else {
+        eprintln!("skipped: set OPENSCREEN_TEST_MEDIA");
+        return;
+    };
+    let outputs = TestOutputDir::new("short-camera");
+    let gpu = Gpu::create(false).expect("gpu");
+    let comp = Compositor::new_sized(&gpu, 640, 360).expect("compositor");
+    let params = ExportParams {
+        width: 640,
+        height: 360,
+        fps: Some(30),
+        codec: ExportCodec::H264,
+        bit_rate: None,
+    };
+    // Camera started 0.5 s before the screen: it ends at 3.5 s of screen time.
+    let mut take = whole_clip(&dir);
+    take.webcam_offset_sec = -0.5;
+    let clips = [take, whole_clip(&dir)];
+    let out = outputs.0.join("out.mp4");
+    let stats = pipeline::run_composited_multi(
+        &clips,
+        &out.to_string_lossy(),
+        &gpu,
+        &comp,
+        &Cfg::c8(),
+        &params,
+        &mut |_| {},
+    )
+    .expect("a short camera must not fail the export");
+    assert_eq!(stats.frames, 240, "the take must keep its last 0.5 s");
+
+    // The second clip starts on the grid where the first one ends in the preview.
+    let frames = unsafe {
+        openscreen_compositor::timeline_walk::render_frames(
+            &clips,
+            &gpu,
+            &comp,
+            &Cfg::c8(),
+            30,
+            &[119, 120],
+        )
+    }
+    .expect("inspect the cut");
+    let centre = |f: &openscreen_compositor::timeline_walk::RenderedFrame| {
+        let i = ((f.height / 2 * f.width + f.width / 2) * 4) as usize;
+        [f.rgba[i], f.rgba[i + 1], f.rgba[i + 2]]
+    };
+    let [r, g, b] = centre(&frames[0]);
+    assert!(r > 200 && g > 200 && b > 200, "frame 119 is the take's white tail, got {r},{g},{b}");
+    let [r, g, b] = centre(&frames[1]);
+    assert!(r > 200 && g < 60 && b < 60, "frame 120 opens the next clip in red, got {r},{g},{b}");
+}
+
 /// The macOS frame probe must count decoded video rather than require MP4
 /// frame-count metadata; Matroska recordings commonly omit that metadata.
 #[cfg(target_os = "macos")]
@@ -728,18 +954,19 @@ fn mp4_export_validation_accepts_h264_and_hevc() {
     std::fs::remove_dir(out_dir).expect("remove output dir");
 }
 
-/// VideoToolbox can mux one tail sample with zero duration and mark it discard.
-/// A positive composed-frame count must not let that file replace a good export.
+/// A one-frame export is the last-frame case at its limit: VideoToolbox returned that frame
+/// without a duration, the muxer marked it discard, and validation refused a file with nothing
+/// to play. With every packet given its frame's duration, the frame is muxed, decodes, and
+/// replaces the destination. (Refusing an undecodable file stays covered in `export_control`.)
 #[cfg(target_os = "macos")]
 #[test]
-fn mp4_export_rejects_an_undecodable_single_tail_frame_without_publishing() {
+fn mp4_export_publishes_a_single_tail_frame() {
     let Some(dir) = media_dir() else {
         eprintln!("skipped: set OPENSCREEN_TEST_MEDIA");
         return;
     };
-    let out_dir = dir.join(format!("undecodable_single_tail-{}", std::process::id()));
-    std::fs::create_dir_all(&out_dir).expect("output dir");
-    let out = out_dir.join("out.mp4");
+    let outputs = TestOutputDir::new("single-tail");
+    let out = outputs.0.join("out.mp4");
     let gpu = Gpu::create(false).expect("gpu");
     let comp = Compositor::new_sized(&gpu, 640, 360).expect("compositor");
     let params = ExportParams {
@@ -752,46 +979,19 @@ fn mp4_export_rejects_an_undecodable_single_tail_frame_without_publishing() {
     let mut tail = whole_clip(&dir);
     tail.webcam.clear();
     tail.source_start_sec = SOURCE_SEC - 0.01;
-    for existing_destination in [false, true] {
-        if existing_destination {
-            std::fs::write(&out, b"previous export").expect("seed destination");
-        }
-        let result = pipeline::run_composited_multi(
-            &[ClipSource {
-                screen: tail.screen.clone(),
-                webcam: String::new(),
-                source_start_sec: tail.source_start_sec,
-                source_end_sec: tail.source_end_sec,
-                webcam_offset_sec: 0.0,
-                has_audio: false,
-            }],
-            &out.to_string_lossy(),
-            &gpu,
-            &comp,
-            &Cfg::c8(),
-            &params,
-            &mut |_| {},
-        );
-        let error = result
-            .err()
-            .expect("undecodable output must not be published");
-        assert!(
-            format!("{error:#}").contains("validating exported video"),
-            "{error:#}"
-        );
-        if existing_destination {
-            assert_eq!(std::fs::read(&out).unwrap(), b"previous export");
-            std::fs::remove_file(&out).expect("remove destination");
-        } else {
-            assert!(!out.exists());
-        }
-        assert_eq!(
-            std::fs::read_dir(&out_dir).unwrap().count(),
-            0,
-            "partial output left behind"
-        );
-    }
-    std::fs::remove_dir(out_dir).expect("remove output dir");
+    std::fs::write(&out, b"previous export").expect("seed destination");
+    let stats = pipeline::run_composited_multi(
+        &[tail],
+        &out.to_string_lossy(),
+        &gpu,
+        &comp,
+        &Cfg::c8(),
+        &params,
+        &mut |_| {},
+    )
+    .expect("a single tail frame must export");
+    assert_eq!(stats.frames, 1);
+    assert_eq!(pipeline::probe_frame_count(&out.to_string_lossy()).expect("probe"), 1);
 }
 
 /// Cancelling an MP4 mid-render stops the walk at the next frame, reports `ExportCancelled`,
@@ -909,6 +1109,41 @@ fn gif_export_cancelled_mid_render_publishes_nothing() {
 /// request — it just takes them all from the first 0.8 s, so every frame is red
 /// and the GIF plays 5x slow. Comparing the first and last frame palettes
 /// catches exactly that.
+/// v2.3.0-rc.4 D5: a real MP4 and GIF export over a 600 or 755 file keeps that mode.
+#[cfg(unix)]
+#[test]
+fn mp4_and_gif_exports_keep_the_mode_of_the_replaced_file() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(dir) = media_dir() else {
+        eprintln!("skipped: set OPENSCREEN_TEST_MEDIA");
+        return;
+    };
+    let out_dir = TestOutputDir::new("export-mode");
+    let gpu = Gpu::create(false).expect("gpu");
+    let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositor");
+    let mut clip = whole_clip(&dir);
+    clip.source_end_sec = 0.5;
+    let clips = [clip];
+    for mode in [0o600, 0o755] {
+        let mp4 = out_dir.0.join(format!("out-{mode:o}.mp4"));
+        let gif = out_dir.0.join(format!("out-{mode:o}.gif"));
+        for out in [&mp4, &gif] {
+            std::fs::write(out, b"previous export").unwrap();
+            std::fs::set_permissions(out, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        let params = ExportParams { width: 320, height: 180, fps: Some(30), codec: ExportCodec::H264, bit_rate: None };
+        pipeline::run_composited_multi(&clips, &mp4.to_string_lossy(), &gpu, &comp, &Cfg::c8(), &params, &mut |_| {})
+            .expect("mp4 export");
+        let params = GifExportParams { width: Some(320), height: Some(180), fps: Some(12), loop_count: None, dither: false };
+        gif_export::export_gif(&clips, &gif, &gpu, &comp, &Cfg::c8(), &params, &mut |_| {}).expect("gif export");
+        for out in [&mp4, &gif] {
+            assert_ne!(std::fs::read(out).unwrap(), b"previous export");
+            let kept = std::fs::metadata(out).unwrap().permissions().mode() & 0o777;
+            assert_eq!(kept, mode, "{} replaced a {mode:o} file, got {kept:o}", out.display());
+        }
+    }
+}
+
 #[test]
 fn gif_export_spans_the_whole_timeline() {
     let Some(dir) = media_dir() else {
@@ -945,7 +1180,40 @@ fn gif_export_spans_the_whole_timeline() {
 
     let bytes = std::fs::read(&out).expect("read gif");
     let palettes = gif_frame_palettes(&bytes);
-    assert_eq!(palettes.len(), 48, "GIF carries {} frames", palettes.len());
+    // Each second is one still colour: a frame that changed nothing lengthens
+    // the image before it instead of being written, so there are fewer images
+    // than frames, and their delays still add up to the 4 s.
+    assert!(
+        (4..48).contains(&palettes.len()),
+        "a still second must be one image, not twelve: {} images",
+        palettes.len()
+    );
+    let delays = gif_frame_delays(&bytes);
+    assert_eq!(delays.len(), palettes.len(), "one delay per image");
+    let total: u32 = delays.iter().map(|&d| d as u32).sum();
+    assert!((399..=401).contains(&total), "the delays add up to {total} cs, not 400");
+
+    // The cut to green, 1 s in, gets a palette of its own at once: mapped to the
+    // red second's palette it came out brown, for the 1.5 s until the next one.
+    let starts: Vec<u32> = delays
+        .iter()
+        .scan(0u32, |t, &d| {
+            let start = *t;
+            *t += d as u32;
+            Some(start)
+        })
+        .collect();
+    let green = starts
+        .iter()
+        .position(|&t| (99..=101).contains(&t))
+        .expect("an image starting at the cut to green, 1 s in");
+    let greenness = palettes[green]
+        .iter()
+        .map(|c| c[1] as f64 - c[0] as f64)
+        .sum::<f64>()
+        / palettes[green].len() as f64;
+    // lavfi's green is (0, 128, 0), against a red palette's strongly negative mean.
+    assert!(greenness > 10.0, "the green second's palette is not green ({greenness:.1})");
 
     let first = redness(&palettes[0]);
     let last = redness(&palettes[palettes.len() - 1]);

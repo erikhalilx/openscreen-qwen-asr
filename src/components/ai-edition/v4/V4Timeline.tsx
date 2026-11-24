@@ -21,6 +21,7 @@ import {
 	memo,
 	type KeyboardEvent as ReactKeyboardEvent,
 	type PointerEvent as ReactPointerEvent,
+	type RefObject,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -169,6 +170,8 @@ const PILL_SNAP_PX = 8;
  *  clips that follow — which is what a flex `gap` did, once per junction. */
 /** Below this a clip cannot show a label and a delete button inside itself. */
 const NARROW_CLIP_PX = 120;
+// Two 30px buttons, their 6px gap and the 6px gap beside the clip (see the CSS).
+const NARROW_CLIP_CONTROLS_OUTSET_PX = 72;
 // Whether a card can also carry its edited duration. The label row is capped at
 // `calc(100% - 50px)` so it clears the delete button, and everything in it but
 // the duration is incompressible: the 30px edit button and the 8px gap after it.
@@ -646,6 +649,8 @@ function LayoutChangeMenu({ tl, onClose }: { tl: TimelineApi; onClose: () => voi
 export function V4Timeline({
 	tl,
 	setCurrentTime,
+	canSeek,
+	seekEpochRef,
 	variant = "edit",
 	onDropAsset,
 	videoSources = [],
@@ -657,6 +662,10 @@ export function V4Timeline({
 }: {
 	tl: TimelineApi;
 	setCurrentTime: (sec: number) => void;
+	/** Checked before local playhead updates as well as deferred seek writes. */
+	canSeek?: () => boolean;
+	/** Incremented whenever an in-flight scrub must be discarded. */
+	seekEpochRef?: RefObject<number>;
 	variant?: "edit" | "media";
 	onDropAsset?: (assetId: string) => Promise<void>;
 	videoSources?: VideoSource[];
@@ -888,13 +897,15 @@ export function V4Timeline({
 	const [scrubbingTimeSec, setScrubbingTimeSec] = useState<number | null>(null);
 	const rafSeekRef = useRef<number>(0);
 	const pendingSeekTimeRef = useRef<number | null>(null);
+	const pendingSeekEpochRef = useRef(0);
 
 	// ── interactions ────────────────────────────────────────────────
 	const playheadElRef = useRef<HTMLDivElement | null>(null);
 
-	// Seek timeline position from a clientX pointer position.
+	/** Move the local playhead and schedule a seek tied to the current seek epoch. */
 	const seekToClientX = useCallback(
 		(clientX: number, isImmediate = false) => {
+			if (canSeek?.() === false) return;
 			// Measure the canvas (the zoomed timeline frame): (clientX - left)/width
 			// is the fraction along the FULL timeline under the cursor, so it stays
 			// correct under zoom/pan and is unaffected by padding or the scrollbar.
@@ -910,6 +921,7 @@ export function V4Timeline({
 			}
 
 			pendingSeekTimeRef.current = targetTime;
+			pendingSeekEpochRef.current = seekEpochRef?.current ?? 0;
 
 			if (isImmediate) {
 				if (rafSeekRef.current !== 0) {
@@ -925,14 +937,18 @@ export function V4Timeline({
 			if (rafSeekRef.current === 0) {
 				rafSeekRef.current = requestAnimationFrame(() => {
 					rafSeekRef.current = 0;
-					if (pendingSeekTimeRef.current !== null) {
+					if (
+						pendingSeekTimeRef.current !== null &&
+						pendingSeekEpochRef.current === (seekEpochRef?.current ?? 0) &&
+						canSeek?.() !== false
+					) {
 						setScrubbingTimeSec(pendingSeekTimeRef.current);
 						setCurrentTime(pendingSeekTimeRef.current);
 					}
 				});
 			}
 		},
-		[setCurrentTime, total],
+		[setCurrentTime, total, canSeek, seekEpochRef],
 	);
 
 	// Mousedown anywhere on the empty timeline (ruler, lanes background, or
@@ -943,8 +959,10 @@ export function V4Timeline({
 	// anywhere else. Also clears any region selection, closing the
 	// selected-element settings pane (FloatingInspector) the way clicking
 	// away from a selected element is expected to.
+	/** Arm a scrub drag, dropping queued positions invalidated by a voiceover pause. */
 	const startScrub = useCallback(
 		(e: ReactPointerEvent) => {
+			if (canSeek?.() === false) return;
 			if (e.button !== 0) return;
 			// Media has no playhead rendered, so there is nothing to scrub. Guarded
 			// here rather than at the three call sites: seeking an invisible cursor
@@ -968,7 +986,12 @@ export function V4Timeline({
 					rafSeekRef.current = 0;
 				}
 				if (pendingSeekTimeRef.current !== null) {
-					setCurrentTime(pendingSeekTimeRef.current);
+					if (
+						pendingSeekEpochRef.current === (seekEpochRef?.current ?? 0) &&
+						canSeek?.() !== false
+					) {
+						setCurrentTime(pendingSeekTimeRef.current);
+					}
 					pendingSeekTimeRef.current = null;
 				}
 				setScrubbingTimeSec(null);
@@ -976,7 +999,7 @@ export function V4Timeline({
 			window.addEventListener("pointermove", move);
 			window.addEventListener("pointerup", up);
 		},
-		[seekToClientX, tl, setCurrentTime, showLanes],
+		[seekToClientX, tl, setCurrentTime, showLanes, canSeek, seekEpochRef],
 	);
 
 	const [activePillDrag, setActivePillDrag] = useState<{
@@ -1322,7 +1345,7 @@ export function V4Timeline({
 				if (slipping) {
 					const nextOffsetMs = slipAudioOffsetMs(
 						track.offsetMs,
-						track.endMs - track.startMs,
+						track.endMs - track.startMs + (track.endOverflowMs ?? 0),
 						sourceLen,
 						(ev.clientX - startX) * slipSecPerPx * 1000,
 					);
@@ -1332,7 +1355,7 @@ export function V4Timeline({
 						x: ev.clientX,
 						y: ev.clientY,
 						inSec: nextTrimStart,
-						outSec: nextTrimStart + spanSec,
+						outSec: nextTrimStart + spanSec + (track.endOverflowMs ?? 0) / 1000,
 						durationSec: sourceLen,
 					});
 					// The span does not move; only the window onto the file does.
@@ -1351,9 +1374,12 @@ export function V4Timeline({
 				let nts = origTrimStart;
 				let nte = origTrimEnd;
 				if (mode === "move") {
-					// Cap so the whole track lands by `total`: no pill past 100%, and the
-					// export (which truncates at the programme end) matches what's shown.
-					const upper = Math.max(0, total - (origTrimEnd - origTrimStart));
+					// A music bed may overhang: placement clips its visible pill while retaining
+					// the tail for its fade. Voiceovers still land wholly inside the programme.
+					const upper = Math.max(
+						0,
+						total - (track.kind === "music" ? MIN_REGION_SEC : origTrimEnd - origTrimStart),
+					);
 					ns = Math.min(Math.max(0, snap(origStart + dxSec)), upper);
 				} else if (mode === "l") {
 					// The left edge can't cross the right one, and can't reveal more head
@@ -1403,6 +1429,13 @@ export function V4Timeline({
 				if (fin) {
 					void tl
 						.placeAudioTrack(fin.id, {
+							mode: slipping
+								? "slip"
+								: mode === "move"
+									? "move"
+									: mode === "l"
+										? "resize-start"
+										: "resize",
 							startMs: Math.round(fin.start * 1000),
 							endMs: Math.round((fin.start + Math.max(0, fin.trimEnd - fin.trimStart)) * 1000),
 							// Carries the left-edge trim: without it the head moved but the
@@ -2615,6 +2648,9 @@ export function V4Timeline({
 								// there is no arrangement that fits a button inside that — so while
 								// it is selected the controls step outside the box instead.
 								const narrow = boxLen * pxPerSec < NARROW_CLIP_PX;
+								const controlsLeft =
+									viewportWidthPx > 0 &&
+									(nav.end * total - boxStart - boxLen) * pxPerSec < NARROW_CLIP_CONTROLS_OUTSET_PX;
 								// The gutter is taken out of the card's own width below, so the
 								// room the label actually has is that much less than the span.
 								const durText = formatSec(dur);
@@ -2625,6 +2661,7 @@ export function V4Timeline({
 									<div
 										key={c.id}
 										data-clip-id={c.id}
+										data-controls-side={narrow ? (controlsLeft ? "left" : "right") : undefined}
 										className={`${styles.tlClip}${narrow ? ` ${styles.tlClipNarrow}` : ""}${
 											// Amber, because nobody shot it. Same token the mark it replaces
 											// used, so an insertion still reads as one at a glance.

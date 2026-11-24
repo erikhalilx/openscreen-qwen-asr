@@ -8,6 +8,7 @@ import { nativeBridgeClient } from "@/native";
 import { canRecordMicrophone, getPlatform } from "@/utils/platformUtils";
 import { type CameraDevice } from "../../hooks/useCameraDevices";
 import { useCameraHudSync } from "../../hooks/useCameraHudSync";
+import { useFloatingCameraPreview } from "../../hooks/useFloatingCameraPreview";
 import {
 	isPlaceholderMicrophoneLabel,
 	type MicrophoneDevice,
@@ -22,6 +23,7 @@ import { requestCameraAccess } from "../../lib/requestCameraAccess";
 import { Toaster } from "../ui/sonner";
 import {
 	HudCameraButton,
+	HudCameraPreviewButton,
 	HudCursorButton,
 	HudDivider,
 	HudDragHandle,
@@ -113,6 +115,7 @@ export function LaunchWindow() {
 	const languageCode = locale.split("-")[0].toUpperCase();
 
 	const {
+		webcamPreviewStream,
 		recording,
 		paused,
 		saving,
@@ -142,12 +145,16 @@ export function LaunchWindow() {
 		setWebcamDeviceName,
 		cursorCaptureMode,
 		setCursorCaptureMode,
+		presenterOverlay,
 		softwareEncoderFallbackNoticeVisible,
 		dismissSoftwareEncoderFallbackNotice,
 		recordingPrefsLoaded,
 	} = useScreenRecorder();
 
 	// Choosing a device and switching one on are deliberately separate concerns.
+	const cameraPreview = useFloatingCameraPreview(webcamPreviewStream, webcamEnabled && !saving);
+	const cameraPreviewShown = webcamEnabled && !saving && cameraPreview.visible;
+
 	// The mic and camera buttons are plain on/off toggles that use whatever device
 	// is currently selected (the system default until the user says otherwise);
 	// picking a different device — and checking it actually works — happens in the
@@ -1185,7 +1192,11 @@ export function LaunchWindow() {
 
 	const versionLabel = appInfo ? t("deviceSettings.version", { version: appInfo.version }) : null;
 
-	const hasNotices = Boolean(systemLocaleSuggestion) || softwareEncoderFallbackNoticeVisible;
+	const showPresenterOverlayWarning = Boolean(recording && presenterOverlay?.cameraInterrupted);
+	const hasNotices =
+		Boolean(systemLocaleSuggestion) ||
+		softwareEncoderFallbackNoticeVisible ||
+		showPresenterOverlayWarning;
 
 	return (
 		// Avoid w-screen/h-screen: 100vw can exceed the inner layout width when scrollbars
@@ -1292,6 +1303,14 @@ export function LaunchWindow() {
 								tooltip={t("tooltips.camera")}
 								onClick={toggleWebcam}
 							/>
+							{cameraPreview.supported && webcamEnabled && (
+								<HudCameraPreviewButton
+									visible={cameraPreviewShown}
+									disabled={saving}
+									label={t(cameraPreviewShown ? "floatingCamera.hide" : "floatingCamera.show")}
+									onClick={cameraPreview.toggle}
+								/>
+							)}
 							<HudSettingsButton
 								buttonRef={settingsTriggerRef}
 								locked={controlsLocked}
@@ -1456,6 +1475,21 @@ export function LaunchWindow() {
 								data-testid="hud-notice-column"
 								className={styles.hudNoticeColumn}
 							>
+								{showPresenterOverlayWarning && (
+									<div
+										role="alert"
+										data-hud-interactive="true"
+										data-testid="presenter-overlay-notice"
+										className={`${styles.hudNotice} w-full p-3 ${styles.electronNoDrag}`}
+									>
+										<div className="text-[14px] font-semibold text-amber-300">
+											{tCommon("presenterOverlay.interruptedTitle")}
+										</div>
+										<div className="mt-1 text-[12.5px] leading-relaxed text-white/75">
+											{tCommon("presenterOverlay.interruptedDescription")}
+										</div>
+									</div>
+								)}
 								{systemLocaleSuggestion && (
 									<HudNotice
 										title={t("systemLanguagePrompt.title")}

@@ -219,4 +219,29 @@ describe("NewEditorShell togglePlay cross-asset replay", () => {
 		expect(mocks.previewPlay).toHaveBeenCalledTimes(1);
 		expect(useProjectStore.getState().currentTimeSec).toBe(4);
 	});
+
+	it.each([
+		true,
+		false,
+	])("lets the preview resolve implicit seek intent when the transport is %s", async (playing) => {
+		useProjectStore.setState({
+			document: makeCrossAssetDocument(),
+			projectId: "p1",
+			currentTimeSec: 4.99,
+			playing: false,
+		});
+		renderShell();
+		if (playing) {
+			await act(async () => {
+				fireEvent.keyDown(document.body, { key: " ", code: "Space" });
+			});
+		}
+		await act(async () => {
+			fireEvent.keyDown(document.body, { key: "ArrowRight", code: "ArrowRight" });
+		});
+		expect(mocks.latestSeekTarget?.timeSec).toBeGreaterThan(5);
+		// A replacement video briefly reports paused before metadata. The shell
+		// must leave an implicit seek to the preview's current or queued intent.
+		expect(mocks.latestSeekTarget?.preservePlayback).toBeUndefined();
+	});
 });

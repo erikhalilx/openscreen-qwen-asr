@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Dialog, DialogContent, DialogTitle } from "./dialog";
 import { TOOLTIP_GAP_PX, Tooltip, TooltipProvider } from "./tooltip";
 
 class StubResizeObserver {
@@ -71,7 +72,9 @@ describe("Tooltip", () => {
 
 		const content = visibleTooltip();
 		expect(content).toHaveAttribute("dir", "auto");
-		expect(content?.className).toContain("max-w-[260px]");
+		expect(content?.className).toContain(
+			"max-w-[min(260px,var(--radix-tooltip-content-available-width))]",
+		);
 		// Balanced lines, so a translation never ends on a single orphan word.
 		expect(content?.className).toContain("text-balance");
 		expect(content).toHaveTextContent("Add a zoom at the playhead");
@@ -163,5 +166,67 @@ describe("Tooltip", () => {
 		});
 		expect(button).toHaveFocus();
 		expect(visibleTooltip()).toBeNull();
+	});
+
+	// v2.3.0-rc.1 e2e: the tooltip of the control just left stayed over the next one, and the next
+	// one showed none. Radix kept it open while the pointer sat in the triangle towards it, and
+	// blocked every other trigger meanwhile; on the click-through HUD no later move ever came.
+	it("closes as the pointer leaves, and the neighbour's opens at once", () => {
+		vi.useFakeTimers();
+		render(
+			<TooltipProvider>
+				<Tooltip content="System audio: records what you hear">
+					<button type="button">Audio</button>
+				</Tooltip>
+				<Tooltip content="Microphone: records your voice">
+					<button type="button">Mic</button>
+				</Tooltip>
+			</TooltipProvider>,
+		);
+		const audio = screen.getByRole("button", { name: "Audio" });
+		const mic = screen.getByRole("button", { name: "Mic" });
+		fireEvent.pointerMove(audio);
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		expect(visibleTooltip()).toHaveTextContent("System audio");
+
+		// No pointer move after the leave: the HUD's case, once the pointer is off the bar.
+		fireEvent.pointerLeave(audio);
+		act(() => {
+			vi.advanceTimersByTime(200);
+		});
+		expect(visibleTooltip()).toBeNull();
+
+		fireEvent.pointerMove(mic);
+		expect(visibleTooltip()).toHaveTextContent("Microphone");
+	});
+
+	// v2.3.0-rc.1 e2e (macOS D1): the Edit-clip dialog's 180° tip opened at z 50, under the dialog.
+	it("draws above the highest dialog layer", () => {
+		vi.useFakeTimers();
+		render(
+			<Dialog open>
+				<DialogContent aria-describedby={undefined}>
+					<DialogTitle>Edit clip</DialogTitle>
+					<TooltipProvider>
+						<Tooltip content="Turn the picture upside down">
+							<button type="button">180°</button>
+						</Tooltip>
+					</TooltipProvider>
+				</DialogContent>
+			</Dialog>,
+		);
+		const zOf = (element: Element) => Number(/\bz-\[(\d+)\]/.exec(element.className)?.[1] ?? 0);
+		const dialogLayer = Math.max(...[...document.body.querySelectorAll("*")].map(zOf));
+		expect(dialogLayer).toBeGreaterThanOrEqual(10000);
+
+		fireEvent.pointerMove(screen.getByRole("button", { name: "180°" }));
+		act(() => {
+			vi.advanceTimersByTime(400);
+		});
+		const tooltip = visibleTooltip();
+		expect(tooltip).not.toBeNull();
+		expect(zOf(tooltip as HTMLElement)).toBeGreaterThan(dialogLayer);
 	});
 });

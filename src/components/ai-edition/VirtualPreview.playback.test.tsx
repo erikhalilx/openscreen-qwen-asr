@@ -138,6 +138,80 @@ const reportedTimes = (onTimeChange: ReturnType<typeof vi.fn>) =>
 	onTimeChange.mock.calls.map((call) => call[0] as number);
 
 describe("VirtualPreview playback across a clip boundary", () => {
+	it("cancels queued playback on a source change but preserves its seek", () => {
+		const cancelRef = { current: null as (() => void) | null };
+		const sources = [
+			{ id: "a1", src: "file:///a1.mp4", label: "a1" },
+			{ id: "a2", src: "file:///a2.mp4", label: "a2" },
+		];
+		const clips = [clip("one", "a1", 0, 5, 0), clip("two", "a2", 0, 5, 5)];
+		const tree = (
+			seekTarget: { timeSec: number; requestId: number; preservePlayback?: boolean } | null,
+		) => (
+			<VirtualPreview
+				videoSources={sources}
+				clips={clips}
+				seekTarget={seekTarget}
+				cancelPendingPlaybackRef={cancelRef}
+			/>
+		);
+		const view = render(tree(null));
+		const first = view.container.querySelector("video") as HTMLVideoElement;
+		driveVideo(first);
+		act(() => fireEvent.loadedMetadata(first));
+		act(() => {
+			first.play();
+			view.rerender(tree({ timeSec: 8, requestId: 1, preservePlayback: true }));
+		});
+		const second = view.container.querySelector("video") as HTMLVideoElement;
+		const driven = driveVideo(second);
+		expect(cancelRef.current).not.toBeNull();
+		act(() => {
+			cancelRef.current?.();
+			fireEvent.loadedMetadata(second);
+		});
+		expect(second.play).not.toHaveBeenCalled();
+		expect(driven.currentTime).toBe(3);
+	});
+	// A media-error reload waits out its backoff with no seek queued yet; a pause or
+	// stop in that window must still cancel the play it will restore.
+	it("cancels the play intent of a media-error reload scheduled before the cancel", () => {
+		vi.useFakeTimers();
+		vi.spyOn(console, "warn").mockImplementation(() => {
+			// the retry logs on purpose
+		});
+		try {
+			const cancelRef = { current: null as (() => void) | null };
+			const view = render(
+				<VirtualPreview
+					videoSources={[{ id: "a1", src: "file:///a1.mp4", label: "a1" }]}
+					clips={[clip("one", "a1", 0, 10, 0)]}
+					cancelPendingPlaybackRef={cancelRef}
+				/>,
+			);
+			const element = view.container.querySelector("video") as HTMLVideoElement;
+			const video = driveVideo(element);
+			element.load = vi.fn();
+			act(() => fireEvent.loadedMetadata(element));
+			video.play();
+			Object.defineProperty(element, "error", {
+				configurable: true,
+				get: () => ({ code: 3, message: "decode" }),
+			});
+			act(() => fireEvent.error(element));
+			act(() => cancelRef.current?.());
+			act(() => {
+				vi.runOnlyPendingTimers();
+			});
+			expect(element.load).toHaveBeenCalled();
+			Object.defineProperty(element, "error", { configurable: true, get: () => null });
+			act(() => fireEvent.loadedMetadata(element));
+			expect(element.play).not.toHaveBeenCalled();
+		} finally {
+			vi.useRealTimers();
+			vi.restoreAllMocks();
+		}
+	});
 	// The reported bug: with two clips over ONE recording, playback stopped on reaching
 	// the second clip and the playhead landed at the end of the timeline.
 	it("crosses into the second clip of the same recording instead of stopping", () => {
@@ -1087,6 +1161,105 @@ describe("VirtualPreview replay", () => {
 
 		expect(videoA.currentTime).toBe(14);
 		expect(reportedTimes(onTimeChange).at(-1)).toBe(14);
+	});
+
+	it.each([
+		{
+			initiallyPlaying: true,
+			firstIntent: undefined,
+			nextIntent: undefined,
+			shouldPlay: true,
+			intermediateImplicitSeek: false,
+		},
+		{
+			initiallyPlaying: true,
+			firstIntent: true,
+			nextIntent: undefined,
+			shouldPlay: true,
+			intermediateImplicitSeek: false,
+		},
+		{
+			initiallyPlaying: true,
+			firstIntent: true,
+			nextIntent: false,
+			shouldPlay: false,
+			intermediateImplicitSeek: false,
+		},
+		{
+			initiallyPlaying: false,
+			firstIntent: undefined,
+			nextIntent: undefined,
+			shouldPlay: false,
+			intermediateImplicitSeek: false,
+		},
+		{
+			initiallyPlaying: true,
+			firstIntent: true,
+			nextIntent: false,
+			shouldPlay: false,
+			intermediateImplicitSeek: true,
+		},
+	])("keeps source-switch intent (playing $initiallyPlaying; intermediate $intermediateImplicitSeek; next $nextIntent)", ({
+		initiallyPlaying,
+		firstIntent,
+		nextIntent,
+		shouldPlay,
+		intermediateImplicitSeek,
+	}) => {
+		const sources: VideoSource[] = [
+			{ id: "a1", src: "file:///tmp/a1.mp4", label: "a1" },
+			{ id: "a2", src: "file:///tmp/a2.mp4", label: "a2" },
+		];
+		const clips = [clip("clip_1", "a1", 0, 5, 0), clip("clip_2", "a2", 0, 5, 5)];
+		let seekTarget: {
+			timeSec: number;
+			requestId: number;
+			preservePlayback?: boolean;
+		} | null = null;
+		const view = render(
+			<VirtualPreview videoSources={sources} clips={clips} seekTarget={seekTarget} />,
+		);
+		const firstElement = view.container.querySelector("video");
+		if (!firstElement) throw new Error("no initial video");
+		const firstVideo = driveVideo(firstElement);
+		act(() => fireEvent.loadedMetadata(firstElement));
+		if (initiallyPlaying) firstVideo.play();
+		firstVideo.seekTo(3);
+
+		act(() => {
+			seekTarget = { timeSec: 6, requestId: 1, preservePlayback: firstIntent };
+			view.rerender(
+				<VirtualPreview videoSources={sources} clips={clips} seekTarget={seekTarget} />,
+			);
+		});
+		const nextElement = view.container.querySelector("video");
+		if (!nextElement || nextElement === firstElement) throw new Error("source did not switch");
+		const nextVideo = driveVideo(nextElement);
+		expect(nextElement.paused).toBe(true);
+		if (intermediateImplicitSeek) {
+			act(() => {
+				seekTarget = { timeSec: 6.25, requestId: 2 };
+				view.rerender(
+					<VirtualPreview videoSources={sources} clips={clips} seekTarget={seekTarget} />,
+				);
+			});
+		}
+
+		// Pointerup or a later drag position arrives while the new decoder is
+		// still paused before metadata. It must retain the scrub's play intent.
+		act(() => {
+			seekTarget = {
+				timeSec: 6.5,
+				requestId: intermediateImplicitSeek ? 3 : 2,
+				preservePlayback: nextIntent,
+			};
+			view.rerender(
+				<VirtualPreview videoSources={sources} clips={clips} seekTarget={seekTarget} />,
+			);
+		});
+		act(() => fireEvent.loadedMetadata(nextElement));
+		expect(nextVideo.currentTime).toBe(1.5);
+		expect(nextElement.paused).toBe(!shouldPlay);
 	});
 
 	it("does not let stale loadState in tick closure block clip boundary checks or timeline end", () => {

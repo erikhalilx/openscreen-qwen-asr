@@ -19,6 +19,7 @@ use crate::cursor::CursorTrack;
 use crate::d3d::Gpu;
 use crate::ffi::AVFrame;
 use crate::frame_geometry::webcam_is_real;
+use crate::live::cursor_key;
 use crate::pipeline::{ClipSource, Decoder};
 use crate::regions::{speed_segments_for_window, SpeedSegment};
 use crate::scene::Scene;
@@ -298,9 +299,10 @@ fn accepts_clip_start(current: f64, target: f64, hold_tail_sec: f64) -> Option<b
     None
 }
 
-/// Seek a clip start within the tail margin. A future frame across an
-/// interior gap is invalid, but a request before the first frame of an offset
-/// stream retains the existing first-frame hold.
+/// Seek a clip start within the tail margin. A sparse recording can have a
+/// nearby preceding frame even when the next update is far ahead. Recover
+/// that frame within the same margin, while still rejecting larger gaps and
+/// retaining the first-frame hold for an offset stream.
 unsafe fn seek_clip_start(decoder: &mut Decoder, target: f64, hold_tail_sec: f64) -> Result<bool> {
     let frame = decoder.seek_to_or_last(target)?;
     if frame.is_null() {
@@ -308,6 +310,13 @@ unsafe fn seek_clip_start(decoder: &mut Decoder, target: f64, hold_tail_sec: f64
     }
     if let Some(accepted) = accepts_clip_start(decoder.cur_time_sec(), target, hold_tail_sec) {
         return Ok(accepted);
+    }
+    // `seek_to` rounds forward. Try the bounded preceding window before deciding
+    // that the clip starts in a hole; do not show the future update early.
+    let from = (target - CLIP_START_TAIL_TOLERANCE_SEC).max(0.0);
+    let previous = decoder.seek_to(from)?;
+    if !previous.is_null() && decoder.cur_time_sec() <= target {
+        return advance_decoder_to(decoder, target, 0.0);
     }
     // Only a distant future result needs this extra seek. Distinguish a late
     // stream origin from a missing interior interval using the actual first
@@ -425,11 +434,12 @@ unsafe fn walk_timeline(
                 clip_index + 1,
             );
         }
+        // Only the screen bounds the clip. A camera that ends first holds its last frame
+        // (`advance_decoder_to`), as the preview does: the recorder stamps the camera with the
+        // HUD's wall-clock length, a few hundred ms short of the native screen file, and
+        // clamping to it cut that tail off every recorded take and shifted every later clip.
         let mut source_end_sec = clip.source_end_sec;
         if let Some(duration) = screen_available_duration {
-            source_end_sec = source_end_sec.min(duration);
-        }
-        if let Some(duration) = webcam_available_screen_end {
             source_end_sec = source_end_sec.min(duration);
         }
         if source_end_sec + 1e-6 < clip.source_end_sec {
@@ -460,6 +470,8 @@ unsafe fn walk_timeline(
             programme_sec,
             out_fps as f64,
         );
+        // A turned clip is planned in what the viewer sees: its cursor track is the mirrored one.
+        let turned = clip_scene.as_ref().is_some_and(|s| s.screen_turned());
         if clip_scene.is_some() {
             comp.set_scene(clip_scene);
         }
@@ -494,18 +506,21 @@ unsafe fn walk_timeline(
         }
 
         if cursor_enabled {
-            if !cursor_tracks.contains_key(&clip.screen) {
+            // Keyed by file AND turn: the same file turned is another track.
+            let key = cursor_key(&clip.screen, turned);
+            if !cursor_tracks.contains_key(&key) {
                 let path = format!("{}.cursor.json", clip.screen);
                 if let Ok(raw) = CursorTrack::load(&path, 0.0, 24.0 * 3600.0) {
-                    cursor_tracks.insert(clip.screen.clone(), raw.smoothed(cursor_smoothing));
+                    let raw = if turned { raw.turned() } else { raw };
+                    cursor_tracks.insert(key.clone(), raw.smoothed(cursor_smoothing));
                 }
                 // absente/illisible → pas d'entrée : ce clip s'exporte sans curseur (visible,
                 // pas masqué en un curseur fantôme d'un autre clip).
             }
-            if cursor_active_path.as_deref() != Some(clip.screen.as_str()) {
-                if let Some(track) = cursor_tracks.get(&clip.screen) {
+            if cursor_active_path.as_deref() != Some(key.as_str()) {
+                if let Some(track) = cursor_tracks.get(&key) {
                     comp.set_cursor(track.clone());
-                    cursor_active_path = Some(clip.screen.clone());
+                    cursor_active_path = Some(key);
                 } else {
                     comp.clear_cursor();
                     comp.set_cursor_time(None);

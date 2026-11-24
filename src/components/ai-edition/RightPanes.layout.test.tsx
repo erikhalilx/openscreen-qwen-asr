@@ -366,6 +366,19 @@ describe("LayoutPane picture-in-picture camera", () => {
 		expect(stored()).toMatchObject({ webcamAnchor: "top-left" });
 	});
 
+	it("changes the camera shadow independently of composition shadow", () => {
+		renderLayout(seedProject(true));
+		const shadow = screen.getByRole("group", { name: "Shadow" });
+		expect(within(shadow).getByRole("button", { name: "Medium" })).toHaveAttribute(
+			"aria-pressed",
+			"true",
+		);
+		fireEvent.click(within(shadow).getByRole("button", { name: "None" }));
+		expect(stored()).toMatchObject({ webcamShadowIntensity: 0 });
+		fireEvent.click(within(shadow).getByRole("button", { name: "Strong" }));
+		expect(stored()).toMatchObject({ webcamShadowIntensity: 0.9 });
+	});
+
 	// The new centre participates in the same keyboard grid as every edge-middle anchor.
 	it("moves through the centre of the grid with the arrow keys", () => {
 		renderLayout(seedProject(true));

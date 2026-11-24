@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "Échec de l'export.",
 		"writingFile": "Écriture du fichier…",
 		"renderingFrames": "Rendu des images",
+		"renderingGif": "Export du GIF",
 		"framesEta": "{{current}} / {{total}} images · ETA {{eta}}s",
 		"preparingEncoder": "Préparation de l'encodeur…",
 		"close": "Fermer",
@@ -346,7 +347,15 @@
 		"openHint": "pour ouvrir",
 		"browseFiles": "Parcourir les fichiers…",
 		"deleteProject": "Supprimer le projet",
-		"confirmDelete": "Supprimer ce projet ? Vos enregistrements sont conservés."
+		"confirmDelete": "Supprimer ce projet ? Vos enregistrements sont conservés.",
+		"confirmDeleteProject": "Supprimer ce projet ?",
+		"alsoTrash": "Placer aussi ses enregistrements dans la Corbeille ({{size}})",
+		"alsoRecycle": "Placer aussi ses enregistrements dans la Corbeille ({{size}})",
+		"recordingsKeptFor": "Les enregistrements utilisés par {{projects}} sont conservés.",
+		"recordingsKeptUnreadable": "Certains projets n'ont pas pu être lus : les enregistrements de ce projet sont donc conservés.",
+		"trashFailed": "Impossible de placer les enregistrements dans la Corbeille. Les supprimer définitivement ?",
+		"recycleFailed": "Impossible de placer les enregistrements dans la Corbeille. Les supprimer définitivement ?",
+		"deletePermanently": "Supprimer définitivement"
 	},
 	"editClipDialog": {
 		"title": "Modifier le clip",
@@ -357,6 +366,10 @@
 		"duration": "Durée finale",
 		"reset": "Réinitialiser",
 		"apply": "Appliquer",
+		"rotation": "Rotation",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "Retourner l'image, par ex. pour une caméra montée à l'envers",
 		"pickClipTitle": "Choisissez un clip à modifier",
 		"clipLabel": "Clip {{index}}"
 	},

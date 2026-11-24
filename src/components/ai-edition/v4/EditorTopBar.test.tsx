@@ -42,7 +42,7 @@ const noop = () => {};
 
 function renderTopBar(
 	projectTitle: string | null,
-	history: { canUndo?: boolean; canRedo?: boolean } = {},
+	state: { canUndo?: boolean; canRedo?: boolean; dirty?: boolean } = {},
 ) {
 	const onRename = vi.fn();
 	const onShowAbout = vi.fn();
@@ -60,10 +60,10 @@ function renderTopBar(
 				mode="edit"
 				onModeChange={noop}
 				projectTitle={projectTitle}
-				dirty={false}
+				dirty={state.dirty ?? false}
 				canExport={false}
-				canUndo={history.canUndo ?? false}
-				canRedo={history.canRedo ?? false}
+				canUndo={state.canUndo ?? false}
+				canRedo={state.canRedo ?? false}
 				chatOpen={false}
 				actions={{
 					openProject: onOpenProject,
@@ -241,6 +241,20 @@ describe("AppMenu", () => {
 		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
 	});
 
+	it("saves diagnostics through main, the editor having no menu bar on Windows and Linux", () => {
+		const saveDiagnostics = vi.fn(() => Promise.resolve());
+		(window as unknown as { electronAPI?: unknown }).electronAPI = { saveDiagnostics };
+		try {
+			renderTopBar("Demo Project");
+			fireEvent.click(screen.getByRole("button", { name: /OpenScreen/ }));
+			fireEvent.click(screen.getByRole("menuitem", { name: /actions\.saveDiagnostics/ }));
+			expect(saveDiagnostics).toHaveBeenCalledTimes(1);
+			expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		} finally {
+			(window as unknown as { electronAPI?: unknown }).electronAPI = undefined;
+		}
+	});
+
 	it("offers the repo permanently and routes it through main, on every channel", async () => {
 		// The counterpart to the one-time ask after an export: this row is always there. It is
 		// deliberately NOT behind the update veto — a link to the repo root is the one thing a
@@ -391,11 +405,17 @@ describe("EditorTopBar responsive affordances and tooltips", () => {
 		for (const tab of tabs) expect(tab).not.toHaveAttribute("title");
 	});
 
-	it("says the saved state beside the project name, to the eye and to a screen reader", () => {
-		renderTopBar("Demo Project");
-		const savedIndicator = screen.getByTitle("topbar.saved");
-		expect(savedIndicator).toBeInTheDocument();
-		expect(savedIndicator).toHaveTextContent("topbar.saved");
+	it.each([
+		false,
+		true,
+	])("shows the save state in a tooltip and to screen readers (dirty=%s)", async (dirty) => {
+		renderTopBar("Demo Project", { dirty });
+		const label = dirty ? "topbar.unsaved" : "topbar.saved";
+		const savedIndicator = screen.getByText(label).parentElement;
+		expect(savedIndicator).not.toHaveAttribute("title");
+		expect(savedIndicator).toHaveTextContent(label);
+		fireEvent.pointerMove(savedIndicator as HTMLElement);
+		await waitFor(() => expect(screen.getByRole("tooltip")).toHaveTextContent(label));
 	});
 
 	it("steps through history from the bar, and says when there is nothing to step to", () => {
@@ -492,6 +512,11 @@ describe("AppMenu sizing (issue #969)", () => {
 		expect(body, selector).toBeDefined();
 		return body ?? "";
 	};
+
+	it("lets the save status receive real pointer events inside the titlebar", () => {
+		expect(rule("saveDot")).toMatch(/-webkit-app-region:\s*no-drag/);
+		expect(rule("saveDot")).toMatch(/(^|\s)app-region:\s*no-drag/);
+	});
 
 	it("sizes the menu to its widest row", () => {
 		expect(rule("appMenu")).toMatch(/^\s*width:\s*max-content;/m);
