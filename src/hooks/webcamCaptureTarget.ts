@@ -68,13 +68,22 @@ export function webcamPresetFor(quality: WebcamQualityId | undefined): WebcamQua
 export function webcamVideoConstraints(
 	deviceId: string | undefined,
 	quality?: WebcamQualityId,
+	platform?: string,
 ): MediaTrackConstraints {
 	const preset = webcamPresetFor(quality);
+	const landscapeMode = { aspectRatio: { min: 1.01 }, resizeMode: "none" };
 	return {
 		...(deviceId ? { deviceId: { exact: deviceId } } : {}),
 		width: { ideal: preset.width },
 		height: { ideal: preset.height },
 		frameRate: { ideal: WEBCAM_TARGET_FRAME_RATE, max: WEBCAM_TARGET_FRAME_RATE },
+		// The macOS camera can offer a portrait mode closer to the requested pixel
+		// count than its landscape modes. Prefer a native wide frame before ranking
+		// resolutions. An unavailable advanced set is skipped, so portrait-only
+		// cameras still open and their frames are never stretched into landscape.
+		...(platform === "darwin" && {
+			advanced: [landscapeMode],
+		}),
 	};
 }
 

@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 // Windows at 125 %, as in #1004: a 1920x1080 panel whose taskbar leaves a 1032px work area.
 const WORK_AREA_BOTTOM_PX = 1032;
@@ -105,6 +105,12 @@ afterAll(() => {
 });
 
 const send = (channel: string, ...args: unknown[]) => electron.handlers.get(channel)?.({}, ...args);
+
+afterEach(() => {
+	// The pointer-crossing test starts the production poll. Stop it before another
+	// test or the worker's teardown can tick against this geometry-only mock.
+	send("hud-overlay-ignore-mouse-events", false);
+});
 
 /** A new HUD, sized by the renderer's first measurement: 944x705 DIP, 1180x882 px. */
 function openHud() {

@@ -2652,11 +2652,13 @@ impl Compositor {
         // Et la remontee du contour interieur du chrome au-dessus de l'ecran (`mb.z` au mode 0,
         // `color.z` au mode 8) : l'arrondi du haut se fait par le cadre. 0 sans fenetre.
         let top_lift = g.screen_top_lift_px([rw, rh]);
+        // The screen texture's source rect: a turned clip samples it with reversed bounds.
+        let src_uv = g.screen_src(g.cut);
         let screen_layer = match tilt.as_ref() {
             None => {
                 // Sous le masque d'un layout en bloc, rogne au slot (`mask_flat_screen`).
                 let (dst, src, quad_px, radius_px) =
-                    g.mask_flat_screen(g.s_dst, g.cut, s_px, g.s_radius, [rw, rh]);
+                    g.mask_flat_screen(g.s_dst, src_uv, s_px, g.s_radius, [rw, rh]);
                 LayerCB {
                     dst,
                     src,
@@ -2664,7 +2666,7 @@ impl Compositor {
                     radius_px,
                     mode: 0.0,
                     color: [1.0, 1.0, 1.0, 1.0],
-                    src_prev: g.cut,
+                    src_prev: src_uv,
                     dst_prev: g.s_dst_prev,
                     mb: [g.screen_pixel_taps([rw, rh]), g.mb_amount, top_lift, square_top],
                     ..Default::default()
@@ -2675,7 +2677,7 @@ impl Compositor {
                 quad,
                 s_px,
                 quad_center_px,
-                g.cut,
+                src_uv,
                 g.focus_plane,
                 g.s_radius,
                 top_lift,
@@ -3537,7 +3539,7 @@ impl Compositor {
             self.generate_mips(&mut encoder, &p.mips);
         }
         // Passe 0 bis : l'ecran cadre, isole sur transparent, quand il est floute en bloc.
-        if trail.is_some() {
+        if g.show_screen && trail.is_some() {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("screen-trail-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3623,7 +3625,7 @@ impl Compositor {
         // Passe 2 : l'ecran, compose par-dessus le fond (eventuellement floute) avec
         // `LoadOp::Load`. Puis les flous de confidentialite, le curseur, la camera et les autres
         // annotations, dans cet ordre : celui de Windows et macOS.
-        {
+        if g.show_screen {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("fg-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3665,7 +3667,7 @@ impl Compositor {
         // Passe 2 bis : les flous de confidentialite, sur le metrage, AVANT le curseur (parite
         // Windows et macOS). Le curseur reste net par-dessus, et le cristal de Prism Glow, qui
         // refracte l'image composee, n'y voit que des pixels deja floutes.
-        if !privacy_draws.is_empty() {
+        if g.show_screen && !privacy_draws.is_empty() {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("privacy-pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -3844,7 +3846,7 @@ impl Compositor {
         let footage = effects
             .iter()
             .any(|e| crate::shader_fx::reads_footage(e))
-            .then(|| self.encode_footage_copy(&mut encoder, (&sy, &su, &sv), g.content_cut, stw, sth));
+            .then(|| self.encode_footage_copy(&mut encoder, (&sy, &su, &sv), g.screen_src(g.content_cut), stw, sth));
         for e in with_target(ShaderEffectTarget::Image) {
             self.encode_shader_effect(&mut encoder, e, (&self.rt, &self.rt_view), &fx_context(e), footage.as_ref());
         }
@@ -5282,6 +5284,29 @@ mod tests {
     const NO_EFFECT: &str = "null";
     const CUTOUT: &str =
         r#"{"mode":"transparent","blurIntensity":0,"background":null,"modelPath":null}"#;
+
+    #[test]
+    fn camera_only_cutout_reveals_wallpaper_instead_of_screen() {
+        let Some(gpu) = gpu() else { return };
+        let comp = Compositor::new_sized(&gpu, 320, 180).expect("compositor");
+        for legacy in [false, true] {
+            let mut scene = Scene::from_json(&pip_scene_json(CUTOUT)).expect("scene");
+            scene.layout.preset = if legacy { "picture-in-picture" } else { "camera-only" }.to_owned();
+            if legacy {
+                scene.camera_fullscreen_regions = serde_json::from_str(r#"[{"startSec":-10,"endSec":10}]"#).expect("legacy camera span");
+            }
+            scene.layout.webcam_rect = Some(crate::scene::SceneRect {
+                x: 0.0, y: 0.0, width: 1.0, height: 1.0,
+            });
+            comp.set_webcam_mask(&half_mask(8, 8), 8, 8).expect("mask");
+            let rgba = compose_pip_scene(&comp, &gpu, scene, true);
+            assert!(camera_pixels(&rgba) > 10_000, "the foreground camera must remain visible");
+            let blue = rgba.chunks_exact(4).filter(|px| px[0] < 10 && (px[1] as i16 - 128).abs() < 10 && px[2] > 245).count();
+            assert!(blue > 20_000, "cutout must reveal the blue wallpaper, not the gray screen: {blue}");
+            let gray = rgba.chunks_exact(4).filter(|px| (110..150).contains(&px[0]) && (110..150).contains(&px[1]) && (110..150).contains(&px[2])).count();
+            assert_eq!(gray, 0, "camera-only leaked hidden screen pixels");
+        }
+    }
 
     /// Le piege que le brief nomme : un mode SANS masque ne doit rien changer.
     ///

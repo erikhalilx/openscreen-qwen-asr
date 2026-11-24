@@ -1,6 +1,8 @@
 # OpenScreen Qwen3-ASR：千问本地语音识别版
 
-这是融合 [OpenScreen v2.2.1](https://github.com/getopenscreen/openscreen/releases/tag/v2.2.1) 的独立社区 Fork，默认使用 Qwen3-ASR-0.6B、Qwen3-ForcedAligner-0.6B 和 Silero VAD。保留录屏、编辑器、时间线、摄像头效果、原生预览、字幕、项目保存、导出及 CLI/MCP 源码。AI 聊天和翻译仍需用户配置自己的服务商。
+这是 OpenScreen 的独立社区 Fork。Fork **0.4.0** 在 v2.2.1 融合版的基础上选取了 [OpenScreen v2.3.0](https://github.com/getopenscreen/openscreen/releases/tag/v2.3.0) 的录制、剪辑和导出改进。默认使用 Qwen3-ASR-0.6B、Qwen3-ForcedAligner-0.6B 和 Silero VAD。保留录屏、编辑器、时间线、摄像头效果、原生预览、字幕、项目保存、导出及 CLI/MCP 源码。AI 聊天和翻译仍需用户配置自己的服务商。
+
+从已安装的 OpenScreen Qwen 升级时，退出旧版后按下文构建并安装，即可继续使用原有录制与项目库。
 
 ## 已安装应用的转录补装
 

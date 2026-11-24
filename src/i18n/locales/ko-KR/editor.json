@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "내보내기에 실패했습니다.",
 		"writingFile": "파일 쓰는 중…",
 		"renderingFrames": "프레임 렌더링 중",
+		"renderingGif": "GIF 내보내는 중",
 		"framesEta": "{{current}} / {{total}} 프레임 · 예상 남은 시간 {{eta}}초",
 		"preparingEncoder": "인코더 준비 중…",
 		"close": "닫기",
@@ -346,7 +347,15 @@
 		"openHint": "열기",
 		"browseFiles": "파일 찾아보기…",
 		"deleteProject": "프로젝트 삭제",
-		"confirmDelete": "이 프로젝트를 삭제할까요? 녹화 파일은 유지됩니다."
+		"confirmDelete": "이 프로젝트를 삭제할까요? 녹화 파일은 유지됩니다.",
+		"confirmDeleteProject": "이 프로젝트를 삭제할까요?",
+		"alsoTrash": "녹화 파일도 휴지통으로 이동 ({{size}})",
+		"alsoRecycle": "녹화 파일도 휴지통으로 이동 ({{size}})",
+		"recordingsKeptFor": "{{projects}}에서 사용 중인 녹화 파일은 유지됩니다.",
+		"recordingsKeptUnreadable": "일부 프로젝트를 읽을 수 없어 이 프로젝트의 녹화 파일은 유지됩니다.",
+		"trashFailed": "녹화 파일을 휴지통으로 이동하지 못했습니다. 영구적으로 삭제할까요?",
+		"recycleFailed": "녹화 파일을 휴지통으로 이동하지 못했습니다. 영구적으로 삭제할까요?",
+		"deletePermanently": "영구 삭제"
 	},
 	"editClipDialog": {
 		"title": "클립 편집",
@@ -357,6 +366,10 @@
 		"duration": "최종 길이",
 		"reset": "재설정",
 		"apply": "적용",
+		"rotation": "회전",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "화면을 거꾸로 뒤집습니다(예: 거꾸로 장착한 카메라)",
 		"pickClipTitle": "편집할 클립 선택",
 		"clipLabel": "클립 {{index}}"
 	},

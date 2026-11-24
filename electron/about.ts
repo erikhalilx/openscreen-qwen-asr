@@ -13,6 +13,8 @@ export const WEBSITE_URL = "https://github.com/erikhalilx/openscreen-qwen-asr";
  *  electron-builder's `productName` ("Openscreen") when packaged and to package.json's `name`
  *  ("openscreen") in dev, so the About box would disagree with its own title bar. */
 export const PRODUCT_NAME = "OpenScreen Qwen";
+export const DEV_PRODUCT_NAME = "OpenScreen Qwen Dev";
+export const DEV_OPEN_APP_SHORTCUT = { key: "o", ctrl: true, shift: true, alt: true } as const;
 /** The collective form, and deliberately NOT the whole of LICENSE. LICENSE carries two holders:
  *  Siddharth Vaddem, who created the project — MIT obliges us to keep that notice on a codebase
  *  that still contains his code — and the contributors collectively. This is the line every user

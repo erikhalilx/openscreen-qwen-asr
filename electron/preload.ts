@@ -1,6 +1,9 @@
 import { contextBridge, ipcRenderer, sharedTexture, webUtils } from "electron";
 import type { NativeLinuxRecordingRequest } from "../src/lib/nativeLinuxRecording";
-import type { NativeMacRecordingRequest } from "../src/lib/nativeMacRecording";
+import type {
+	NativeMacPresenterOverlayEvent,
+	NativeMacRecordingRequest,
+} from "../src/lib/nativeMacRecording";
 import type { NativeWindowsRecordingRequest } from "../src/lib/nativeWindowsRecording";
 import type { RecordingSession, StoreRecordedSessionInput } from "../src/lib/recordingSession";
 import type { ShortcutBinding } from "../src/lib/shortcuts";
@@ -170,6 +173,24 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	getLastPickedSource: (): Promise<string | null> => {
 		return ipcRenderer.invoke("get-last-picked-source");
 	},
+
+	configureCameraPreview: (enabled: boolean, visible: boolean): Promise<void> =>
+		ipcRenderer.invoke("camera-preview:configure", enabled, visible),
+	sendCameraPreviewFrame: (jpeg: string, aspectRatio: number): Promise<void> =>
+		ipcRenderer.invoke("camera-preview:frame", jpeg, aspectRatio),
+	resizeCameraPreview: (width: number): Promise<void> =>
+		ipcRenderer.invoke("camera-preview:resize", width),
+	hideCameraPreview: (): Promise<void> => ipcRenderer.invoke("camera-preview:hide"),
+	onCameraPreviewFrame: (callback: (jpeg: string) => void) => {
+		const listener = (_event: Electron.IpcRendererEvent, jpeg: string) => callback(jpeg);
+		ipcRenderer.on("camera-preview:frame", listener);
+		return () => ipcRenderer.removeListener("camera-preview:frame", listener);
+	},
+	onCameraPreviewHidden: (callback: () => void) => {
+		const listener = () => callback();
+		ipcRenderer.on("camera-preview:hidden", listener);
+		return () => ipcRenderer.removeListener("camera-preview:hidden", listener);
+	},
 	openNotes: () => {
 		return ipcRenderer.invoke("open-notes");
 	},
@@ -305,6 +326,13 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	},
 	startNativeMacRecording: (request: NativeMacRecordingRequest) => {
 		return ipcRenderer.invoke("start-native-mac-recording", request);
+	},
+	onNativeMacPresenterOverlayChanged: (
+		callback: (event: NativeMacPresenterOverlayEvent) => void,
+	) => {
+		const listener = (_: unknown, event: NativeMacPresenterOverlayEvent) => callback(event);
+		ipcRenderer.on("native-mac-presenter-overlay-changed", listener);
+		return () => ipcRenderer.removeListener("native-mac-presenter-overlay-changed", listener);
 	},
 	onNativeMacSystemAudioUnavailable: (callback: () => void) => {
 		const listener = () => callback();
@@ -501,6 +529,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
 	 *  the box is up, NOT when it is dismissed — there is no verdict to wait for, unlike
 	 *  `checkForUpdates` above. */
 	showAbout: () => ipcRenderer.invoke("show-about") as Promise<void>,
+	/** The tray's and the app menu's Save Diagnostics: main asks where, then shows the file. */
+	saveDiagnostics: () => ipcRenderer.invoke("save-diagnostics") as Promise<void>,
 	/** The full update veto, asked fresh. `getAppInfo().canCheckForUpdates` answers only the
 	 *  permanent half; this one also answers "not mid-take", so it is only correct for a caller
 	 *  that asks at the moment it shows the affordance. */

@@ -58,6 +58,13 @@ interface Window {
 		usesSystemSourcePicker?: () => Promise<boolean>;
 		/** Name of the last source picked in Apple's picker, for display only: it is not selected. */
 		getLastPickedSource?: () => Promise<string | null>;
+
+		configureCameraPreview?: (enabled: boolean, visible: boolean) => Promise<void>;
+		sendCameraPreviewFrame?: (jpeg: string, aspectRatio: number) => Promise<void>;
+		resizeCameraPreview?: (width: number) => Promise<void>;
+		hideCameraPreview?: () => Promise<void>;
+		onCameraPreviewFrame?: (callback: (jpeg: string) => void) => () => void;
+		onCameraPreviewHidden?: (callback: () => void) => () => void;
 		openNotes: () => Promise<{
 			opened: boolean;
 			reason?: string;
@@ -195,6 +202,11 @@ interface Window {
 		startNativeMacRecording: (
 			request: import("../src/lib/nativeMacRecording").NativeMacRecordingRequest,
 		) => Promise<import("../src/lib/nativeMacRecording").NativeMacRecordingStartResult>;
+		onNativeMacPresenterOverlayChanged: (
+			callback: (
+				event: import("../src/lib/nativeMacRecording").NativeMacPresenterOverlayEvent,
+			) => void,
+		) => () => void;
 		onNativeMacSystemAudioUnavailable: (callback: () => void) => () => void;
 		pauseNativeMacRecording: () => Promise<{
 			success: boolean;
@@ -476,6 +488,7 @@ interface Window {
 		getAppInfo: () => Promise<{ version: string; canCheckForUpdates: boolean }>;
 		checkForUpdates: () => Promise<void>;
 		showAbout: () => Promise<void>;
+		saveDiagnostics: () => Promise<void>;
 		canCheckForUpdatesNow: () => Promise<boolean>;
 		getUpdateBadge: () => Promise<import("./background-update").UpdateBadge | null>;
 		onUpdateBadgeChanged: (

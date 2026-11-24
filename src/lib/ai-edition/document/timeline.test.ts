@@ -1314,6 +1314,98 @@ describe("imported audio stays on the clips it was laid over (#1011)", () => {
 	const musicLane = (doc: AxcutDocument) =>
 		audioLanePills(doc.audioTracks, "music").map((p) => [p.startMs, p.endMs]);
 
+	it.each([
+		true,
+		false,
+	])("keeps a continuous-source take off a duplicated clip (loop=%s)", (loop) => {
+		// The desktop report: the copy joins clip_b into a 0–40 s clip. Source time
+		// still meets at 20 s, but the original take must leave the inserted 20 s empty.
+		const doc = makeDoc({
+			timeline: {
+				...makeDoc().timeline,
+				clips: [
+					makeClip({ id: "clip_a", sourceEndSec: 20, timelineEndSec: 20 }),
+					makeClip({
+						id: "clip_b",
+						sourceStartSec: 20,
+						sourceEndSec: 40,
+						timelineStartSec: 20,
+						timelineEndSec: 40,
+					}),
+				],
+			},
+			audioTracks: [
+				fragment({
+					id: "bed",
+					trackId: "bed",
+					clipId: "clip_a",
+					sourceStartSec: 2.957,
+					sourceEndSec: 20,
+					startMs: 2957,
+					endMs: 20_000,
+					offsetMs: 1553,
+					loop,
+					fadeInMs: 1000,
+				}),
+				fragment({
+					id: "bed_2",
+					trackId: "bed",
+					clipId: "clip_b",
+					sourceStartSec: 20,
+					sourceEndSec: 30.043,
+					startMs: 20_000,
+					endMs: 30_043,
+					offsetMs: loop ? 1553 : 18_596,
+					loop,
+					fadeOutMs: 1000,
+				}),
+			],
+		});
+		const before = structuredClone(doc);
+		const next = duplicateClip(doc, "clip_a");
+		const copied = next.timeline.clips[1];
+		expect(next.timeline.clips).toHaveLength(2);
+		expect(copied).toMatchObject({
+			sourceStartSec: 0,
+			sourceEndSec: 40,
+			timelineStartSec: 20,
+			timelineEndSec: 60,
+		});
+		expect(spans(next)).toEqual([
+			["bed", "clip_a", 2957, 20_000, 1553],
+			["bed", copied.id, 40_000, 50_043, loop ? 1553 : 18_596],
+		]);
+		expect(next.audioTracks[1]).toMatchObject({ sourceStartSec: 20, sourceEndSec: 30.043 });
+		expect(musicLane(next)).toEqual([
+			[2957, 20_000],
+			[40_000, 50_043],
+		]);
+		expect(doc).toEqual(before);
+		const inserted = insertAssetClip(doc, 1, {
+			id: "extra",
+			assetId: "extra_recording",
+			sourceStartSec: 0,
+			sourceEndSec: 3,
+			origin: "user",
+			reason: "",
+		});
+		expect(musicLane(inserted)).toEqual([
+			[2957, 20_000],
+			[23_000, 33_043],
+		]);
+
+		// Close the inserted gap: both halves of the original take rejoin, with the
+		// outer fades and the same place in its file.
+		const restored = setClipSourceRange(next, copied.id, 20, 40);
+		expect(musicLane(restored)).toEqual([[2957, 30_043]]);
+		expect(restored.audioTracks).toHaveLength(1);
+		expect(restored.audioTracks[0]).toMatchObject({
+			offsetMs: 1553,
+			fadeInMs: 1000,
+			fadeOutMs: 1000,
+		});
+	});
+
 	describe("the report's project", () => {
 		// Three clips; a 30 s bed across the first junction, a looping 4 s track across the
 		// second, both music.
@@ -1782,6 +1874,39 @@ describe("setClipSourceRange — the one shared clip-trim mutator", () => {
 		expect(next.timeline.clips[1]).toMatchObject({ timelineStartSec: 4, timelineEndSec: 14 });
 	});
 
+	it.each([
+		{ edited: "clip_b", firstEnd: 20, secondStart: 0, start: 20, end: 40 },
+		{ edited: "clip_a", firstEnd: 40, secondStart: 20, start: 0, end: 20 },
+	])("keeps the joined clip's full duration after editing $edited", (range) => {
+		const before = makeDoc({
+			timeline: {
+				...makeDoc().timeline,
+				clips: [
+					makeClip({
+						id: "clip_a",
+						sourceEndSec: range.firstEnd,
+						timelineEndSec: range.firstEnd,
+					}),
+					makeClip({
+						id: "clip_b",
+						sourceStartSec: range.secondStart,
+						sourceEndSec: 40,
+						timelineStartSec: range.firstEnd,
+						timelineEndSec: range.firstEnd + 40 - range.secondStart,
+					}),
+				],
+			},
+		});
+		const next = setClipSourceRange(before, range.edited, range.start, range.end);
+		expect(next.timeline.clips).toHaveLength(1);
+		expect(next.timeline.clips[0]).toMatchObject({
+			sourceStartSec: 0,
+			sourceEndSec: 40,
+			timelineStartSec: 0,
+			timelineEndSec: 40,
+		});
+	});
+
 	it("clamps/drops the trimmed clip's pills and refreshes the reflowed clip's ms cache", () => {
 		const next = setClipSourceRange(doc(), "clip_a", 0, 4);
 		const byId = Object.fromEntries(next.zoomRanges.map((z) => [z.id, z]));
@@ -1913,6 +2038,24 @@ describe("removeRegion — the one shared region-delete mutator", () => {
 		});
 		const next = removeRegion(doc, "zoom", "nope");
 		expect(next.zoomRanges.map((z) => z.id)).toEqual(["z1"]);
+	});
+});
+
+describe("withClipsChanged — rotation", () => {
+	it("does not join two media-contiguous clips that differ in rotation", () => {
+		const left = makeClip({ id: "clip_l", sourceStartSec: 0, sourceEndSec: 5 });
+		const right = makeClip({
+			id: "clip_r",
+			sourceStartSec: 5,
+			sourceEndSec: 10,
+			timelineStartSec: 5,
+			timelineEndSec: 10,
+		});
+		const doc = makeDoc();
+		const next = withClipsChanged(doc, [left, { ...right, rotation: 180 }]);
+		expect(next.timeline.clips).toHaveLength(2);
+		// Control: without the rotation they DO join.
+		expect(withClipsChanged(doc, [left, right]).timeline.clips).toHaveLength(1);
 	});
 });
 

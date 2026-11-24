@@ -35,6 +35,24 @@ describe("webcamVideoConstraints", () => {
 		expect(constraints.height).not.toHaveProperty("min");
 	});
 
+	it("prefers a native landscape mode on macOS without requiring it", () => {
+		const constraints = webcamVideoConstraints("internal-camera", "2160p", "darwin");
+		expect(constraints).toMatchObject({
+			deviceId: { exact: "internal-camera" },
+			width: { ideal: 3840 },
+			height: { ideal: 2160 },
+			advanced: [{ aspectRatio: { min: 1.01 }, resizeMode: "none" }],
+		});
+		expect(constraints).not.toHaveProperty("aspectRatio");
+		expect(constraints).not.toHaveProperty("resizeMode");
+	});
+
+	it.each(["win32", "linux"] as const)("leaves %s mode selection unchanged", (platform) => {
+		expect(webcamVideoConstraints(undefined, "2160p", platform)).toEqual(
+			webcamVideoConstraints(undefined, "2160p"),
+		);
+	});
+
 	it("still pins the chosen device and caps the frame rate", () => {
 		const constraints = webcamVideoConstraints("camera-7", "1440p");
 

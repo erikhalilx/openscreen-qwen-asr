@@ -1,6 +1,16 @@
-# OpenScreen Qwen3-ASR 0.3.2
+# OpenScreen Qwen3-ASR 0.4.0
 
 基于开源项目 OpenScreen（getopenscreen/openscreen）的 Fork 版本，适用于录屏讲解、教程制作及中文视频剪辑。以本地 Qwen3-ASR 替换原版 Whisper，优化中文语音识别与字幕生成，并支持独立双音轨、字幕编辑和视频导出。适用于 Apple 芯片 Mac（macOS 26+）。
+
+## Version 0.4.0 / 0.4.0 更新
+
+This release adopts selected recording, editing and export improvements from upstream [OpenScreen v2.3.0](https://github.com/getopenscreen/openscreen/releases/tag/v2.3.0). It adds a floating camera preview, prefers native landscape camera modes on macOS, and adds voiceover pause/resume, 180° screen-clip rotation and independent camera shadows. It also improves playback across clips, project switching, audio timing and export safety, and makes GIF encoding more efficient.
+
+本版选取 OpenScreen v2.3.0 的录制、编辑和导出改进，加入摄像头悬浮预览，macOS 采集优先横屏，支持旁白暂停与继续、录屏片段旋转 180° 和独立摄像头阴影。也修复跨片段播放、项目切换、音频时序与导出问题，并提升 GIF 编码效率。
+
+The local Qwen workflow, separate recording tracks and source-specific subtitles remain available. A normal local upgrade reuses the existing project library. The GitHub release contains source archives for local builds.
+
+保留本地千问、独立录制双音轨和分来源字幕。正常升级会继续使用现有项目库。GitHub 提供源码归档，可在本机编译。
 
 ## Version 0.3.2 / 0.3.2 更新
 

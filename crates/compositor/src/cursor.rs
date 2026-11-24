@@ -57,7 +57,9 @@ pub struct CursorTrack {
         std::sync::Arc<std::sync::Mutex<Vec<(ViewKey, std::sync::Arc<Vec<(f32, f32, f32)>>)>>>,
 }
 
-type ViewKey = (u32, u32, u32);
+type ViewKey = (u32, u32, u32, [u32; 4]);
+/// L'image entière comme recadrage `[x0, y0, x1, y1]` : le repère de la piste elle-même.
+pub const WHOLE_FRAME: [f32; 4] = [0.0, 0.0, 1.0, 1.0];
 /// Assez pour toutes les régions auto d'un clip ; au-delà, la plus ancienne est rejouée.
 const VIEW_CACHE_LEN: usize = 32;
 
@@ -119,6 +121,14 @@ fn smooth_follow_samples(samples: &[(f32, f32, f32)]) -> Vec<(f32, f32, f32)> {
     smoothed
 }
 
+/// Un point de la piste dans le recadrage `[x0, y0, x1, y1]`, en 0..1 de celui-ci. Sans borne :
+/// un pointeur hors du recadrage tire la vue vers ce bord, comme hors de l'écran. L'image
+/// entière rend le point tel quel, au bit près.
+fn in_crop(crop: [f32; 4], (x, y): (f32, f32)) -> (f32, f32) {
+    let [x0, y0, x1, y1] = crop;
+    ((x - x0) / (x1 - x0).max(1e-6), (y - y0) / (y1 - y0).max(1e-6))
+}
+
 /// Un pas du lissage de suivi : `from` avance vers `to` d'un facteur qui croît avec la distance
 /// (loin = rattrape vite, près = décélère), corrigé en temps sur `dt_ms`.
 fn follow_step(from: (f32, f32), to: (f32, f32), dt_ms: f32) -> (f32, f32) {
@@ -160,6 +170,23 @@ impl CursorTrack {
             click_points,
             visibility,
             types,
+            view_cache: Default::default(),
+        }
+    }
+
+    /// The same track seen on a picture turned by 180°: every position mirrored, times,
+    /// clicks, visibility and cursor types unchanged. A turned clip is planned entirely in
+    /// what the viewer sees, so its telemetry is turned once here rather than at every reader.
+    pub fn turned(&self) -> CursorTrack {
+        let flip =
+            |v: &[(f32, f32, f32)]| v.iter().map(|&(t, x, y)| (t, 1.0 - x, 1.0 - y)).collect();
+        CursorTrack {
+            samples: flip(&self.samples),
+            follow_samples: flip(&self.follow_samples),
+            clicks: self.clicks.clone(),
+            click_points: self.click_points.iter().map(|&(x, y)| (1.0 - x, 1.0 - y)).collect(),
+            visibility: self.visibility.clone(),
+            types: self.types.clone(),
             view_cache: Default::default(),
         }
     }
@@ -269,13 +296,25 @@ impl CursorTrack {
     /// rattrape avec le même lissage, juste assez pour le ramener au bord de la zone. Bornée à ce
     /// qu'une vue de `1/scale` peut atteindre, pour que la zone se mesure contre la vue affichée.
     ///
+    /// Tout se joue dans le recadrage `crop` du clip (`[x0, y0, x1, y1]` dans le repère de la
+    /// piste) : la vue zoomée en est une part, et le focus rendu s'y exprime en 0..1, comme le
+    /// focus manuel. Lu dans l'image entière, le pointeur sortait de la vue dès qu'un recadrage
+    /// la décentrait.
+    ///
     /// Rejouée depuis `t0` sur les échantillons BRUTS, puis mise en cache jusqu'à `t_end` : une
     /// fonction pure de `(t0, t, t_end)`, donc la même en preview et à l'export, après un seek
     /// comme en lecture. Le cache ne garde rien après la fenêtre de la région.
-    pub fn follow_in_view(&self, t0: f32, t: f32, t_end: f32, scale: f32) -> Option<(f32, f32)> {
+    pub fn follow_in_view(
+        &self,
+        t0: f32,
+        t: f32,
+        t_end: f32,
+        scale: f32,
+        crop: [f32; 4],
+    ) -> Option<(f32, f32)> {
         let t_end = t_end.max(t0);
         let t = t.clamp(t0, t_end);
-        let states = self.view_states(t0, t_end, scale)?;
+        let states = self.view_states(t0, t_end, scale, crop)?;
         let half = 0.5 / scale.max(1.0);
         let reach = |v: f32| v.clamp(half, 1.0 - half);
         // Après le dernier échantillon, la vue continue de rattraper le pointeur resté immobile
@@ -283,6 +322,7 @@ impl CursorTrack {
         let &(at, vx, vy) = states.last()?;
         if t > at {
             let (_, x, y) = *self.samples.last()?;
+            let (x, y) = in_crop(crop, (x, y));
             let dead = half * FOLLOW_DEAD_ZONE;
             let pull = |cursor: f32, view: f32| cursor - (cursor - view).clamp(-dead, dead);
             let (nx, ny) = follow_step((vx, vy), (pull(x, vx), pull(y, vy)), (t - at) * 1000.0);
@@ -309,9 +349,10 @@ impl CursorTrack {
         t0: f32,
         t_end: f32,
         scale: f32,
+        crop: [f32; 4],
     ) -> Option<std::sync::Arc<Vec<(f32, f32, f32)>>> {
         let t_end = t_end.max(t0);
-        let key = (t0.to_bits(), t_end.to_bits(), scale.to_bits());
+        let key = (t0.to_bits(), t_end.to_bits(), scale.to_bits(), crop.map(f32::to_bits));
         if let Some((_, v)) = self.view_cache.lock().ok()?.iter().find(|(k, _)| *k == key) {
             return Some(v.clone());
         }
@@ -320,12 +361,13 @@ impl CursorTrack {
         let reach = |v: f32| v.clamp(half, 1.0 - half);
         // La cible : le point qui ramène le pointeur au bord de la zone, la vue elle-même dedans.
         let pull = |cursor: f32, view: f32| cursor - (cursor - view).clamp(-dead, dead);
-        let (x0, y0) = self.follow_at(t0)?;
+        let (x0, y0) = in_crop(crop, self.follow_at(t0)?);
         let mut view = (reach(x0), reach(y0));
         let mut states = vec![(t0, view.0, view.1)];
         let first = self.samples.partition_point(|s| s.0 <= t0);
         let end = self.samples.partition_point(|s| s.0 <= t_end);
         for &(ts, x, y) in &self.samples[first..end] {
+            let (x, y) = in_crop(crop, (x, y));
             let at = states.last().map_or(t0, |s| s.0);
             let (nx, ny) =
                 follow_step(view, (pull(x, view.0), pull(y, view.1)), (ts - at) * 1000.0);
@@ -335,6 +377,7 @@ impl CursorTrack {
         let at = states.last().map_or(t0, |s| s.0);
         if at < t_end {
             if let Some(&(ts, x, y)) = self.samples.get(end) {
+                let (x, y) = in_crop(crop, (x, y));
                 let (nx, ny) =
                     follow_step(view, (pull(x, view.0), pull(y, view.1)), (ts - at) * 1000.0);
                 let f = ((t_end - at) / (ts - at)).clamp(0.0, 1.0);
@@ -672,6 +715,26 @@ fn cursor_spring_config(smoothing_factor: f32) -> (f32, f32, f32) {
 mod tests {
     use super::*;
 
+    #[test]
+    fn turned_track_mirrors_positions_and_keeps_times() {
+        let t = CursorTrack::new(
+            vec![(0.0, 0.2, 0.3), (1.0, 0.6, 0.9)],
+            vec![0.5],
+            vec![(0.0, "arrow".to_string())],
+        );
+        let r = t.turned();
+        let (x, y) = r.at(0.0).unwrap();
+        assert!((x - 0.8).abs() < 1e-6 && (y - 0.7).abs() < 1e-6, "({x}, {y})");
+        assert_eq!(r.clicks_between(0.0, 1.0), t.clicks_between(0.0, 1.0));
+        assert_eq!(r.type_at(0.0), t.type_at(0.0));
+        let (fx, fy) = r.follow_at(1.0).unwrap();
+        let (gx, gy) = t.follow_at(1.0).unwrap();
+        assert!((fx - (1.0 - gx)).abs() < 1e-5 && (fy - (1.0 - gy)).abs() < 1e-5);
+        // The click point turns with the picture: the click at 0.5 s was at (0.4, 0.6).
+        let (px, py) = r.click_points[0];
+        assert!((px - 0.6).abs() < 1e-6 && (py - 0.4).abs() < 1e-6, "({px}, {py})");
+    }
+
     /// Zone morte du suivi auto : un pointeur qui tremble au centre de la vue ne la bouge pas ;
     /// un pointeur qui part loin est rattrapé, jusqu'au bord de la zone et pas au-delà.
     /// Les vues d'une région sont rejouées une fois puis relues : même réponse dans n'importe quel
@@ -692,19 +755,19 @@ mod tests {
         };
         let (cached, times) = (make(), [4.9f32, 0.2, 3.3, 0.0, 2.71, 4.0]);
         for t in times {
-            let _ = cached.follow_in_view(0.4, t, 5.0, 2.0);
+            let _ = cached.follow_in_view(0.4, t, 5.0, 2.0, WHOLE_FRAME);
         }
         for t in times {
             assert_eq!(
-                cached.follow_in_view(0.4, t, 5.0, 2.0),
-                make().follow_in_view(0.4, t, 5.0, 2.0),
+                cached.follow_in_view(0.4, t, 5.0, 2.0, WHOLE_FRAME),
+                make().follow_in_view(0.4, t, 5.0, 2.0, WHOLE_FRAME),
                 "t {t}"
             );
         }
         // Une autre région (autre départ, autre échelle) a ses propres vues.
         assert_ne!(
-            cached.follow_in_view(1.0, 3.0, 5.0, 3.0),
-            cached.follow_in_view(0.4, 3.0, 5.0, 2.0)
+            cached.follow_in_view(1.0, 3.0, 5.0, 3.0, WHOLE_FRAME),
+            cached.follow_in_view(0.4, 3.0, 5.0, 2.0, WHOLE_FRAME)
         );
     }
 
@@ -721,8 +784,8 @@ mod tests {
             vec![],
         );
 
-        let at_end = track.follow_in_view(0.0, 2.0, 2.0, 2.0).unwrap();
-        assert_eq!(track.follow_in_view(0.0, 8.0, 2.0, 2.0), Some(at_end));
+        let at_end = track.follow_in_view(0.0, 2.0, 2.0, 2.0, WHOLE_FRAME).unwrap();
+        assert_eq!(track.follow_in_view(0.0, 8.0, 2.0, 2.0, WHOLE_FRAME), Some(at_end));
 
         let cache = track.view_cache.lock().unwrap();
         let states = &cache[0].1;
@@ -742,7 +805,7 @@ mod tests {
             vec![],
             vec![],
         );
-        let at = |t: f32| track.follow_in_view(0.0, t, 9.0, 2.0).unwrap().0;
+        let at = |t: f32| track.follow_in_view(0.0, t, 9.0, 2.0, WHOLE_FRAME).unwrap().0;
         assert!(
             at(2.0) < at(2.5) && at(2.5) < at(4.0),
             "{} {} {}",
@@ -771,7 +834,7 @@ mod tests {
         let jitter = track(|t| 0.5 + 0.08 * (t * 7.0).sin());
         for i in 0..=90 {
             let (x, y) = jitter
-                .follow_in_view(0.0, i as f32 / 10.0, 9.0, 2.0)
+                .follow_in_view(0.0, i as f32 / 10.0, 9.0, 2.0, WHOLE_FRAME)
                 .unwrap();
             assert!(
                 (x - 0.5).abs() < 1e-6 && (y - 0.5).abs() < 1e-6,
@@ -787,15 +850,15 @@ mod tests {
 
         // Un saut à 0,8 à 2 s : la vue rattrape jusqu'à laisser le pointeur au bord de la zone.
         let jump = track(|t| if t < 2.0 { 0.5 } else { 0.8 });
-        let settled = jump.follow_in_view(0.0, 9.0, 9.0, 2.0).unwrap().0;
+        let settled = jump.follow_in_view(0.0, 9.0, 9.0, 2.0, WHOLE_FRAME).unwrap().0;
         assert!((settled - (0.8 - 0.125)).abs() < 1e-3, "{settled}");
-        let early = jump.follow_in_view(0.0, 2.1, 9.0, 2.0).unwrap().0;
+        let early = jump.follow_in_view(0.0, 2.1, 9.0, 2.0, WHOLE_FRAME).unwrap().0;
         assert!(
             early > 0.5 && early < settled,
             "rattrapage progressif : {early}"
         );
         // Une pure fonction de (t0, t, t_end) : l'ordre des appels ne change rien.
-        assert_eq!(jump.follow_in_view(0.0, 2.1, 9.0, 2.0).unwrap().0, early);
+        assert_eq!(jump.follow_in_view(0.0, 2.1, 9.0, 2.0, WHOLE_FRAME).unwrap().0, early);
     }
 
     /// L'état du curseur est une fonction en escalier : il tient jusqu'à la transition

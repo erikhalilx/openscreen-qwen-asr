@@ -14,6 +14,12 @@ export const TOOLTIP_GAP_PX = 8;
 function TooltipProvider({
 	delayDuration = TOOLTIP_OPEN_DELAY_MS,
 	skipDelayDuration = TOOLTIP_SKIP_DELAY_MS,
+	// A tooltip closes as the pointer leaves its trigger. Radix's hoverable mode instead keeps it
+	// open across a triangle from the exit point to the tooltip, and blocks every other trigger
+	// while the pointer is inside it. In a toolbar that triangle covers the next control: the old
+	// tooltip stayed over it and it showed none. On the click-through HUD no pointer move reaches
+	// the page once the pointer is off the bar, so the triangle never ended at all.
+	disableHoverableContent = true,
 	...props
 }: React.ComponentProps<typeof TooltipPrimitive.Provider>) {
 	return (
@@ -21,6 +27,7 @@ function TooltipProvider({
 			data-slot="tooltip-provider"
 			delayDuration={delayDuration}
 			skipDelayDuration={skipDelayDuration}
+			disableHoverableContent={disableHoverableContent}
 			{...props}
 		/>
 	);
@@ -69,7 +76,11 @@ function TooltipContent({
 					// Popper sizes its wrapper to `max-content`, so without a cap a long tooltip is one
 					// long line. 260px is about 40 characters a line at this size. `text-balance` evens the
 					// lines out, so a translation does not end on one orphan word.
-					"max-w-[260px] break-words text-balance px-2.5 py-1.5 text-xs leading-4 font-medium text-white/95 bg-black/85 border border-white/10 rounded-lg shadow-lg z-50",
+					// A narrow HUD can have less room beside its bar; wrap within Popper's available space.
+					"max-w-[min(260px,var(--radix-tooltip-content-available-width))] break-words text-balance px-2.5 py-1.5 text-xs leading-4 font-medium text-white/95 bg-black/85 border border-white/10 rounded-lg shadow-lg",
+					// Above every layer it can open in: the dialogs reach z 10000 (`dialog.tsx`), the
+					// editor's modals 100. At z 50 the Edit-clip dialog's tips opened under it, unseen.
+					"z-[10001]",
 					"animate-in fade-in-0 zoom-in-95",
 					"data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95",
 					className,

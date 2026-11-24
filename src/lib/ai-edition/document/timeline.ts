@@ -35,6 +35,7 @@ import { dropTrimPillsByIds, trimAppliesToClip } from "../timeline/trim-mapping"
 import {
 	cutTakeHead,
 	dropUnusedGeneratedMedia,
+	preserveMusicTailsAfterClipEdit,
 	reanchorAudioTracks,
 	removeAudioTrack,
 	separateAudioLanes,
@@ -421,10 +422,14 @@ export function mapAllRegionCollections(
 		// pills unloadable.
 		audioTracks: separateAudioLanes(
 			reanchorAudioTracks(
-				fn(
-					document.audioTracks as unknown as StoredRegion[],
-					"audio",
-				) as unknown as AxcutDocument["audioTracks"],
+				preserveMusicTailsAfterClipEdit(
+					document.audioTracks,
+					fn(
+						document.audioTracks as unknown as StoredRegion[],
+						"audio",
+					) as unknown as AxcutDocument["audioTracks"],
+					document.timeline.clips,
+				),
 				document.timeline.clips,
 				() => createId("audio"),
 			),
@@ -1164,11 +1169,10 @@ export function setClipCrop(
  * place instead of being re-derived per façade, which is what let the three drift apart
  * (stale width, un-clamped pills). Pure — a plain document→document transform.
  *
- * Recipe: clamp + order the range, zero the clip's timeline extent so `resequenceClips`
- * recomputes its RAW length from the new source window (a raw clip's timeline length equals
- * its source length), lay everything back-to-back, then `rederiveRegionMs` clamps every
- * anchored pill to the clip's kept window (dropping what the trim removed) and refreshes the
- * derived ms of the clips that reflowed. An unknown `clipId` is a no-op.
+ * Recipe: clamp + order the range, refresh the clip's raw timeline length from its new source
+ * window before `withClipsChanged` can join it to a neighbour, lay everything back-to-back,
+ * then `rederiveRegionMs` clamps anchored pills to the kept window (dropping removed content)
+ * and refreshes the derived ms of the clips that reflowed. An unknown `clipId` is a no-op.
  *
  * `cropRegion` is the Edit modal's crop, set in the same pass: `undefined` leaves it, `null`
  * clears it. One pass, because the fold decides on range AND crop together: a range applied
@@ -1191,7 +1195,7 @@ export function setClipSourceRange(
 					sourceStartSec: lo,
 					sourceEndSec: hi,
 					timelineStartSec: 0,
-					timelineEndSec: 0,
+					timelineEndSec: hi - lo,
 					...(cropRegion === undefined ? {} : { cropRegion: cropRegion ?? undefined }),
 				}
 			: c,
@@ -1378,7 +1382,7 @@ export function withClipsChanged(document: AxcutDocument, clips: AxcutClip[]): A
 	return laid.length === 0 ? syncRecordingAudio(next) : rederiveRegionMs(next, laid);
 }
 
-/** Fold every run of same-media, same-crop, media-contiguous clips into one, reporting the
+/** Fold every run of same-media, same-crop-and-rotation, media-contiguous clips into one, reporting the
  *  ids that went away and the clip that now carries their content. */
 function joinContiguous(
 	clips: AxcutClip[],
@@ -1409,15 +1413,16 @@ function joinContiguous(
 	return { clips: out, absorbed };
 }
 
-/** Same media, media timecodes that meet, same framing. Crop is the only property a clip
- *  carries that two otherwise-identical neighbours could legitimately disagree on, so it is
- *  the whole of the guard. */
+/** Same media, media timecodes that meet, same framing. Crop and rotation are the only
+ *  properties a clip carries that two otherwise-identical neighbours could legitimately
+ *  disagree on, so they are the whole of the guard. */
 function joinable(left: AxcutClip, right: AxcutClip): boolean {
 	return (
 		left.assetId === right.assetId &&
 		left.sourceEndSec !== undefined &&
 		Math.abs(left.sourceEndSec - right.sourceStartSec) < 1e-6 &&
-		JSON.stringify(left.cropRegion ?? null) === JSON.stringify(right.cropRegion ?? null)
+		JSON.stringify(left.cropRegion ?? null) === JSON.stringify(right.cropRegion ?? null) &&
+		(left.rotation ?? 0) === (right.rotation ?? 0)
 	);
 }
 

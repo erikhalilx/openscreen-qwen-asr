@@ -196,6 +196,7 @@
 		"exportFailedGeneric": "Dışa aktarma başarısız oldu.",
 		"writingFile": "Dosya yazılıyor…",
 		"renderingFrames": "Kareler işleniyor",
+		"renderingGif": "GIF dışa aktarılıyor",
 		"framesEta": "{{current}} / {{total}} kare · Kalan süre {{eta}}sn",
 		"preparingEncoder": "Kodlayıcı hazırlanıyor…",
 		"close": "Kapat",
@@ -346,7 +347,15 @@
 		"openHint": "açmak için",
 		"browseFiles": "Dosyalara göz at…",
 		"deleteProject": "Projeyi sil",
-		"confirmDelete": "Bu proje silinsin mi? Kayıtlarınız korunur."
+		"confirmDelete": "Bu proje silinsin mi? Kayıtlarınız korunur.",
+		"confirmDeleteProject": "Bu proje silinsin mi?",
+		"alsoTrash": "Kayıtlarını da Çöp Sepeti'ne taşı ({{size}})",
+		"alsoRecycle": "Kayıtlarını da Geri Dönüşüm Kutusu'na taşı ({{size}})",
+		"recordingsKeptFor": "{{projects}} tarafından kullanılan kayıtlar korunur.",
+		"recordingsKeptUnreadable": "Bazı projeler okunamadı, bu yüzden bu projenin kayıtları saklanıyor.",
+		"trashFailed": "Kayıtlar Çöp Sepeti'ne taşınamadı. Kalıcı olarak silinsin mi?",
+		"recycleFailed": "Kayıtlar Geri Dönüşüm Kutusu'na taşınamadı. Kalıcı olarak silinsin mi?",
+		"deletePermanently": "Kalıcı olarak sil"
 	},
 	"editClipDialog": {
 		"title": "Klibi düzenle",
@@ -357,6 +366,10 @@
 		"duration": "Son süre",
 		"reset": "Sıfırla",
 		"apply": "Uygula",
+		"rotation": "Döndürme",
+		"rotationUpright": "0°",
+		"rotationTurned": "180°",
+		"rotationTip": "Görüntüyü baş aşağı çevir, ör. ters monte edilmiş bir kamera için",
 		"pickClipTitle": "Düzenlenecek klibi seçin",
 		"clipLabel": "Klip {{index}}"
 	},
